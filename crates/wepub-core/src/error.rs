@@ -13,6 +13,9 @@ pub enum WepubError {
     #[error("authentication failed: {0}")]
     Auth(String),
 
+    #[error("AMO validation failed for upload {uuid}: {body}")]
+    Validation { uuid: String, body: String },
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 

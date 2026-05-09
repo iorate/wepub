@@ -251,16 +251,17 @@ impl FirefoxStore {
                     || "validation failed (no detail provided)".to_string(),
                     ToString::to_string,
                 );
-                return Err(WepubError::Auth(format!(
-                    "AMO validation failed for upload {uuid}: {body}"
-                )));
+                return Err(WepubError::Validation {
+                    uuid: uuid.to_string(),
+                    body,
+                });
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Auth(format!(
-                    "AMO validation timed out for upload {uuid} after {:?}",
-                    config.timeout
-                )));
+                return Err(WepubError::Validation {
+                    uuid: uuid.to_string(),
+                    body: format!("validation timed out after {:?}", config.timeout),
+                });
             }
 
             tokio::time::sleep(config.interval).await;
@@ -613,11 +614,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Auth(msg) => {
-                assert!(msg.contains("uuid-2"));
-                assert!(msg.contains("manifest broken"));
+            WepubError::Validation { uuid, body } => {
+                assert_eq!(uuid, "uuid-2");
+                assert!(body.contains("manifest broken"));
             }
-            other => panic!("expected WepubError::Auth, got {other:?}"),
+            other => panic!("expected WepubError::Validation, got {other:?}"),
         }
     }
 
@@ -639,11 +640,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Auth(msg) => {
-                assert!(msg.contains("timed out"));
-                assert!(msg.contains("uuid-3"));
+            WepubError::Validation { uuid, body } => {
+                assert_eq!(uuid, "uuid-3");
+                assert!(body.contains("timed out"));
             }
-            other => panic!("expected WepubError::Auth, got {other:?}"),
+            other => panic!("expected WepubError::Validation, got {other:?}"),
         }
     }
 
