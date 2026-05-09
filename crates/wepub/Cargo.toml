@@ -1,0 +1,26 @@
+[package]
+name = "wepub"
+version = "0.1.0"
+description = "CLI to publish browser extensions to Chrome Web Store and Firefox AMO"
+readme = "../../README.md"
+keywords = ["browser-extension", "chrome", "firefox", "publish", "cli"]
+categories = ["command-line-utilities", "web-programming"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+dotenvy = "0.15.7"
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+wepub-core = { version = "0.1.0", path = "../wepub-core" }
+
+[lints]
+workspace = true

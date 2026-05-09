@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/wepub",
+    "crates/wepub-core",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/iorate/wepub"
+repository = "https://github.com/iorate/wepub"
+authors = ["iorate"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

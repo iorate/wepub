@@ -1,0 +1,31 @@
+[package]
+name = "wepub-core"
+version = "0.1.0"
+description = "Library for publishing browser extensions to Chrome Web Store and Firefox AMO"
+readme = "../../README.md"
+keywords = ["browser-extension", "chrome", "firefox", "amo", "cws"]
+categories = ["api-bindings", "web-programming::http-client"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+reqwest = { version = "0.13.3", features = ["json", "multipart", "form"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["time"] }
+tracing = "0.1.44"
+url = "2.5.8"
+uuid = { version = "1.23.1", features = ["v4"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["macros", "rt"] }
+wiremock = "0.6.5"
