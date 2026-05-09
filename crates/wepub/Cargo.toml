@@ -8,6 +8,13 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+wepub-core = { version = "0.1.0", path = "../wepub-core" }
 
 [lints]
 workspace = true
