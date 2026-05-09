@@ -10,7 +10,7 @@ use crate::{Result, WepubError, http::build_client};
 use super::auth::generate_jwt;
 
 const DEFAULT_BASE_URL: &str = "https://addons.mozilla.org/api/v5/";
-const UPLOAD_FILE_NAME: &str = "addon.xpi";
+const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -170,8 +170,8 @@ impl FirefoxStore {
         Ok(format!("JWT {token}"))
     }
 
-    pub async fn publish(&self, xpi: Vec<u8>, options: PublishOptions) -> Result<VersionResponse> {
-        let upload = self.upload(xpi, options.channel).await?;
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<VersionResponse> {
+        let upload = self.upload(zip, options.channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
             .await?;
@@ -192,12 +192,12 @@ impl FirefoxStore {
         Ok(version)
     }
 
-    pub(crate) async fn upload(&self, xpi: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+    pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
         let url = self.endpoint("addons/upload/")?;
         let auth = self.auth_header()?;
 
-        let len = xpi.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(xpi), len)
+        let len = zip.len() as u64;
+        let part = Part::stream_with_length(reqwest::Body::from(zip), len)
             .file_name(UPLOAD_FILE_NAME)
             .mime_str("application/zip")
             .map_err(WepubError::Network)?;
@@ -547,7 +547,7 @@ mod tests {
 
         let store = store_for(&server);
         let resp = store
-            .upload(b"fake-xpi".to_vec(), Channel::Listed)
+            .upload(b"fake-zip".to_vec(), Channel::Listed)
             .await
             .unwrap();
 
@@ -728,7 +728,7 @@ mod tests {
             poll: fast_poll(),
             ..PublishOptions::default()
         };
-        let resp = store.publish(b"xpi".to_vec(), options).await.unwrap();
+        let resp = store.publish(b"zip".to_vec(), options).await.unwrap();
 
         assert_eq!(resp.id, 7777);
     }
@@ -773,7 +773,7 @@ mod tests {
             poll: fast_poll(),
             ..PublishOptions::default()
         };
-        let resp = store.publish(b"xpi".to_vec(), options).await.unwrap();
+        let resp = store.publish(b"zip".to_vec(), options).await.unwrap();
 
         assert_eq!(resp.id, 9999);
     }
@@ -793,7 +793,7 @@ mod tests {
             poll: fast_poll(),
             ..PublishOptions::default()
         };
-        let err = store.publish(b"xpi".to_vec(), options).await.unwrap_err();
+        let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
 
         match err {
             WepubError::Api { status, body } => {
