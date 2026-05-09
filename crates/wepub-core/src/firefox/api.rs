@@ -499,4 +499,308 @@ mod tests {
         assert_eq!(json["release_notes"]["ja"], "こんにちは");
         assert_eq!(json["approval_notes"], "for reviewers");
     }
+
+    // ---- wiremock integration tests ----
+
+    use serde_json::json;
+    use wiremock::matchers::{header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn store_for(server: &MockServer) -> FirefoxStore {
+        FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
+            .unwrap()
+            .with_base_url(Url::parse(&server.uri()).unwrap())
+    }
+
+    fn fast_poll() -> PollConfig {
+        PollConfig {
+            interval: Duration::from_millis(10),
+            timeout: Duration::from_millis(200),
+        }
+    }
+
+    fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {
+        json!({
+            "uuid": uuid,
+            "channel": "listed",
+            "processed": processed,
+            "submitted": false,
+            "url": format!("https://example.com/upload/{uuid}/"),
+            "valid": valid,
+            "validation": null,
+            "version": "1.0.0",
+        })
+    }
+
+    #[tokio::test]
+    async fn upload_posts_multipart_and_parses_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/addons/upload/"))
+            .and(header_exists("authorization"))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(upload_json("abc-123", false, false)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let resp = store
+            .upload(b"fake-xpi".to_vec(), Channel::Listed)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.uuid, "abc-123");
+        assert!(!resp.processed);
+    }
+
+    #[tokio::test]
+    async fn wait_until_validated_returns_when_processed_and_valid() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-1/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(upload_json("uuid-1", false, false)),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-1/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(upload_json("uuid-1", true, true)),
+            )
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let resp = store
+            .wait_until_validated("uuid-1", &fast_poll())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.uuid, "uuid-1");
+        assert!(resp.processed);
+        assert!(resp.valid);
+    }
+
+    #[tokio::test]
+    async fn wait_until_validated_errors_on_invalid_validation() {
+        let server = MockServer::start().await;
+        let body = json!({
+            "uuid": "uuid-2",
+            "channel": "listed",
+            "processed": true,
+            "submitted": false,
+            "url": "https://example.com/upload/uuid-2/",
+            "valid": false,
+            "validation": { "messages": [{ "type": "error", "message": "manifest broken" }] },
+            "version": null,
+        });
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-2/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_validated("uuid-2", &fast_poll())
+            .await
+            .unwrap_err();
+
+        match err {
+            WepubError::Auth(msg) => {
+                assert!(msg.contains("uuid-2"));
+                assert!(msg.contains("manifest broken"));
+            }
+            other => panic!("expected WepubError::Auth, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_until_validated_times_out_when_processing_never_completes() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-3/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(upload_json("uuid-3", false, false)),
+            )
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_validated("uuid-3", &fast_poll())
+            .await
+            .unwrap_err();
+
+        match err {
+            WepubError::Auth(msg) => {
+                assert!(msg.contains("timed out"));
+                assert!(msg.contains("uuid-3"));
+            }
+            other => panic!("expected WepubError::Auth, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_version_posts_json_and_parses_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/addons/addon/test-addon/versions/"))
+            .and(header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 4242 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let resp = store
+            .create_version("uuid-x", None, &HashMap::new(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(resp.id, 4242);
+    }
+
+    #[tokio::test]
+    async fn patch_version_source_sends_multipart_patch() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/addons/addon/test-addon/versions/4242/"))
+            .and(header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 4242 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let resp = store
+            .patch_version_source(4242, b"source-zip".to_vec())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.id, 4242);
+    }
+
+    #[tokio::test]
+    async fn publish_runs_full_flow_when_source_is_provided() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/addons/upload/"))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(upload_json("uuid-pub", false, false)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-pub/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(upload_json("uuid-pub", true, true)),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/addons/addon/test-addon/versions/"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 7777 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/addons/addon/test-addon/versions/7777/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 7777 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let options = PublishOptions {
+            source: Some(b"source-zip".to_vec()),
+            poll: fast_poll(),
+            ..PublishOptions::default()
+        };
+        let resp = store.publish(b"xpi".to_vec(), options).await.unwrap();
+
+        assert_eq!(resp.id, 7777);
+    }
+
+    #[tokio::test]
+    async fn publish_skips_source_patch_when_no_source_provided() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/addons/upload/"))
+            .respond_with(
+                ResponseTemplate::new(201).set_body_json(upload_json("uuid-ns", true, true)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/addons/upload/uuid-ns/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(upload_json("uuid-ns", true, true)),
+            )
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/addons/addon/test-addon/versions/"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 9999 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/addons/addon/test-addon/versions/9999/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 9999 })))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let options = PublishOptions {
+            poll: fast_poll(),
+            ..PublishOptions::default()
+        };
+        let resp = store.publish(b"xpi".to_vec(), options).await.unwrap();
+
+        assert_eq!(resp.id, 9999);
+    }
+
+    #[tokio::test]
+    async fn publish_propagates_upload_api_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/addons/upload/"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let options = PublishOptions {
+            poll: fast_poll(),
+            ..PublishOptions::default()
+        };
+        let err = store.publish(b"xpi".to_vec(), options).await.unwrap_err();
+
+        match err {
+            WepubError::Api { status, body } => {
+                assert_eq!(status, 401);
+                assert_eq!(body, "unauthorized");
+            }
+            other => panic!("expected WepubError::Api, got {other:?}"),
+        }
+    }
 }
