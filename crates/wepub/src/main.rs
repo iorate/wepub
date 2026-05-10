@@ -26,6 +26,7 @@ async fn main() -> ExitCode {
 async fn dispatch(command: Commands) -> Result<()> {
     match command {
         Commands::Firefox { command } => commands::firefox::run(command).await,
+        Commands::Chrome { command } => commands::chrome::run(command).await,
     }
 }
 

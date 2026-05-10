@@ -11,6 +11,7 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     pub publish_type: PublishType,
     pub skip_review: bool,
@@ -25,6 +26,7 @@ pub enum PublishType {
     Staged,
 }
 
+#[derive(Debug, Clone)]
 pub struct PollConfig {
     pub interval: Duration,
     pub timeout: Duration,

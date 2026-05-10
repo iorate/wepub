@@ -29,6 +29,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: FirefoxCommands,
     },
+    /// Chrome Web Store commands.
+    Chrome {
+        #[command(subcommand)]
+        command: ChromeCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -108,4 +113,67 @@ pub enum ChannelArg {
 pub enum ApplicationArg {
     Firefox,
     Android,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChromeCommands {
+    /// Upload a zip and submit a new version to the Chrome Web Store.
+    Publish(ChromePublishArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ChromePublishArgs {
+    /// Path to the extension archive (zip).
+    #[arg(value_name = "ZIP")]
+    pub zip: PathBuf,
+
+    /// Publisher ID (the numeric ID under which the item is registered).
+    #[arg(long, env = "WEPUB_CHROME_PUBLISHER_ID")]
+    pub publisher_id: String,
+
+    /// Item ID (the 32-character extension ID).
+    #[arg(long, env = "WEPUB_CHROME_ITEM_ID")]
+    pub item_id: String,
+
+    /// OAuth client ID. Use together with --client-secret and --refresh-token.
+    #[arg(long, env = "WEPUB_CHROME_CLIENT_ID")]
+    pub client_id: Option<String>,
+
+    /// OAuth client secret. Use together with --client-id and --refresh-token.
+    #[arg(long, env = "WEPUB_CHROME_CLIENT_SECRET")]
+    pub client_secret: Option<String>,
+
+    /// OAuth refresh token. Use together with --client-id and --client-secret.
+    #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
+    pub refresh_token: Option<String>,
+
+    /// Pre-fetched OAuth access token (escape hatch for WIF / gcloud).
+    #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
+    pub access_token: Option<String>,
+
+    /// Publish type.
+    #[arg(long, value_enum, default_value_t = PublishTypeArg::Default)]
+    pub publish_type: PublishTypeArg,
+
+    /// Bypass the standard review queue (only honoured for changes Google deems eligible).
+    #[arg(long)]
+    pub skip_review: bool,
+
+    /// Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
+    pub deploy_percentage: Option<u8>,
+
+    /// Override the CWS API root URL (for testing).
+    #[arg(long, env = "WEPUB_CHROME_CWS_ROOT_URL")]
+    pub cws_root_url: Option<Url>,
+
+    /// Override the OAuth token endpoint URL (for testing).
+    #[arg(long, env = "WEPUB_CHROME_CWS_TOKEN_URL")]
+    pub cws_token_url: Option<Url>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PublishTypeArg {
+    Default,
+    Staged,
 }
