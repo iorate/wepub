@@ -321,19 +321,10 @@ impl FirefoxStore {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct UploadResponse {
     pub uuid: String,
-    #[allow(dead_code)]
-    pub channel: String,
     pub processed: bool,
-    #[allow(dead_code)]
-    pub submitted: bool,
-    #[allow(dead_code)]
-    pub url: String,
     pub valid: bool,
     #[serde(default)]
     pub validation: Option<serde_json::Value>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub version: Option<String>,
 }
 
 #[derive(Serialize)]
