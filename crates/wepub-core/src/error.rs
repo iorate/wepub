@@ -16,6 +16,9 @@ pub enum WepubError {
     #[error("AMO validation failed for upload {uuid}: {body}")]
     Validation { uuid: String, body: String },
 
+    #[error("CWS upload failed for item {item_id}: {body}")]
+    UploadFailed { item_id: String, body: String },
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
