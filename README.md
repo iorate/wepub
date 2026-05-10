@@ -2,7 +2,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-> **Status**: under development. Firefox (AMO) is implemented; Chrome Web Store and Edge Add-ons are planned.
+> **Status**: under development. Firefox (AMO) and Chrome Web Store are implemented; Edge Add-ons is planned.
 
 ## Install
 
@@ -38,6 +38,40 @@ Credentials can also be supplied via environment variables:
 | `--amo-base-url` | `WEPUB_FIREFOX_AMO_BASE_URL`   |
 
 Run `wepub firefox publish --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
+
+> Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
+
+### Chrome Web Store
+
+Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token, then:
+
+```sh
+wepub chrome publish ./my-extension.zip \
+  --publisher-id   "1234567890" \
+  --item-id        "abcdefghijklmnopabcdefghijklmnop" \
+  --client-id      "...apps.googleusercontent.com" \
+  --client-secret  "..." \
+  --refresh-token  "1//0..."
+```
+
+Alternatively, supply a pre-fetched OAuth access token (e.g. from `gcloud auth print-access-token` or a Workload Identity Federation flow) via `--access-token`. The two authentication modes are mutually exclusive.
+
+Credentials and IDs can also be supplied via environment variables:
+
+| Flag              | Environment variable           |
+| ----------------- | ------------------------------ |
+| `--publisher-id`  | `WEPUB_CHROME_PUBLISHER_ID`    |
+| `--item-id`       | `WEPUB_CHROME_ITEM_ID`         |
+| `--client-id`     | `WEPUB_CHROME_CLIENT_ID`       |
+| `--client-secret` | `WEPUB_CHROME_CLIENT_SECRET`   |
+| `--refresh-token` | `WEPUB_CHROME_REFRESH_TOKEN`   |
+| `--access-token`  | `WEPUB_CHROME_ACCESS_TOKEN`    |
+| `--cws-root-url`  | `WEPUB_CHROME_CWS_ROOT_URL`    |
+| `--cws-token-url` | `WEPUB_CHROME_CWS_TOKEN_URL`   |
+
+Run `wepub chrome publish --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
+
+> Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
 
 ### Logging
 
