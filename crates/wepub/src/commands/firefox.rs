@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncReadExt;
-use wepub_core::firefox::{Application, Channel, Compatibility, FirefoxStore, PublishOptions};
+use wepub_core::firefox::{
+    Application, Channel, Compatibility, FirefoxPublishOptions, FirefoxStore,
+};
 
 use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
 
@@ -41,13 +43,13 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         store = store.with_base_url(base_url.as_str())?;
     }
 
-    let options = PublishOptions {
+    let options = FirefoxPublishOptions {
         channel: args.channel.into(),
         compatibility: build_compatibility(&args.compatibility),
         release_notes,
         approval_notes,
         source,
-        ..PublishOptions::default()
+        ..FirefoxPublishOptions::default()
     };
 
     store

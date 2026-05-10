@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{ChromeStore, PublishOptions, PublishType};
+use wepub_core::chrome::{ChromePublishOptions, ChromeStore, PublishType};
 
 use crate::cli::{ChromeArgs, PublishTypeArg};
 
@@ -16,11 +16,11 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
 
-    let options = PublishOptions {
+    let options = ChromePublishOptions {
         publish_type: args.publish_type.into(),
         skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
-        ..PublishOptions::default()
+        ..ChromePublishOptions::default()
     };
 
     store

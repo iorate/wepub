@@ -18,7 +18,7 @@
 //!
 //! ```no_run
 //! # async fn run() -> wepub_core::Result<()> {
-//! use wepub_core::firefox::{FirefoxStore, PublishOptions};
+//! use wepub_core::firefox::{FirefoxPublishOptions, FirefoxStore};
 //!
 //! let store = FirefoxStore::from_jwt_credentials(
 //!     "myaddon@example.com".into(),
@@ -26,7 +26,7 @@
 //!     "jwt-secret".into(),
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! store.publish(zip, PublishOptions::default()).await?;
+//! store.publish(zip, FirefoxPublishOptions::default()).await?;
 //! # Ok(())
 //! # }
 //! ```

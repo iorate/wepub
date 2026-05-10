@@ -9,4 +9,4 @@
 mod api;
 mod auth;
 
-pub use api::{ChromeStore, PollConfig, PublishOptions, PublishType};
+pub use api::{ChromePollConfig, ChromePublishOptions, ChromeStore, PublishType};

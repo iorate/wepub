@@ -13,7 +13,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`ChromeStore::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
+pub struct ChromePublishOptions {
     /// Whether the version goes live immediately after review or stays in
     /// staging for a manual rollout from the Developer Dashboard.
     pub publish_type: PublishType,
@@ -29,7 +29,7 @@ pub struct PublishOptions {
 
     /// Polling cadence and overall timeout used while waiting for the
     /// asynchronous upload to finish processing.
-    pub poll: PollConfig,
+    pub poll: ChromePollConfig,
 }
 
 /// Whether a successfully reviewed version goes live immediately or waits in
@@ -52,14 +52,14 @@ pub enum PublishType {
 ///
 /// Defaults to 2 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
-pub struct PollConfig {
+pub struct ChromePollConfig {
     /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with [`WepubError::Upload`].
     pub timeout: Duration,
 }
 
-impl Default for PollConfig {
+impl Default for ChromePollConfig {
     fn default() -> Self {
         Self {
             interval: DEFAULT_POLL_INTERVAL,
@@ -235,7 +235,7 @@ impl ChromeStore {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{ChromeStore, PublishOptions, PublishType};
+    /// use wepub_core::chrome::{ChromeStore, ChromePublishOptions, PublishType};
     ///
     /// let store = ChromeStore::from_client_credentials(
     ///     "publisher-1".into(),
@@ -248,16 +248,16 @@ impl ChromeStore {
     /// store
     ///     .publish(
     ///         zip,
-    ///         PublishOptions {
+    ///         ChromePublishOptions {
     ///             publish_type: PublishType::Staged,
-    ///             ..PublishOptions::default()
+    ///             ..ChromePublishOptions::default()
     ///         },
     ///     )
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: ChromePublishOptions) -> Result<()> {
         let token = self.get_token().await?;
         let initial = self.upload(&token, zip).await?;
         self.wait_until_uploaded(&token, initial, &options.poll)
@@ -333,7 +333,7 @@ impl ChromeStore {
         &self,
         token: &str,
         initial_state: UploadState,
-        config: &PollConfig,
+        config: &ChromePollConfig,
     ) -> Result<UploadState> {
         let started = Instant::now();
         // First iteration uses the caller-provided state from the initial
@@ -383,7 +383,7 @@ impl ChromeStore {
     pub(crate) async fn submit_for_publish(
         &self,
         token: &str,
-        options: &PublishOptions,
+        options: &ChromePublishOptions,
     ) -> Result<PublishResponse> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:publish",
@@ -480,8 +480,8 @@ struct PublishRequestBody {
     deploy_infos: Option<Vec<DeployInfo>>,
 }
 
-impl From<&PublishOptions> for PublishRequestBody {
-    fn from(opts: &PublishOptions) -> Self {
+impl From<&ChromePublishOptions> for PublishRequestBody {
+    fn from(opts: &ChromePublishOptions) -> Self {
         Self {
             publish_type: match opts.publish_type {
                 PublishType::Default => None,
@@ -1137,15 +1137,15 @@ mod tests {
         .unwrap()
     }
 
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+    fn fast_poll() -> ChromePollConfig {
+        ChromePollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }
     }
 
-    fn default_options() -> PublishOptions {
-        PublishOptions {
+    fn default_options() -> ChromePublishOptions {
+        ChromePublishOptions {
             publish_type: PublishType::Default,
             skip_review: false,
             deploy_percentage: None,

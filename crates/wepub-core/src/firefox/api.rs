@@ -16,7 +16,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`FirefoxStore::publish`] creates the new version.
 #[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
+pub struct FirefoxPublishOptions {
     /// Distribution channel for the new version.
     pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
@@ -32,7 +32,7 @@ pub struct PublishOptions {
     pub source: Option<Vec<u8>>,
     /// Polling cadence and overall timeout used while waiting for AMO to
     /// finish validating the upload.
-    pub poll: PollConfig,
+    pub poll: FirefoxPollConfig,
 }
 
 /// Polling cadence and budget for [`FirefoxStore::publish`]'s
@@ -40,7 +40,7 @@ pub struct PublishOptions {
 ///
 /// Defaults to 1 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
-pub struct PollConfig {
+pub struct FirefoxPollConfig {
     /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
@@ -48,7 +48,7 @@ pub struct PollConfig {
     pub timeout: Duration,
 }
 
-impl Default for PollConfig {
+impl Default for FirefoxPollConfig {
     fn default() -> Self {
         Self {
             interval: DEFAULT_POLL_INTERVAL,
@@ -235,7 +235,7 @@ impl FirefoxStore {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{FirefoxStore, PublishOptions};
+    /// use wepub_core::firefox::{FirefoxStore, FirefoxPublishOptions};
     ///
     /// let store = FirefoxStore::from_jwt_credentials(
     ///     "myaddon@example.com".into(),
@@ -243,11 +243,11 @@ impl FirefoxStore {
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// store.publish(zip, PublishOptions::default()).await?;
+    /// store.publish(zip, FirefoxPublishOptions::default()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: FirefoxPublishOptions) -> Result<()> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
@@ -305,7 +305,7 @@ impl FirefoxStore {
     pub(crate) async fn wait_until_validated(
         &self,
         uuid: &str,
-        config: &PollConfig,
+        config: &FirefoxPollConfig,
     ) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("addons/upload/{uuid}/"))?;
         let started = Instant::now();
@@ -670,10 +670,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = PublishOptions {
+        let options = FirefoxPublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..FirefoxPublishOptions::default()
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -714,9 +714,9 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = PublishOptions {
+        let options = FirefoxPublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..FirefoxPublishOptions::default()
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -732,9 +732,9 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = PublishOptions {
+        let options = FirefoxPublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..FirefoxPublishOptions::default()
         };
         let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
 
@@ -883,8 +883,8 @@ mod tests {
             .unwrap()
     }
 
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+    fn fast_poll() -> FirefoxPollConfig {
+        FirefoxPollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }
