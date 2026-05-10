@@ -21,3 +21,6 @@ install-path = "CARGO_HOME"
 publish-jobs = ["homebrew", "npm"]
 # Whether to install an updater program
 install-updater = false
+# Allow CI files (release.yml) to differ from dist's generated output,
+# so we can pin actions to commit SHAs with pinact.
+allow-dirty = ["ci"]

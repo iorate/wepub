@@ -1,5 +1,9 @@
 # wepub
 
+[![Crates.io](https://img.shields.io/crates/v/wepub.svg)](https://crates.io/crates/wepub)
+[![CI](https://github.com/iorate/wepub/actions/workflows/ci.yml/badge.svg)](https://github.com/iorate/wepub/actions/workflows/ci.yml)
+[![License](https://img.shields.io/crates/l/wepub.svg)](#license)
+
 A CLI to publish browser extensions to web stores.
 
 Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
@@ -10,7 +14,7 @@ Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
 cargo install wepub
 ```
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.88+.
 
 ## Usage
 
