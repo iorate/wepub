@@ -19,6 +19,9 @@ pub enum WepubError {
     #[error("CWS upload failed: {0}")]
     Upload(String),
 
+    #[error("publish failed: {0}")]
+    Publish(String),
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 

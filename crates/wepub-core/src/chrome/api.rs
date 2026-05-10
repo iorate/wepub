@@ -265,7 +265,19 @@ impl ChromeStore {
             .send()
             .await?;
 
-        decode_response(resp).await
+        let parsed: PublishResponse = decode_response(resp).await?;
+        match parsed.state {
+            ItemState::Rejected => {
+                Err(WepubError::Publish("The publish was rejected.".to_string()))
+            }
+            ItemState::Cancelled => Err(WepubError::Publish(
+                "The publish was cancelled.".to_string(),
+            )),
+            ItemState::PendingReview
+            | ItemState::Staged
+            | ItemState::Published
+            | ItemState::PublishedToTesters => Ok(parsed),
+        }
     }
 
     fn with_credentials(
@@ -753,18 +765,65 @@ mod tests {
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // The six meaningful ItemState wire values from the official docs must
+    // Terminal failure states must surface as WepubError::Publish even though
+    // the HTTP call itself returned 200. CLI users rely on the exit code to
+    // detect that the publish request was not accepted.
+    #[tokio::test]
+    async fn submit_for_publish_errors_on_rejected_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemId": "item-1",
+                "state": "REJECTED",
+            })))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .submit_for_publish(TEST_TOKEN, &default_options())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::Publish(msg) => assert_eq!(msg, "The publish was rejected."),
+            other => panic!("expected WepubError::Publish, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_for_publish_errors_on_cancelled_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "itemId": "item-1",
+                "state": "CANCELLED",
+            })))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .submit_for_publish(TEST_TOKEN, &default_options())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::Publish(msg) => assert_eq!(msg, "The publish was cancelled."),
+            other => panic!("expected WepubError::Publish, got {other:?}"),
+        }
+    }
+
+    // Non-terminal ItemState wire values from the official docs must
     // round-trip. ITEM_STATE_UNSPECIFIED is documented as "unused" so we drop
     // it from the public enum and let serde fail-fast if it ever appears.
     #[tokio::test]
-    async fn submit_for_publish_decodes_all_item_states() {
+    async fn submit_for_publish_decodes_non_terminal_item_states() {
         let cases = [
             ("PENDING_REVIEW", ItemState::PendingReview),
             ("STAGED", ItemState::Staged),
             ("PUBLISHED", ItemState::Published),
             ("PUBLISHED_TO_TESTERS", ItemState::PublishedToTesters),
-            ("REJECTED", ItemState::Rejected),
-            ("CANCELLED", ItemState::Cancelled),
         ];
 
         for (wire, expected) in cases {
