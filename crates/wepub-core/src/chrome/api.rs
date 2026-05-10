@@ -183,10 +183,16 @@ impl ChromeStore {
     /// Defaults to `https://chromewebstore.googleapis.com/`. Intended for
     /// tests that point the client at a mock server. A missing trailing
     /// slash is added automatically so that relative paths join correctly.
-    #[must_use]
-    pub fn with_root_url(mut self, root_url: Url) -> Self {
-        self.root_url = ensure_trailing_slash(root_url);
-        self
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
+    /// URL.
+    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
+        let parsed = Url::parse(root_url)
+            .map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
+        self.root_url = ensure_trailing_slash(parsed);
+        Ok(self)
     }
 
     /// Override the Google OAuth token endpoint URL.
@@ -194,10 +200,15 @@ impl ChromeStore {
     /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
     /// tests; only consulted when the store was built with
     /// [`from_client_credentials`](ChromeStore::from_client_credentials).
-    #[must_use]
-    pub fn with_token_url(mut self, token_url: Url) -> Self {
-        self.token_url = token_url;
-        self
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WepubError::InvalidUrl`] if `token_url` does not parse as a
+    /// URL.
+    pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
+        self.token_url = Url::parse(token_url)
+            .map_err(|e| WepubError::InvalidUrl(format!("{token_url:?}: {e}")))?;
+        Ok(self)
     }
 
     /// Upload `zip` and submit the resulting item version for publish.
@@ -565,8 +576,10 @@ mod tests {
             "refresh-token".to_string(),
         )
         .unwrap()
-        .with_root_url(base.clone())
-        .with_token_url(base);
+        .with_root_url(base.as_str())
+        .unwrap()
+        .with_token_url(base.as_str())
+        .unwrap();
 
         let token = store.get_token().await.unwrap();
         assert_eq!(token, "fresh-token");
@@ -1082,16 +1095,46 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn with_root_url_rejects_garbage() {
+        let store = ChromeStore::from_access_token(
+            "publisher-1".to_string(),
+            "item-1".to_string(),
+            "token".to_string(),
+        )
+        .unwrap();
+        let Err(err) = store.with_root_url("not a url") else {
+            panic!("expected with_root_url to reject");
+        };
+        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn with_token_url_rejects_garbage() {
+        let store = ChromeStore::from_access_token(
+            "publisher-1".to_string(),
+            "item-1".to_string(),
+            "token".to_string(),
+        )
+        .unwrap();
+        let Err(err) = store.with_token_url("not a url") else {
+            panic!("expected with_token_url to reject");
+        };
+        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+    }
+
     fn store_for(server: &MockServer) -> ChromeStore {
-        let base = Url::parse(&server.uri()).unwrap();
+        let base = server.uri();
         ChromeStore::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "test-access-token".to_string(),
         )
         .unwrap()
-        .with_root_url(base.clone())
-        .with_token_url(base)
+        .with_root_url(&base)
+        .unwrap()
+        .with_token_url(&base)
+        .unwrap()
     }
 
     fn fast_poll() -> PollConfig {

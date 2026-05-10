@@ -38,7 +38,7 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         FirefoxStore::from_jwt_credentials(args.addon_id, args.api_key, args.api_secret)
             .context("failed to construct FirefoxStore")?;
     if let Some(base_url) = args.amo_base_url {
-        store = store.with_base_url(base_url);
+        store = store.with_base_url(base_url.as_str())?;
     }
 
     let options = PublishOptions {

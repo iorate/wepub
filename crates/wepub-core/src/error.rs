@@ -73,6 +73,11 @@ pub enum WepubError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// A URL passed in by the caller (typically through one of the `with_*`
+    /// builders) failed to parse.
+    #[error("invalid URL: {0}")]
+    InvalidUrl(String),
+
     /// "Should never happen" programmer-error states: URL join failure,
     /// pre-epoch system clock, JWT encode failure, hard-coded MIME literal
     /// rejected by `mime_str`. Reaching this variant indicates a bug in

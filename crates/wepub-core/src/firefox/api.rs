@@ -201,10 +201,16 @@ impl FirefoxStore {
     /// or when pointing at a local `mozilla/addons-server` instance. A
     /// missing trailing slash is added automatically so that relative paths
     /// join correctly.
-    #[must_use]
-    pub fn with_base_url(mut self, base_url: Url) -> Self {
-        self.base_url = ensure_trailing_slash(base_url);
-        self
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WepubError::InvalidUrl`] if `base_url` does not parse as a
+    /// URL.
+    pub fn with_base_url(mut self, base_url: &str) -> Result<Self> {
+        let parsed = Url::parse(base_url)
+            .map_err(|e| WepubError::InvalidUrl(format!("{base_url:?}: {e}")))?;
+        self.base_url = ensure_trailing_slash(parsed);
+        Ok(self)
     }
 
     /// Upload `zip` and create a new version on the bound add-on.
@@ -836,9 +842,24 @@ mod tests {
             "secret".into(),
         )
         .unwrap()
-        .with_base_url(Url::parse("http://127.0.0.1:8000/api/v5/").unwrap());
+        .with_base_url("http://127.0.0.1:8000/api/v5/")
+        .unwrap();
         let url = store.endpoint("addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
+    }
+
+    #[test]
+    fn with_base_url_rejects_garbage() {
+        let store = FirefoxStore::from_jwt_credentials(
+            "test-addon".into(),
+            "issuer".into(),
+            "secret".into(),
+        )
+        .unwrap();
+        let Err(err) = store.with_base_url("not a url") else {
+            panic!("expected with_base_url to reject");
+        };
+        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
     #[test]
@@ -858,7 +879,8 @@ mod tests {
     fn store_for(server: &MockServer) -> FirefoxStore {
         FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
-            .with_base_url(Url::parse(&server.uri()).unwrap())
+            .with_base_url(&server.uri())
+            .unwrap()
     }
 
     fn fast_poll() -> PollConfig {
