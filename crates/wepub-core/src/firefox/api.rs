@@ -226,7 +226,7 @@ impl FirefoxStore {
                 }
                 let body = upload.validation.as_ref().map_or_else(
                     || "validation failed (no detail provided)".to_string(),
-                    ToString::to_string,
+                    |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
                 );
                 return Err(WepubError::Validation(body));
             }
