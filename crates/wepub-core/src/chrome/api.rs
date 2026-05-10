@@ -203,13 +203,6 @@ impl ChromeStore {
         let mut state: Option<UploadState> = Some(initial_state);
 
         loop {
-            tracing::info!(
-                publisher_id = %self.publisher_id,
-                item_id = %self.item_id,
-                state = ?state,
-                "polling Chrome Web Store upload status"
-            );
-
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::Failed) => {
@@ -236,6 +229,12 @@ impl ChromeStore {
 
             tokio::time::sleep(config.interval).await;
             state = self.fetch_status(token).await?;
+            tracing::info!(
+                publisher_id = %self.publisher_id,
+                item_id = %self.item_id,
+                state = ?state,
+                "polled Chrome Web Store upload status"
+            );
         }
     }
 
