@@ -68,63 +68,44 @@ impl Default for PollConfig {
     }
 }
 
-/// Successful response from the CWS `:publish` endpoint.
-///
-/// Note that a successful HTTP response can still indicate a business-level
-/// failure: terminal states (`Rejected`, `Cancelled`) are surfaced as
-/// [`WepubError::Publish`] instead, so values delivered here are always one
-/// of the non-terminal states.
+// Successful response from the CWS `:publish` endpoint. Internal-only:
+// terminal states (`Rejected`, `Cancelled`) are turned into
+// `WepubError::Publish`, the non-terminal states are echoed via
+// `tracing::info!` from inside `publish`, so callers do not need the
+// raw values.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PublishResponse {
-    /// CWS item id that was published.
-    pub item_id: String,
-    /// State of the item right after the publish call. Terminal failure
-    /// states never reach here.
-    pub state: ItemState,
+pub(crate) struct PublishResponse {
+    pub(crate) item_id: String,
+    pub(crate) state: ItemState,
 }
 
-/// State of a Chrome Web Store item right after a publish request.
-///
-/// Only the values documented in the official CWS v2 reference are surfaced;
-/// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
-/// deserialization to fail fast on unknown wire values.
+// State of a Chrome Web Store item right after a publish request.
+//
+// Only the values documented in the official CWS v2 reference are surfaced;
+// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
+// deserialization to fail fast on unknown wire values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ItemState {
-    /// Awaiting Google's review queue.
+pub(crate) enum ItemState {
     PendingReview,
-    /// Reviewed and parked in staging, awaiting a manual rollout from the
-    /// Developer Dashboard.
     Staged,
-    /// Live in the public store.
     Published,
-    /// Visible only to trusted testers. A legacy state left over from the v1
-    /// API; not produced by v2 publish but can still appear in
-    /// `fetchStatus` responses for older items.
     PublishedToTesters,
-    /// Terminal failure. Surfaced as [`WepubError::Publish`] rather than as
-    /// a [`PublishResponse`] value.
     Rejected,
-    /// Terminal failure. Surfaced as [`WepubError::Publish`] rather than as
-    /// a [`PublishResponse`] value.
     Cancelled,
 }
 
-/// State of an asynchronous upload reported by `:fetchStatus`.
-///
-/// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
-/// expected never to appear on the wire; serde will refuse to decode it.
+// State of an asynchronous upload reported by `:fetchStatus`.
+//
+// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
+// expected never to appear on the wire; serde will refuse to decode it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum UploadState {
-    /// Upload finished and is ready to be published.
+pub(crate) enum UploadState {
     Succeeded,
-    /// Upload is still being processed by Google.
     InProgress,
-    /// Upload failed. Surfaced as [`WepubError::Upload`].
     Failed,
-    /// No upload attempt was found. Surfaced as [`WepubError::Upload`].
     NotFound,
 }
 
@@ -177,8 +158,8 @@ impl ChromeStore {
     ///
     /// Fails if the underlying HTTP client cannot be built. The token
     /// exchange itself happens lazily inside `publish`, so credential
-    /// problems are reported there as [`WepubError::Auth`] or
-    /// [`WepubError::Api`].
+    /// problems surface there as one of the [`WepubError`] variants
+    /// described on `publish`.
     pub fn from_client_credentials(
         publisher_id: String,
         item_id: String,
@@ -228,11 +209,16 @@ impl ChromeStore {
     /// elapses. A 200 OK response from `:publish` whose state is
     /// `REJECTED` or `CANCELLED` is reported as [`WepubError::Publish`].
     ///
+    /// Progress (`uploading...`, `submitted ... state=...`) is emitted
+    /// through the `tracing` crate; library consumers configure their own
+    /// subscriber to render or capture it.
+    ///
     /// # Errors
     ///
-    /// Returns one of [`WepubError::Network`], [`WepubError::Api`],
-    /// [`WepubError::Auth`], [`WepubError::Upload`], or
-    /// [`WepubError::Publish`] depending on which step fails.
+    /// On failure, returns one of [`WepubError::Network`],
+    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Json`],
+    /// [`WepubError::Upload`], [`WepubError::Publish`] or
+    /// [`WepubError::Internal`] depending on which step failed.
     ///
     /// # Examples
     ///
@@ -248,7 +234,7 @@ impl ChromeStore {
     ///     "refresh-token".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// let resp = store
+    /// store
     ///     .publish(
     ///         zip,
     ///         PublishOptions {
@@ -257,16 +243,16 @@ impl ChromeStore {
     ///         },
     ///     )
     ///     .await?;
-    /// println!("submitted {}: {:?}", resp.item_id, resp.state);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<PublishResponse> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let token = self.get_token().await?;
         let initial = self.upload(&token, zip).await?;
         self.wait_until_uploaded(&token, initial, &options.poll)
             .await?;
-        self.submit_for_publish(&token, &options).await
+        self.submit_for_publish(&token, &options).await?;
+        Ok(())
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
@@ -422,7 +408,14 @@ impl ChromeStore {
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
-            | ItemState::PublishedToTesters => Ok(parsed),
+            | ItemState::PublishedToTesters => {
+                tracing::info!(
+                    item_id = %parsed.item_id,
+                    state = ?parsed.state,
+                    "submitted item for publish"
+                );
+                Ok(parsed)
+            }
         }
     }
 
@@ -1041,11 +1034,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let resp = store
+        store
             .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
             .await
             .unwrap();
-        assert_eq!(resp.item_id, "item-1");
     }
 
     // When upload returns SUCCEEDED immediately, no fetchStatus call should be

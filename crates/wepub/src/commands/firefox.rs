@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use tokio::io::AsyncReadExt;
-use wepub_core::firefox::{
-    Application, Channel, Compatibility, FirefoxStore, PublishOptions, VersionResponse,
-};
+use wepub_core::firefox::{Application, Channel, Compatibility, FirefoxStore, PublishOptions};
 
 use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
 
@@ -52,12 +50,10 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         ..PublishOptions::default()
     };
 
-    let VersionResponse { id } = store
+    store
         .publish(zip, options)
         .await
         .context("AMO publish failed")?;
-
-    tracing::info!(version_id = id, "published version");
     Ok(())
 }
 

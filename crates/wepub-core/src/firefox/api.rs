@@ -148,11 +148,12 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// Successful response from creating a new add-on version on AMO.
+// Successful response from creating a new add-on version on AMO.
+// Internal-only: the id is echoed via `tracing::info!` from `publish` and
+// not surfaced to the caller because the only documented use was logging.
 #[derive(Debug, Clone, Deserialize)]
-pub struct VersionResponse {
-    /// AMO-assigned numeric version id.
-    pub id: u64,
+pub(crate) struct VersionResponse {
+    pub(crate) id: u64,
 }
 
 /// Client for the AMO Add-on Versions API (v5).
@@ -213,39 +214,34 @@ impl FirefoxStore {
     /// `options.source` is set) attach the source archive in a follow-up
     /// PATCH. The polling cadence is controlled by `options.poll`.
     ///
+    /// Progress (`uploading...`, `polling AMO upload status`, `published
+    /// version id=...`) is emitted through the `tracing` crate; library
+    /// consumers configure their own subscriber to render or capture it.
+    ///
     /// # Errors
     ///
-    /// Returns one of [`WepubError::Network`], [`WepubError::Api`],
-    /// [`WepubError::Auth`], [`WepubError::Validation`], or
-    /// [`WepubError::Io`] depending on which step fails.
+    /// On failure, returns one of [`WepubError::Network`],
+    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Validation`],
+    /// [`WepubError::Json`], [`WepubError::Io`] or [`WepubError::Internal`]
+    /// depending on which step failed.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{Application, Channel, Compatibility, FirefoxStore, PublishOptions};
+    /// use wepub_core::firefox::{FirefoxStore, PublishOptions};
     ///
     /// let store = FirefoxStore::from_jwt_credentials(
     ///     "myaddon@example.com".into(),
-    ///     "user:1234567:89".into(),
+    ///     "user:12345:6789".into(),
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// let version = store
-    ///     .publish(
-    ///         zip,
-    ///         PublishOptions {
-    ///             channel: Channel::Listed,
-    ///             compatibility: Some(Compatibility::Apps(vec![Application::Firefox])),
-    ///             ..PublishOptions::default()
-    ///         },
-    ///     )
-    ///     .await?;
-    /// println!("submitted version {}", version.id);
+    /// store.publish(zip, PublishOptions::default()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<VersionResponse> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
@@ -264,7 +260,8 @@ impl FirefoxStore {
             self.patch_version_source(version.id, source).await?;
         }
 
-        Ok(version)
+        tracing::info!(version_id = version.id, "published version");
+        Ok(())
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
@@ -672,9 +669,7 @@ mod tests {
             poll: fast_poll(),
             ..PublishOptions::default()
         };
-        let resp = store.publish(b"zip".to_vec(), options).await.unwrap();
-
-        assert_eq!(resp.id, 7777);
+        store.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]
@@ -717,9 +712,7 @@ mod tests {
             poll: fast_poll(),
             ..PublishOptions::default()
         };
-        let resp = store.publish(b"zip".to_vec(), options).await.unwrap();
-
-        assert_eq!(resp.id, 9999);
+        store.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]

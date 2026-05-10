@@ -9,6 +9,4 @@
 mod api;
 mod auth;
 
-pub use api::{
-    ChromeStore, ItemState, PollConfig, PublishOptions, PublishResponse, PublishType, UploadState,
-};
+pub use api::{ChromeStore, PollConfig, PublishOptions, PublishType};

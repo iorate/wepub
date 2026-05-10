@@ -22,12 +22,11 @@
 //!
 //! let store = FirefoxStore::from_jwt_credentials(
 //!     "myaddon@example.com".into(),
-//!     "user:1234567:89".into(),
+//!     "user:12345:6789".into(),
 //!     "jwt-secret".into(),
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! let version = store.publish(zip, PublishOptions::default()).await?;
-//! println!("submitted version {}", version.id);
+//! store.publish(zip, PublishOptions::default()).await?;
 //! # Ok(())
 //! # }
 //! ```

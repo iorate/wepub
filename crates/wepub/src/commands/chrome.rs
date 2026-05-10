@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{ChromeStore, PublishOptions, PublishResponse, PublishType};
+use wepub_core::chrome::{ChromeStore, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, PublishTypeArg};
 
@@ -23,12 +23,10 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         ..PublishOptions::default()
     };
 
-    let PublishResponse { item_id, state } = store
+    store
         .publish(zip, options)
         .await
         .context("Chrome Web Store publish failed")?;
-
-    tracing::info!(item_id, state = ?state, "submitted item for publish");
     Ok(())
 }
 
