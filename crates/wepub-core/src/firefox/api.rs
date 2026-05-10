@@ -14,19 +14,37 @@ const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// Options that shape how [`FirefoxStore::publish`] creates the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
+    /// Distribution channel for the new version.
     pub channel: Channel,
+    /// Application compatibility declarations. `None` falls back to whatever
+    /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
+    /// Release notes keyed by AMO locale code (e.g. `"en-US"`).
     pub release_notes: HashMap<String, String>,
+    /// Optional message to AMO reviewers, typically containing build
+    /// reproduction steps.
     pub approval_notes: Option<String>,
+    /// Optional source archive to attach to the version. AMO requires this
+    /// when reviewers cannot reproduce the bundled artefact from the listing.
     pub source: Option<Vec<u8>>,
+    /// Polling cadence and overall timeout used while waiting for AMO to
+    /// finish validating the upload.
     pub poll: PollConfig,
 }
 
+/// Polling cadence and budget for [`FirefoxStore::publish`]'s
+/// validation-status loop.
+///
+/// Defaults to 1 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
 pub struct PollConfig {
+    /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
+    /// Maximum total time to wait before giving up with
+    /// [`WepubError::Validation`].
     pub timeout: Duration,
 }
 
@@ -39,10 +57,14 @@ impl Default for PollConfig {
     }
 }
 
+/// Distribution channel for an AMO version.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Channel {
+    /// Listed on addons.mozilla.org. Goes through public review (the
+    /// default).
     #[default]
     Listed,
+    /// Self-distributed signed build. Reviewed but not listed.
     Unlisted,
 }
 
@@ -55,11 +77,18 @@ impl Channel {
     }
 }
 
+/// Compatibility declaration sent to AMO when creating the version.
+///
+/// AMO's wire format accepts either a flat list of compatible apps (with
+/// versions inferred from the manifest) or an object mapping each app to an
+/// explicit version range. `wepub-core` exposes both shapes through this
+/// enum.
 #[derive(Debug, Clone)]
 pub enum Compatibility {
-    /// Shorthand: list compatible apps; min/max come from the manifest.
+    /// Shorthand form: list compatible apps; min/max come from the manifest.
     Apps(Vec<Application>),
-    /// Detailed: per-app version range. Empty `VersionRange` means "use manifest".
+    /// Detailed form: per-app explicit version range. An empty
+    /// [`VersionRange`] means "use the value declared in the manifest".
     Detailed(HashMap<Application, VersionRange>),
 }
 
@@ -75,9 +104,12 @@ impl Serialize for Compatibility {
     }
 }
 
+/// AMO application identifier used in compatibility declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Application {
+    /// Desktop Firefox.
     Firefox,
+    /// Firefox for Android.
     Android,
 }
 
@@ -99,19 +131,35 @@ impl Serialize for Application {
     }
 }
 
+/// Explicit `min` / `max` application version pair used by
+/// [`Compatibility::Detailed`].
+///
+/// Either bound can be `None`, in which case the corresponding manifest
+/// value is used.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct VersionRange {
+    /// Minimum compatible application version. `None` defers to the
+    /// manifest's `strict_min_version`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min: Option<String>,
+    /// Maximum compatible application version. `None` defers to the
+    /// manifest's `strict_max_version`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max: Option<String>,
 }
 
+/// Successful response from creating a new add-on version on AMO.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VersionResponse {
+    /// AMO-assigned numeric version id.
     pub id: u64,
 }
 
+/// Client for the AMO Add-on Versions API (v5).
+///
+/// The store holds the JWT credential pair and a reusable HTTP client; it
+/// is cheap to construct and intended to live for the duration of a single
+/// publish run.
 // Debug intentionally omitted: holds the AMO JWT secret.
 pub struct FirefoxStore {
     addon_id: String,
@@ -122,6 +170,16 @@ pub struct FirefoxStore {
 }
 
 impl FirefoxStore {
+    /// Build a store bound to `addon_id`, signing requests with the supplied
+    /// HS256 JWT credential pair (issuer + secret).
+    ///
+    /// Get the credentials from
+    /// <https://addons.mozilla.org/developers/addon/api/key/>.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
+    /// platform-verifier initialization fails).
     pub fn from_jwt_credentials(
         addon_id: String,
         jwt_issuer: String,
@@ -136,12 +194,57 @@ impl FirefoxStore {
         })
     }
 
+    /// Override the AMO API base URL.
+    ///
+    /// Defaults to `https://addons.mozilla.org/api/v5/`. Intended for tests
+    /// or when pointing at a local `mozilla/addons-server` instance. A
+    /// missing trailing slash is added automatically so that relative paths
+    /// join correctly.
     #[must_use]
     pub fn with_base_url(mut self, base_url: Url) -> Self {
         self.base_url = ensure_trailing_slash(base_url);
         self
     }
 
+    /// Upload `zip` and create a new version on the bound add-on.
+    ///
+    /// The call performs four steps internally: upload the archive, poll
+    /// AMO until validation finishes, create the version, and (if
+    /// `options.source` is set) attach the source archive in a follow-up
+    /// PATCH. The polling cadence is controlled by `options.poll`.
+    ///
+    /// # Errors
+    ///
+    /// Returns one of [`WepubError::Network`], [`WepubError::Api`],
+    /// [`WepubError::Auth`], [`WepubError::Validation`], or
+    /// [`WepubError::Io`] depending on which step fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn run() -> wepub_core::Result<()> {
+    /// use wepub_core::firefox::{Application, Channel, Compatibility, FirefoxStore, PublishOptions};
+    ///
+    /// let store = FirefoxStore::from_jwt_credentials(
+    ///     "myaddon@example.com".into(),
+    ///     "user:1234567:89".into(),
+    ///     "jwt-secret".into(),
+    /// )?;
+    /// let zip = std::fs::read("./addon.zip")?;
+    /// let version = store
+    ///     .publish(
+    ///         zip,
+    ///         PublishOptions {
+    ///             channel: Channel::Listed,
+    ///             compatibility: Some(Compatibility::Apps(vec![Application::Firefox])),
+    ///             ..PublishOptions::default()
+    ///         },
+    ///     )
+    ///     .await?;
+    /// println!("submitted version {}", version.id);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<VersionResponse> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self

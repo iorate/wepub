@@ -11,24 +11,51 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// Options that shape how [`ChromeStore::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
+    /// Whether the version goes live immediately after review or stays in
+    /// staging for a manual rollout from the Developer Dashboard.
     pub publish_type: PublishType,
+
+    /// Bypass the standard review queue. Only honoured for changes Google
+    /// considers eligible (e.g. declarativeNetRequest rule edits); otherwise
+    /// the request is routed through normal review regardless.
     pub skip_review: bool,
+
+    /// Initial percentage of users to roll the new version out to.
+    /// `None` means "use the value configured in the Developer Dashboard".
     pub deploy_percentage: Option<u8>,
+
+    /// Polling cadence and overall timeout used while waiting for the
+    /// asynchronous upload to finish processing.
     pub poll: PollConfig,
 }
 
+/// Whether a successfully reviewed version goes live immediately or waits in
+/// staging for a manual rollout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PublishType {
+    /// Publish immediately after review (the default). Maps to the wire
+    /// value `DEFAULT_PUBLISH`, but `wepub-core` simply omits the field so
+    /// the server falls back to its own default.
     #[default]
     Default,
+    /// Hold the reviewed version in staging until a Developer Dashboard
+    /// operator triggers the rollout. Maps to the wire value
+    /// `STAGED_PUBLISH`.
     Staged,
 }
 
+/// Polling cadence and budget for [`ChromeStore::publish`]'s upload-status
+/// loop.
+///
+/// Defaults to 2 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
 pub struct PollConfig {
+    /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
+    /// Maximum total time to wait before giving up with [`WepubError::Upload`].
     pub timeout: Duration,
 }
 
@@ -41,33 +68,71 @@ impl Default for PollConfig {
     }
 }
 
+/// Successful response from the CWS `:publish` endpoint.
+///
+/// Note that a successful HTTP response can still indicate a business-level
+/// failure: terminal states (`Rejected`, `Cancelled`) are surfaced as
+/// [`WepubError::Publish`] instead, so values delivered here are always one
+/// of the non-terminal states.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishResponse {
+    /// CWS item id that was published.
     pub item_id: String,
+    /// State of the item right after the publish call. Terminal failure
+    /// states never reach here.
     pub state: ItemState,
 }
 
+/// State of a Chrome Web Store item right after a publish request.
+///
+/// Only the values documented in the official CWS v2 reference are surfaced;
+/// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
+/// deserialization to fail fast on unknown wire values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ItemState {
+    /// Awaiting Google's review queue.
     PendingReview,
+    /// Reviewed and parked in staging, awaiting a manual rollout from the
+    /// Developer Dashboard.
     Staged,
+    /// Live in the public store.
     Published,
+    /// Visible only to trusted testers. A legacy state left over from the v1
+    /// API; not produced by v2 publish but can still appear in
+    /// `fetchStatus` responses for older items.
     PublishedToTesters,
+    /// Terminal failure. Surfaced as [`WepubError::Publish`] rather than as
+    /// a [`PublishResponse`] value.
     Rejected,
+    /// Terminal failure. Surfaced as [`WepubError::Publish`] rather than as
+    /// a [`PublishResponse`] value.
     Cancelled,
 }
 
+/// State of an asynchronous upload reported by `:fetchStatus`.
+///
+/// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
+/// expected never to appear on the wire; serde will refuse to decode it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UploadState {
+    /// Upload finished and is ready to be published.
     Succeeded,
+    /// Upload is still being processed by Google.
     InProgress,
+    /// Upload failed. Surfaced as [`WepubError::Upload`].
     Failed,
+    /// No upload attempt was found. Surfaced as [`WepubError::Upload`].
     NotFound,
 }
 
+/// Client for the Chrome Web Store Publish API (v2).
+///
+/// The store holds OAuth credentials and a reusable HTTP client; it is cheap
+/// to construct and intended to live for the duration of a single publish
+/// run.
 // Debug intentionally omitted: holds OAuth credentials.
 pub struct ChromeStore {
     publisher_id: String,
@@ -79,6 +144,17 @@ pub struct ChromeStore {
 }
 
 impl ChromeStore {
+    /// Build a store from a pre-fetched OAuth access token.
+    ///
+    /// Useful when the caller already obtained a token via Workload Identity
+    /// Federation, `gcloud auth print-access-token`, or any other flow that
+    /// produces a Bearer token directly. The token is used verbatim; this
+    /// constructor never touches the OAuth token endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
+    /// platform-verifier initialization fails).
     pub fn from_access_token(
         publisher_id: String,
         item_id: String,
@@ -91,6 +167,18 @@ impl ChromeStore {
         )
     }
 
+    /// Build a store from a long-lived OAuth refresh token.
+    ///
+    /// `wepub-core` exchanges the refresh token for an access token once at
+    /// the start of [`publish`](ChromeStore::publish) and reuses it for the
+    /// remaining requests of that call.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the underlying HTTP client cannot be built. The token
+    /// exchange itself happens lazily inside `publish`, so credential
+    /// problems are reported there as [`WepubError::Auth`] or
+    /// [`WepubError::Api`].
     pub fn from_client_credentials(
         publisher_id: String,
         item_id: String,
@@ -109,18 +197,70 @@ impl ChromeStore {
         )
     }
 
+    /// Override the Chrome Web Store API root URL.
+    ///
+    /// Defaults to `https://chromewebstore.googleapis.com/`. Intended for
+    /// tests that point the client at a mock server. A missing trailing
+    /// slash is added automatically so that relative paths join correctly.
     #[must_use]
     pub fn with_root_url(mut self, root_url: Url) -> Self {
         self.root_url = ensure_trailing_slash(root_url);
         self
     }
 
+    /// Override the Google OAuth token endpoint URL.
+    ///
+    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
+    /// tests; only consulted when the store was built with
+    /// [`from_client_credentials`](ChromeStore::from_client_credentials).
     #[must_use]
     pub fn with_token_url(mut self, token_url: Url) -> Self {
         self.token_url = token_url;
         self
     }
 
+    /// Upload `zip` and submit the resulting item version for publish.
+    ///
+    /// Internally this performs three steps: token exchange (refresh-token
+    /// flow only), upload, and `:publish`. If the upload returns
+    /// `IN_PROGRESS`, the call polls `:fetchStatus` according to
+    /// `options.poll` until the upload reaches `SUCCEEDED` or the timeout
+    /// elapses. A 200 OK response from `:publish` whose state is
+    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::Publish`].
+    ///
+    /// # Errors
+    ///
+    /// Returns one of [`WepubError::Network`], [`WepubError::Api`],
+    /// [`WepubError::Auth`], [`WepubError::Upload`], or
+    /// [`WepubError::Publish`] depending on which step fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn run() -> wepub_core::Result<()> {
+    /// use wepub_core::chrome::{ChromeStore, PublishOptions, PublishType};
+    ///
+    /// let store = ChromeStore::from_client_credentials(
+    ///     "publisher-1".into(),
+    ///     "abcdefghijklmnopabcdefghijklmnop".into(),
+    ///     "client-id".into(),
+    ///     "client-secret".into(),
+    ///     "refresh-token".into(),
+    /// )?;
+    /// let zip = std::fs::read("./extension.zip")?;
+    /// let resp = store
+    ///     .publish(
+    ///         zip,
+    ///         PublishOptions {
+    ///             publish_type: PublishType::Staged,
+    ///             ..PublishOptions::default()
+    ///         },
+    ///     )
+    ///     .await?;
+    /// println!("submitted {}: {:?}", resp.item_id, resp.state);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<PublishResponse> {
         let token = self.get_token().await?;
         let initial = self.upload(&token, zip).await?;
