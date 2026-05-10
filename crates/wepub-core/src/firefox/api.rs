@@ -341,7 +341,7 @@ struct VersionCreateBody<'a> {
 async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
     let status = resp.status();
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = resp.text().await?;
         return Err(WepubError::Api {
             status: status.as_u16(),
             body,
