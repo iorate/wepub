@@ -1,6 +1,10 @@
 [package]
 name = "wepub-core"
 version = "0.1.0"
+description = "Library for publishing browser extensions to Chrome Web Store and Firefox AMO"
+readme = "../../README.md"
+keywords = ["browser-extension", "chrome", "firefox", "amo", "cws"]
+categories = ["api-bindings", "web-programming::http-client"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
