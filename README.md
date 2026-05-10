@@ -73,6 +73,10 @@ Run `wepub chrome publish --help` for the full list of flags (publish type, depl
 
 > Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
 
+### `.env` file
+
+`wepub` reads a `.env` file from the current working directory at startup. Any `KEY=VALUE` lines populate the process environment for subsequent flag resolution, so the `WEPUB_*` variables documented above can live in `.env` alongside your project. Existing shell environment values take precedence over `.env` entries.
+
 ### Logging
 
 - Default: `INFO` level (upload / validation progress visible)
