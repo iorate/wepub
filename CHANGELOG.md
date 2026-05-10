@@ -5,3 +5,4 @@
 ### 📚 Documentation
 
 - [**breaking**] Update advertised MSRV to 1.88 (#5)
+
