@@ -112,6 +112,7 @@ pub struct VersionResponse {
     pub id: u64,
 }
 
+// Debug intentionally omitted: holds the AMO JWT secret.
 pub struct FirefoxStore {
     addon_id: String,
     issuer: String,

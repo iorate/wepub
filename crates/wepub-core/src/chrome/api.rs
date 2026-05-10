@@ -68,6 +68,7 @@ pub enum UploadState {
     NotFound,
 }
 
+// Debug intentionally omitted: holds OAuth credentials.
 pub struct ChromeStore {
     publisher_id: String,
     item_id: String,
@@ -283,7 +284,7 @@ impl ChromeStore {
     }
 }
 
-#[derive(Debug, Clone)]
+// Debug and Clone intentionally omitted: holds OAuth secrets / refresh token.
 enum Credentials {
     AccessToken(String),
     ClientCredentials {
