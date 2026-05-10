@@ -168,29 +168,25 @@ impl ChromeStore {
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::Failed) => {
-                    return Err(WepubError::UploadFailed {
-                        item_id: self.item_id.clone(),
-                        body: "The upload failed.".to_string(),
-                    });
+                    return Err(WepubError::Upload("The upload failed.".to_string()));
                 }
                 // None (lastAsyncUploadState absent, i.e. no async upload in
                 // the past 24h) is treated the same as the explicit NOT_FOUND
                 // value: we have just uploaded, so the server should know
                 // about it. Either response indicates something is wrong.
                 Some(UploadState::NotFound) | None => {
-                    return Err(WepubError::UploadFailed {
-                        item_id: self.item_id.clone(),
-                        body: "An upload attempt was not found.".to_string(),
-                    });
+                    return Err(WepubError::Upload(
+                        "An upload attempt was not found.".to_string(),
+                    ));
                 }
                 Some(UploadState::InProgress) => {}
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::UploadFailed {
-                    item_id: self.item_id.clone(),
-                    body: format!("upload polling timed out after {:?}", config.timeout),
-                });
+                return Err(WepubError::Upload(format!(
+                    "upload polling timed out after {:?}",
+                    config.timeout
+                )));
             }
 
             tokio::time::sleep(config.interval).await;
@@ -567,11 +563,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::UploadFailed { item_id, body } => {
-                assert_eq!(item_id, "item-1");
+            WepubError::Upload(body) => {
                 assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected UploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::Upload, got {other:?}"),
         }
     }
 
@@ -615,11 +610,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::UploadFailed { item_id, body } => {
-                assert_eq!(item_id, "item-1");
+            WepubError::Upload(body) => {
                 assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected UploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::Upload, got {other:?}"),
         }
     }
 

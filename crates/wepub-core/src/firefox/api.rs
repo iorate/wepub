@@ -251,17 +251,14 @@ impl FirefoxStore {
                     || "validation failed (no detail provided)".to_string(),
                     ToString::to_string,
                 );
-                return Err(WepubError::Validation {
-                    uuid: uuid.to_string(),
-                    body,
-                });
+                return Err(WepubError::Validation(body));
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Validation {
-                    uuid: uuid.to_string(),
-                    body: format!("validation timed out after {:?}", config.timeout),
-                });
+                return Err(WepubError::Validation(format!(
+                    "validation timed out after {:?}",
+                    config.timeout
+                )));
             }
 
             tokio::time::sleep(config.interval).await;
@@ -614,8 +611,7 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
-                assert_eq!(uuid, "uuid-2");
+            WepubError::Validation(body) => {
                 assert!(body.contains("manifest broken"));
             }
             other => panic!("expected WepubError::Validation, got {other:?}"),
@@ -640,8 +636,7 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
-                assert_eq!(uuid, "uuid-3");
+            WepubError::Validation(body) => {
                 assert!(body.contains("timed out"));
             }
             other => panic!("expected WepubError::Validation, got {other:?}"),
