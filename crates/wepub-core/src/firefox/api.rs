@@ -14,6 +14,31 @@ const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+#[derive(Debug, Clone, Default)]
+pub struct PublishOptions {
+    pub channel: Channel,
+    pub compatibility: Option<Compatibility>,
+    pub release_notes: HashMap<String, String>,
+    pub approval_notes: Option<String>,
+    pub source: Option<Vec<u8>>,
+    pub poll: PollConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct PollConfig {
+    pub interval: Duration,
+    pub timeout: Duration,
+}
+
+impl Default for PollConfig {
+    fn default() -> Self {
+        Self {
+            interval: DEFAULT_POLL_INTERVAL,
+            timeout: DEFAULT_POLL_TIMEOUT,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Channel {
     #[default]
@@ -26,6 +51,26 @@ impl Channel {
         match self {
             Channel::Listed => "listed",
             Channel::Unlisted => "unlisted",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Compatibility {
+    /// Shorthand: list compatible apps; min/max come from the manifest.
+    Apps(Vec<Application>),
+    /// Detailed: per-app version range. Empty `VersionRange` means "use manifest".
+    Detailed(HashMap<Application, VersionRange>),
+}
+
+impl Serialize for Compatibility {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Apps(apps) => apps.serialize(serializer),
+            Self::Detailed(map) => map.serialize(serializer),
         }
     }
 }
@@ -62,72 +107,9 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Compatibility {
-    /// Shorthand: list compatible apps; min/max come from the manifest.
-    Apps(Vec<Application>),
-    /// Detailed: per-app version range. Empty `VersionRange` means "use manifest".
-    Detailed(HashMap<Application, VersionRange>),
-}
-
-impl Serialize for Compatibility {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Apps(apps) => apps.serialize(serializer),
-            Self::Detailed(map) => map.serialize(serializer),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    pub channel: Channel,
-    pub compatibility: Option<Compatibility>,
-    pub release_notes: HashMap<String, String>,
-    pub approval_notes: Option<String>,
-    pub source: Option<Vec<u8>>,
-    pub poll: PollConfig,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct VersionResponse {
     pub id: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct UploadResponse {
-    pub uuid: String,
-    #[allow(dead_code)]
-    pub channel: String,
-    pub processed: bool,
-    #[allow(dead_code)]
-    pub submitted: bool,
-    #[allow(dead_code)]
-    pub url: String,
-    pub valid: bool,
-    #[serde(default)]
-    pub validation: Option<serde_json::Value>,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub version: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PollConfig {
-    pub interval: Duration,
-    pub timeout: Duration,
-}
-
-impl Default for PollConfig {
-    fn default() -> Self {
-        Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
-        }
-    }
 }
 
 pub struct FirefoxStore {
@@ -159,17 +141,6 @@ impl FirefoxStore {
         self
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
-        self.base_url
-            .join(path)
-            .map_err(|e| WepubError::Auth(format!("invalid endpoint path {path:?}: {e}")))
-    }
-
-    fn auth_header(&self) -> Result<String> {
-        let token = generate_jwt(&self.issuer, &self.secret)?;
-        Ok(format!("JWT {token}"))
-    }
-
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<VersionResponse> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self
@@ -190,6 +161,12 @@ impl FirefoxStore {
         }
 
         Ok(version)
+    }
+
+    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
+        self.base_url
+            .join(path)
+            .map_err(|e| WepubError::Auth(format!("invalid endpoint path {path:?}: {e}")))
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
@@ -333,6 +310,29 @@ impl FirefoxStore {
 
         decode_response(resp).await
     }
+
+    fn auth_header(&self) -> Result<String> {
+        let token = generate_jwt(&self.issuer, &self.secret)?;
+        Ok(format!("JWT {token}"))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct UploadResponse {
+    pub uuid: String,
+    #[allow(dead_code)]
+    pub channel: String,
+    pub processed: bool,
+    #[allow(dead_code)]
+    pub submitted: bool,
+    #[allow(dead_code)]
+    pub url: String,
+    pub valid: bool,
+    #[serde(default)]
+    pub validation: Option<serde_json::Value>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -344,14 +344,6 @@ struct VersionCreateBody<'a> {
     release_notes: &'a HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
-}
-
-fn ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        let new_path = format!("{}/", url.path());
-        url.set_path(&new_path);
-    }
-    url
 }
 
 async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
@@ -367,168 +359,20 @@ async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response
     serde_json::from_slice(&body).map_err(WepubError::from)
 }
 
+fn ensure_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        let new_path = format!("{}/", url.path());
+        url.set_path(&new_path);
+    }
+    url
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn channel_serialises_as_amo_expects() {
-        assert_eq!(Channel::Listed.as_str(), "listed");
-        assert_eq!(Channel::Unlisted.as_str(), "unlisted");
-    }
-
-    #[test]
-    fn ensure_trailing_slash_appends_when_missing() {
-        let url = Url::parse("https://example.com/api/v5").unwrap();
-        let result = ensure_trailing_slash(url);
-        assert_eq!(result.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
-    fn ensure_trailing_slash_is_idempotent() {
-        let url = Url::parse("https://example.com/api/v5/").unwrap();
-        let result = ensure_trailing_slash(url);
-        assert_eq!(result.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
-    fn endpoint_joins_relative_path() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap();
-        let url = store.endpoint("addons/upload/").unwrap();
-        assert_eq!(
-            url.as_str(),
-            "https://addons.mozilla.org/api/v5/addons/upload/"
-        );
-    }
-
-    #[test]
-    fn with_base_url_overrides_default() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap()
-        .with_base_url(Url::parse("http://127.0.0.1:8000/api/v5/").unwrap());
-        let url = store.endpoint("addons/upload/").unwrap();
-        assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
-    }
-
-    fn body_to_json(
-        upload: &str,
-        compatibility: Option<&Compatibility>,
-        release_notes: &HashMap<String, String>,
-        approval_notes: Option<&str>,
-    ) -> serde_json::Value {
-        serde_json::to_value(VersionCreateBody {
-            upload,
-            compatibility,
-            release_notes,
-            approval_notes,
-        })
-        .unwrap()
-    }
-
-    #[test]
-    fn version_create_body_minimal_only_has_upload() {
-        let json = body_to_json("uuid-123", None, &HashMap::new(), None);
-        assert_eq!(json, serde_json::json!({ "upload": "uuid-123" }));
-    }
-
-    #[test]
-    fn version_create_body_with_apps_shorthand() {
-        let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
-        assert_eq!(
-            json,
-            serde_json::json!({
-                "upload": "uuid-123",
-                "compatibility": ["firefox", "android"],
-            })
-        );
-    }
-
-    #[test]
-    fn version_create_body_with_detailed_compatibility_omits_empty_min_max() {
-        let mut map = HashMap::new();
-        map.insert(
-            Application::Firefox,
-            VersionRange {
-                min: Some("58.0".into()),
-                max: Some("120.0".into()),
-            },
-        );
-        map.insert(
-            Application::Android,
-            VersionRange {
-                min: Some("58.0".into()),
-                max: None,
-            },
-        );
-        let compat = Compatibility::Detailed(map);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
-
-        assert_eq!(json["upload"], "uuid-123");
-        assert_eq!(
-            json["compatibility"]["firefox"],
-            serde_json::json!({ "min": "58.0", "max": "120.0" })
-        );
-        assert_eq!(
-            json["compatibility"]["android"],
-            serde_json::json!({ "min": "58.0" })
-        );
-    }
-
-    #[test]
-    fn version_create_body_includes_release_notes_and_approval_notes() {
-        let mut notes = HashMap::new();
-        notes.insert("en-US".into(), "Hello".into());
-        notes.insert("ja".into(), "こんにちは".into());
-
-        let json = body_to_json("uuid-123", None, &notes, Some("for reviewers"));
-
-        assert_eq!(json["upload"], "uuid-123");
-        assert_eq!(json["release_notes"]["en-US"], "Hello");
-        assert_eq!(json["release_notes"]["ja"], "こんにちは");
-        assert_eq!(json["approval_notes"], "for reviewers");
-    }
-
-    // ---- wiremock integration tests ----
-
     use serde_json::json;
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn store_for(server: &MockServer) -> FirefoxStore {
-        FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
-            .unwrap()
-            .with_base_url(Url::parse(&server.uri()).unwrap())
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        }
-    }
-
-    fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {
-        json!({
-            "uuid": uuid,
-            "channel": "listed",
-            "processed": processed,
-            "submitted": false,
-            "url": format!("https://example.com/upload/{uuid}/"),
-            "valid": valid,
-            "validation": null,
-            "version": "1.0.0",
-        })
-    }
 
     #[tokio::test]
     async fn upload_posts_multipart_and_parses_response() {
@@ -798,5 +642,160 @@ mod tests {
             }
             other => panic!("expected WepubError::Api, got {other:?}"),
         }
+    }
+
+    // ---- Unit tests for serialization and URL helpers ----
+
+    #[test]
+    fn channel_serialises_as_amo_expects() {
+        assert_eq!(Channel::Listed.as_str(), "listed");
+        assert_eq!(Channel::Unlisted.as_str(), "unlisted");
+    }
+
+    #[test]
+    fn version_create_body_minimal_only_has_upload() {
+        let json = body_to_json("uuid-123", None, &HashMap::new(), None);
+        assert_eq!(json, serde_json::json!({ "upload": "uuid-123" }));
+    }
+
+    #[test]
+    fn version_create_body_with_apps_shorthand() {
+        let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
+        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "upload": "uuid-123",
+                "compatibility": ["firefox", "android"],
+            })
+        );
+    }
+
+    #[test]
+    fn version_create_body_with_detailed_compatibility_omits_empty_min_max() {
+        let mut map = HashMap::new();
+        map.insert(
+            Application::Firefox,
+            VersionRange {
+                min: Some("58.0".into()),
+                max: Some("120.0".into()),
+            },
+        );
+        map.insert(
+            Application::Android,
+            VersionRange {
+                min: Some("58.0".into()),
+                max: None,
+            },
+        );
+        let compat = Compatibility::Detailed(map);
+        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+
+        assert_eq!(json["upload"], "uuid-123");
+        assert_eq!(
+            json["compatibility"]["firefox"],
+            serde_json::json!({ "min": "58.0", "max": "120.0" })
+        );
+        assert_eq!(
+            json["compatibility"]["android"],
+            serde_json::json!({ "min": "58.0" })
+        );
+    }
+
+    #[test]
+    fn version_create_body_includes_release_notes_and_approval_notes() {
+        let mut notes = HashMap::new();
+        notes.insert("en-US".into(), "Hello".into());
+        notes.insert("ja".into(), "こんにちは".into());
+
+        let json = body_to_json("uuid-123", None, &notes, Some("for reviewers"));
+
+        assert_eq!(json["upload"], "uuid-123");
+        assert_eq!(json["release_notes"]["en-US"], "Hello");
+        assert_eq!(json["release_notes"]["ja"], "こんにちは");
+        assert_eq!(json["approval_notes"], "for reviewers");
+    }
+
+    #[test]
+    fn endpoint_joins_relative_path() {
+        let store = FirefoxStore::from_jwt_credentials(
+            "test-addon".into(),
+            "issuer".into(),
+            "secret".into(),
+        )
+        .unwrap();
+        let url = store.endpoint("addons/upload/").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://addons.mozilla.org/api/v5/addons/upload/"
+        );
+    }
+
+    #[test]
+    fn with_base_url_overrides_default() {
+        let store = FirefoxStore::from_jwt_credentials(
+            "test-addon".into(),
+            "issuer".into(),
+            "secret".into(),
+        )
+        .unwrap()
+        .with_base_url(Url::parse("http://127.0.0.1:8000/api/v5/").unwrap());
+        let url = store.endpoint("addons/upload/").unwrap();
+        assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
+    }
+
+    #[test]
+    fn ensure_trailing_slash_appends_when_missing() {
+        let url = Url::parse("https://example.com/api/v5").unwrap();
+        let result = ensure_trailing_slash(url);
+        assert_eq!(result.as_str(), "https://example.com/api/v5/");
+    }
+
+    #[test]
+    fn ensure_trailing_slash_is_idempotent() {
+        let url = Url::parse("https://example.com/api/v5/").unwrap();
+        let result = ensure_trailing_slash(url);
+        assert_eq!(result.as_str(), "https://example.com/api/v5/");
+    }
+
+    fn store_for(server: &MockServer) -> FirefoxStore {
+        FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
+            .unwrap()
+            .with_base_url(Url::parse(&server.uri()).unwrap())
+    }
+
+    fn fast_poll() -> PollConfig {
+        PollConfig {
+            interval: Duration::from_millis(10),
+            timeout: Duration::from_millis(200),
+        }
+    }
+
+    fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {
+        json!({
+            "uuid": uuid,
+            "channel": "listed",
+            "processed": processed,
+            "submitted": false,
+            "url": format!("https://example.com/upload/{uuid}/"),
+            "valid": valid,
+            "validation": null,
+            "version": "1.0.0",
+        })
+    }
+
+    fn body_to_json(
+        upload: &str,
+        compatibility: Option<&Compatibility>,
+        release_notes: &HashMap<String, String>,
+        approval_notes: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::to_value(VersionCreateBody {
+            upload,
+            compatibility,
+            release_notes,
+            approval_notes,
+        })
+        .unwrap()
     }
 }

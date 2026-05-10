@@ -11,14 +11,59 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Debug, Clone)]
-enum Credentials {
-    AccessToken(String),
-    ClientCredentials {
-        client_id: String,
-        client_secret: String,
-        refresh_token: String,
-    },
+pub struct PublishOptions {
+    pub publish_type: PublishType,
+    pub skip_review: bool,
+    pub deploy_percentage: Option<u8>,
+    pub poll: PollConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PublishType {
+    #[default]
+    Default,
+    Staged,
+}
+
+pub struct PollConfig {
+    pub interval: Duration,
+    pub timeout: Duration,
+}
+
+impl Default for PollConfig {
+    fn default() -> Self {
+        Self {
+            interval: DEFAULT_POLL_INTERVAL,
+            timeout: DEFAULT_POLL_TIMEOUT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishResponse {
+    pub item_id: String,
+    pub state: ItemState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ItemState {
+    PendingReview,
+    Staged,
+    Published,
+    PublishedToTesters,
+    Rejected,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum UploadState {
+    Succeeded,
+    InProgress,
+    Failed,
+    NotFound,
 }
 
 pub struct ChromeStore {
@@ -61,26 +106,19 @@ impl ChromeStore {
         .expect("default URLs are valid and HTTP client builds")
     }
 
-    fn with_credentials(
-        publisher_id: String,
-        item_id: String,
-        credentials: Credentials,
-    ) -> Result<Self> {
-        Ok(Self {
-            publisher_id,
-            item_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(TOKEN_URL).expect("TOKEN_URL is a valid URL"),
-            client: build_client()?,
-        })
-    }
-
     #[must_use]
     pub fn with_base_urls(mut self, root_url: Url, token_url: Url) -> Self {
         self.root_url = ensure_trailing_slash(root_url);
         self.token_url = token_url;
         self
+    }
+
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<PublishResponse> {
+        let token = self.get_token().await?;
+        let initial = self.upload(&token, zip).await?;
+        self.wait_until_uploaded(&token, initial, &options.poll)
+            .await?;
+        self.submit_for_publish(&token, &options).await
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
@@ -223,13 +261,30 @@ impl ChromeStore {
         decode_response(resp).await
     }
 
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<PublishResponse> {
-        let token = self.get_token().await?;
-        let initial = self.upload(&token, zip).await?;
-        self.wait_until_uploaded(&token, initial, &options.poll)
-            .await?;
-        self.submit_for_publish(&token, &options).await
+    fn with_credentials(
+        publisher_id: String,
+        item_id: String,
+        credentials: Credentials,
+    ) -> Result<Self> {
+        Ok(Self {
+            publisher_id,
+            item_id,
+            credentials,
+            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            token_url: Url::parse(TOKEN_URL).expect("TOKEN_URL is a valid URL"),
+            client: build_client()?,
+        })
     }
+}
+
+#[derive(Debug, Clone)]
+enum Credentials {
+    AccessToken(String),
+    ClientCredentials {
+        client_id: String,
+        client_secret: String,
+        refresh_token: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,61 +355,6 @@ fn ensure_trailing_slash(mut url: Url) -> Url {
     url
 }
 
-pub struct PublishOptions {
-    pub publish_type: PublishType,
-    pub skip_review: bool,
-    pub deploy_percentage: Option<u8>,
-    pub poll: PollConfig,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PublishType {
-    #[default]
-    Default,
-    Staged,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PublishResponse {
-    pub item_id: String,
-    pub state: ItemState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ItemState {
-    PendingReview,
-    Staged,
-    Published,
-    PublishedToTesters,
-    Rejected,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum UploadState {
-    Succeeded,
-    InProgress,
-    Failed,
-    NotFound,
-}
-
-pub struct PollConfig {
-    pub interval: Duration,
-    pub timeout: Duration,
-}
-
-impl Default for PollConfig {
-    fn default() -> Self {
-        Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,33 +363,51 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn store_for(server: &MockServer) -> ChromeStore {
+    const TEST_TOKEN: &str = "test-access-token";
+
+    // End-to-end check that from_client_credentials's get_token triggers a
+    // token exchange and the resulting access token can be used as a Bearer
+    // credential on subsequent API calls.
+    #[tokio::test]
+    async fn from_client_credentials_refreshes_token_before_calling_api() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(header("content-type", "application/x-www-form-urlencoded"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "access_token": "fresh-token" })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path(
+                "/upload/v2/publishers/publisher-1/items/item-1:upload",
+            ))
+            .and(header("authorization", "Bearer fresh-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "uploadState": "SUCCEEDED",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
         let base = Url::parse(&server.uri()).unwrap();
-        ChromeStore::from_access_token(
+        let store = ChromeStore::from_client_credentials(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "test-access-token".to_string(),
+            "client-id".to_string(),
+            "client-secret".to_string(),
+            "refresh-token".to_string(),
         )
-        .with_base_urls(base.clone(), base)
-    }
+        .with_base_urls(base.clone(), base);
 
-    fn fast_poll() -> PollConfig {
-        PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        }
+        let token = store.get_token().await.unwrap();
+        assert_eq!(token, "fresh-token");
+        store.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
-
-    fn default_options() -> PublishOptions {
-        PublishOptions {
-            publish_type: PublishType::Default,
-            skip_review: false,
-            deploy_percentage: None,
-            poll: fast_poll(),
-        }
-    }
-
-    const TEST_TOKEN: &str = "test-access-token";
 
     #[tokio::test]
     async fn upload_posts_to_correct_url_with_auth_and_octet_stream() {
@@ -846,47 +864,29 @@ mod tests {
             .unwrap();
     }
 
-    // End-to-end check that from_client_credentials's get_token triggers a
-    // token exchange and the resulting access token can be used as a Bearer
-    // credential on subsequent API calls.
-    #[tokio::test]
-    async fn from_client_credentials_refreshes_token_before_calling_api() {
-        let server = MockServer::start().await;
-
-        Mock::given(method("POST"))
-            .and(path("/"))
-            .and(header("content-type", "application/x-www-form-urlencoded"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "access_token": "fresh-token" })),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path(
-                "/upload/v2/publishers/publisher-1/items/item-1:upload",
-            ))
-            .and(header("authorization", "Bearer fresh-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "uploadState": "SUCCEEDED",
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
+    fn store_for(server: &MockServer) -> ChromeStore {
         let base = Url::parse(&server.uri()).unwrap();
-        let store = ChromeStore::from_client_credentials(
+        ChromeStore::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "client-id".to_string(),
-            "client-secret".to_string(),
-            "refresh-token".to_string(),
+            "test-access-token".to_string(),
         )
-        .with_base_urls(base.clone(), base);
+        .with_base_urls(base.clone(), base)
+    }
 
-        let token = store.get_token().await.unwrap();
-        assert_eq!(token, "fresh-token");
-        store.upload(&token, b"FAKE".to_vec()).await.unwrap();
+    fn fast_poll() -> PollConfig {
+        PollConfig {
+            interval: Duration::from_millis(10),
+            timeout: Duration::from_millis(200),
+        }
+    }
+
+    fn default_options() -> PublishOptions {
+        PublishOptions {
+            publish_type: PublishType::Default,
+            skip_review: false,
+            deploy_percentage: None,
+            poll: fast_poll(),
+        }
     }
 }
