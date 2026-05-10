@@ -107,8 +107,13 @@ impl ChromeStore {
     }
 
     #[must_use]
-    pub fn with_base_urls(mut self, root_url: Url, token_url: Url) -> Self {
+    pub fn with_root_url(mut self, root_url: Url) -> Self {
         self.root_url = ensure_trailing_slash(root_url);
+        self
+    }
+
+    #[must_use]
+    pub fn with_token_url(mut self, token_url: Url) -> Self {
         self.token_url = token_url;
         self
     }
@@ -402,7 +407,8 @@ mod tests {
             "client-secret".to_string(),
             "refresh-token".to_string(),
         )
-        .with_base_urls(base.clone(), base);
+        .with_root_url(base.clone())
+        .with_token_url(base);
 
         let token = store.get_token().await.unwrap();
         assert_eq!(token, "fresh-token");
@@ -871,7 +877,8 @@ mod tests {
             "item-1".to_string(),
             "test-access-token".to_string(),
         )
-        .with_base_urls(base.clone(), base)
+        .with_root_url(base.clone())
+        .with_token_url(base)
     }
 
     fn fast_poll() -> PollConfig {
