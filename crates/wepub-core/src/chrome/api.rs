@@ -323,34 +323,22 @@ pub struct PublishResponse {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ItemState {
-    #[serde(rename = "ITEM_STATE_UNSPECIFIED")]
-    Unspecified,
-    #[serde(rename = "PENDING_REVIEW")]
     PendingReview,
-    #[serde(rename = "STAGED")]
     Staged,
-    #[serde(rename = "PUBLISHED")]
     Published,
-    #[serde(rename = "PUBLISHED_TO_TESTERS")]
     PublishedToTesters,
-    #[serde(rename = "REJECTED")]
     Rejected,
-    #[serde(rename = "CANCELLED")]
     Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UploadState {
-    #[serde(rename = "UPLOAD_STATE_UNSPECIFIED")]
-    Unspecified,
-    #[serde(rename = "SUCCEEDED")]
     Succeeded,
-    #[serde(rename = "IN_PROGRESS")]
     InProgress,
-    #[serde(rename = "FAILED")]
     Failed,
-    #[serde(rename = "NOT_FOUND")]
     NotFound,
 }
 
@@ -693,13 +681,12 @@ mod tests {
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // All seven ItemState wire values from the official docs must round-trip,
-    // including ITEM_STATE_UNSPECIFIED which the docs note is "unused" but is
-    // still part of the enum.
+    // The six meaningful ItemState wire values from the official docs must
+    // round-trip. ITEM_STATE_UNSPECIFIED is documented as "unused" so we drop
+    // it from the public enum and let serde fail-fast if it ever appears.
     #[tokio::test]
     async fn submit_for_publish_decodes_all_item_states() {
         let cases = [
-            ("ITEM_STATE_UNSPECIFIED", ItemState::Unspecified),
             ("PENDING_REVIEW", ItemState::PendingReview),
             ("STAGED", ItemState::Staged),
             ("PUBLISHED", ItemState::Published),
