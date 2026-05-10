@@ -2,14 +2,12 @@
 
 A CLI to publish browser extensions to web stores.
 
-> **Status**: under development. Firefox (AMO) and Chrome Web Store are implemented; Edge Add-ons is planned.
+Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
 
 ## Install
 
-`wepub` is not yet published to crates.io. Install from this repository:
-
 ```sh
-cargo install --git https://github.com/iorate/wepub
+cargo install wepub
 ```
 
 Requires Rust 1.85+ (edition 2024).
