@@ -340,15 +340,19 @@ struct VersionCreateBody<'a> {
 
 async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
     let status = resp.status();
+    let body = resp.text().await?;
+    tracing::debug!(
+        status = status.as_u16(),
+        body = %body,
+        "received AMO response",
+    );
     if !status.is_success() {
-        let body = resp.text().await?;
         return Err(WepubError::Api {
             status: status.as_u16(),
             body,
         });
     }
-    let body = resp.bytes().await?;
-    serde_json::from_slice(&body).map_err(WepubError::from)
+    serde_json::from_str(&body).map_err(WepubError::from)
 }
 
 fn ensure_trailing_slash(mut url: Url) -> Url {
