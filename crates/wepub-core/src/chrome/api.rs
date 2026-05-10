@@ -89,9 +89,9 @@ impl ChromeStore {
             .map_err(|e| WepubError::Auth(format!("invalid endpoint path {path:?}: {e}")))
     }
 
-    async fn auth_header(&self) -> Result<String> {
-        let token = match &self.credentials {
-            Credentials::AccessToken(token) => token.clone(),
+    pub(crate) async fn get_token(&self) -> Result<String> {
+        match &self.credentials {
+            Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::ClientCredentials {
                 client_id,
                 client_secret,
@@ -104,18 +104,16 @@ impl ChromeStore {
                     client_secret,
                     refresh_token,
                 )
-                .await?
+                .await
             }
-        };
-        Ok(format!("Bearer {token}"))
+        }
     }
 
-    pub(crate) async fn upload(&self, zip: Vec<u8>) -> Result<UploadState> {
+    pub(crate) async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "upload/v2/publishers/{}/items/{}:upload",
             self.publisher_id, self.item_id
         ))?;
-        let auth = self.auth_header().await?;
 
         tracing::info!(
             publisher_id = %self.publisher_id,
@@ -126,7 +124,7 @@ impl ChromeStore {
         let resp = self
             .client
             .post(url)
-            .header(reqwest::header::AUTHORIZATION, auth)
+            .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
             .send()
@@ -136,30 +134,30 @@ impl ChromeStore {
         Ok(body.upload_state)
     }
 
-    pub(crate) async fn fetch_status(&self) -> Result<Option<UploadState>> {
+    pub(crate) async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
             self.publisher_id, self.item_id
         ))?;
-        let auth = self.auth_header().await?;
 
-        let resp = self
-            .client
-            .get(url)
-            .header(reqwest::header::AUTHORIZATION, auth)
-            .send()
-            .await?;
+        let resp = self.client.get(url).bearer_auth(token).send().await?;
 
         let body: FetchStatusResponse = decode_response(resp).await?;
         Ok(body.last_async_upload_state)
     }
 
-    pub(crate) async fn wait_until_uploaded(&self, config: &PollConfig) -> Result<UploadState> {
+    pub(crate) async fn wait_until_uploaded(
+        &self,
+        token: &str,
+        initial_state: UploadState,
+        config: &PollConfig,
+    ) -> Result<UploadState> {
         let started = Instant::now();
+        // First iteration uses the caller-provided state from the initial
+        // upload response; subsequent iterations re-fetch from the server.
+        let mut state: Option<UploadState> = Some(initial_state);
 
         loop {
-            let state = self.fetch_status().await?;
-
             tracing::info!(
                 publisher_id = %self.publisher_id,
                 item_id = %self.item_id,
@@ -175,13 +173,17 @@ impl ChromeStore {
                         body: "The upload failed.".to_string(),
                     });
                 }
-                Some(UploadState::NotFound) => {
+                // None (lastAsyncUploadState absent, i.e. no async upload in
+                // the past 24h) is treated the same as the explicit NOT_FOUND
+                // value: we have just uploaded, so the server should know
+                // about it. Either response indicates something is wrong.
+                Some(UploadState::NotFound) | None => {
                     return Err(WepubError::UploadFailed {
                         item_id: self.item_id.clone(),
                         body: "An upload attempt was not found.".to_string(),
                     });
                 }
-                _ => {}
+                Some(UploadState::InProgress) => {}
             }
 
             if started.elapsed() >= config.timeout {
@@ -192,18 +194,19 @@ impl ChromeStore {
             }
 
             tokio::time::sleep(config.interval).await;
+            state = self.fetch_status(token).await?;
         }
     }
 
     pub(crate) async fn submit_for_publish(
         &self,
+        token: &str,
         options: &PublishOptions,
     ) -> Result<PublishResponse> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:publish",
             self.publisher_id, self.item_id
         ))?;
-        let auth = self.auth_header().await?;
 
         let body = PublishRequestBody::from(options);
 
@@ -216,7 +219,7 @@ impl ChromeStore {
         let resp = self
             .client
             .post(url)
-            .header(reqwest::header::AUTHORIZATION, auth)
+            .bearer_auth(token)
             .json(&body)
             .send()
             .await?;
@@ -225,11 +228,11 @@ impl ChromeStore {
     }
 
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<PublishResponse> {
-        let initial_state = self.upload(zip).await?;
-        if initial_state != UploadState::Succeeded {
-            self.wait_until_uploaded(&options.poll).await?;
-        }
-        self.submit_for_publish(&options).await
+        let token = self.get_token().await?;
+        let initial = self.upload(&token, zip).await?;
+        self.wait_until_uploaded(&token, initial, &options.poll)
+            .await?;
+        self.submit_for_publish(&token, &options).await
     }
 }
 
@@ -390,6 +393,8 @@ mod tests {
         }
     }
 
+    const TEST_TOKEN: &str = "test-access-token";
+
     #[tokio::test]
     async fn upload_posts_to_correct_url_with_auth_and_octet_stream() {
         let server = MockServer::start().await;
@@ -409,7 +414,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        store.upload(b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
+        store
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+            .await
+            .unwrap();
     }
 
     // Regression guard: official V2 curl example sends neither X-Goog-Upload-Protocol
@@ -428,7 +436,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        store.upload(b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
+        store
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+            .await
+            .unwrap();
 
         for req in server.received_requests().await.unwrap_or_default() {
             assert!(
@@ -453,7 +464,7 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let resp = store.upload(b"FAKE".to_vec()).await.unwrap();
+        let resp = store.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
         assert!(matches!(resp, UploadState::InProgress));
     }
 
@@ -466,7 +477,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let err = store.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let err = store
+            .upload(TEST_TOKEN, b"FAKE".to_vec())
+            .await
+            .unwrap_err();
         match err {
             WepubError::Api { status, body } => {
                 assert_eq!(status, 401);
@@ -492,7 +506,7 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let state = store.fetch_status().await.unwrap();
+        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
         assert!(matches!(state, Some(UploadState::Succeeded)));
     }
 
@@ -512,13 +526,60 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let state = store.fetch_status().await.unwrap();
+        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
         assert!(state.is_none());
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_returns_immediately_on_succeeded() {
+    async fn wait_until_uploaded_returns_immediately_when_initial_is_succeeded() {
         let server = MockServer::start().await;
+        // Caller already knows the upload succeeded, so wait must not call
+        // fetchStatus at all.
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "lastAsyncUploadState": "SUCCEEDED",
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let state = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &fast_poll())
+            .await
+            .unwrap();
+        assert!(matches!(state, UploadState::Succeeded));
+    }
+
+    #[tokio::test]
+    async fn wait_until_uploaded_errors_immediately_when_initial_is_failed() {
+        let server = MockServer::start().await;
+        // FAILED is terminal, so no fetchStatus call should be made.
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::UploadFailed { item_id, body } => {
+                assert_eq!(item_id, "item-1");
+                assert_eq!(body, "The upload failed.");
+            }
+            other => panic!("expected UploadFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_until_uploaded_polls_until_succeeded() {
+        let server = MockServer::start().await;
+        // Initial state is IN_PROGRESS, so wait must sleep then call
+        // fetchStatus, which on this mock returns SUCCEEDED.
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "lastAsyncUploadState": "SUCCEEDED",
@@ -528,37 +589,18 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let state = store.wait_until_uploaded(&fast_poll()).await.unwrap();
-        assert!(matches!(state, UploadState::Succeeded));
-    }
-
-    #[tokio::test]
-    async fn wait_until_uploaded_polls_until_succeeded() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "lastAsyncUploadState": "IN_PROGRESS",
-            })))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "lastAsyncUploadState": "SUCCEEDED",
-            })))
-            .mount(&server)
-            .await;
-
-        let store = store_for(&server);
-        let state = store.wait_until_uploaded(&fast_poll()).await.unwrap();
+        let state = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
     }
 
     // The fetchStatus V2 response schema does not include any field for
-    // failure detail — only `lastAsyncUploadState`. So when state is FAILED,
+    // failure detail - only `lastAsyncUploadState`. So when state is FAILED,
     // we surface the official enum description verbatim and stop there.
     #[tokio::test]
-    async fn wait_until_uploaded_errors_on_failed_state() {
+    async fn wait_until_uploaded_errors_when_polling_returns_failed() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -568,7 +610,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let err = store.wait_until_uploaded(&fast_poll()).await.unwrap_err();
+        let err = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
         match err {
             WepubError::UploadFailed { item_id, body } => {
                 assert_eq!(item_id, "item-1");
@@ -589,7 +634,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let err = store.wait_until_uploaded(&fast_poll()).await.unwrap_err();
+        let err = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -615,7 +663,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let resp = store.submit_for_publish(&default_options()).await.unwrap();
+        let resp = store
+            .submit_for_publish(TEST_TOKEN, &default_options())
+            .await
+            .unwrap();
         assert_eq!(resp.item_id, "item-1");
         assert!(matches!(resp.state, ItemState::PendingReview));
 
@@ -653,7 +704,7 @@ mod tests {
         opts.publish_type = PublishType::Staged;
 
         let store = store_for(&server);
-        let resp = store.submit_for_publish(&opts).await.unwrap();
+        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Staged));
     }
 
@@ -677,7 +728,7 @@ mod tests {
         opts.deploy_percentage = Some(50);
 
         let store = store_for(&server);
-        let resp = store.submit_for_publish(&opts).await.unwrap();
+        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Published));
     }
 
@@ -706,7 +757,10 @@ mod tests {
                 .await;
 
             let store = store_for(&server);
-            let resp = store.submit_for_publish(&default_options()).await.unwrap();
+            let resp = store
+                .submit_for_publish(TEST_TOKEN, &default_options())
+                .await
+                .unwrap();
             assert!(
                 std::mem::discriminant(&resp.state) == std::mem::discriminant(&expected),
                 "wire value {wire} should decode to expected variant",
@@ -798,8 +852,9 @@ mod tests {
             .unwrap();
     }
 
-    // End-to-end check that from_client_credentials triggers a token exchange
-    // and the resulting Bearer token is used on the first API call.
+    // End-to-end check that from_client_credentials's get_token triggers a
+    // token exchange and the resulting access token can be used as a Bearer
+    // credential on subsequent API calls.
     #[tokio::test]
     async fn from_client_credentials_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
@@ -836,6 +891,8 @@ mod tests {
         )
         .with_base_urls(base.clone(), base);
 
-        store.upload(b"FAKE".to_vec()).await.unwrap();
+        let token = store.get_token().await.unwrap();
+        assert_eq!(token, "fresh-token");
+        store.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
 }
