@@ -127,7 +127,7 @@ pub struct ChromePublishArgs {
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,
 
-    /// Publisher ID (the numeric ID under which the item is registered).
+    /// Publisher ID under which the item is registered.
     #[arg(long, env = "WEPUB_CHROME_PUBLISHER_ID")]
     pub publisher_id: String,
 
