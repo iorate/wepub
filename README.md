@@ -47,7 +47,7 @@ Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/
 
 ```sh
 wepub chrome ./my-extension.zip \
-  --publisher-id   "1234567890" \
+  --publisher-id   "12345678-90ab-cdef-1234-567890abcdef" \
   --item-id        "abcdefghijklmnopabcdefghijklmnop" \
   --client-id      "...apps.googleusercontent.com" \
   --client-secret  "..." \
