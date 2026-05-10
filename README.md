@@ -10,7 +10,7 @@ Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
 cargo install wepub
 ```
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.88+.
 
 ## Usage
 
