@@ -19,7 +19,7 @@ struct Claims {
 pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| WepubError::Auth(format!("system clock before UNIX epoch: {e}")))?
+        .map_err(|e| WepubError::Internal(format!("system clock before UNIX epoch: {e}")))?
         .as_secs();
 
     let claims = Claims {
@@ -34,7 +34,7 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .map_err(|e| WepubError::Auth(format!("failed to encode JWT: {e}")))
+    .map_err(|e| WepubError::Internal(format!("failed to encode JWT: {e}")))
 }
 
 #[cfg(test)]

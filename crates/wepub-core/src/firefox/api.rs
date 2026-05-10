@@ -166,7 +166,7 @@ impl FirefoxStore {
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
         self.base_url
             .join(path)
-            .map_err(|e| WepubError::Auth(format!("invalid endpoint path {path:?}: {e}")))
+            .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
@@ -177,7 +177,7 @@ impl FirefoxStore {
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
             .file_name(UPLOAD_FILE_NAME)
             .mime_str("application/zip")
-            .map_err(WepubError::Network)?;
+            .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new()
             .part("upload", part)
             .text("channel", channel.as_str());
@@ -291,7 +291,7 @@ impl FirefoxStore {
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
             .file_name("source.zip")
             .mime_str("application/zip")
-            .map_err(WepubError::Network)?;
+            .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new().part("source", part);
 
         tracing::info!(

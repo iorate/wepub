@@ -131,7 +131,7 @@ impl ChromeStore {
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
         self.root_url
             .join(path)
-            .map_err(|e| WepubError::Auth(format!("invalid endpoint path {path:?}: {e}")))
+            .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
     }
 
     pub(crate) async fn get_token(&self) -> Result<String> {

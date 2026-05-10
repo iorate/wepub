@@ -24,4 +24,7 @@ pub enum WepubError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }
