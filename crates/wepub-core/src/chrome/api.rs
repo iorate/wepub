@@ -78,24 +78,25 @@ pub struct ChromeStore {
 }
 
 impl ChromeStore {
-    #[must_use]
-    pub fn from_access_token(publisher_id: String, item_id: String, access_token: String) -> Self {
+    pub fn from_access_token(
+        publisher_id: String,
+        item_id: String,
+        access_token: String,
+    ) -> Result<Self> {
         Self::with_credentials(
             publisher_id,
             item_id,
             Credentials::AccessToken(access_token),
         )
-        .expect("default URLs are valid and HTTP client builds")
     }
 
-    #[must_use]
     pub fn from_client_credentials(
         publisher_id: String,
         item_id: String,
         client_id: String,
         client_secret: String,
         refresh_token: String,
-    ) -> Self {
+    ) -> Result<Self> {
         Self::with_credentials(
             publisher_id,
             item_id,
@@ -105,7 +106,6 @@ impl ChromeStore {
                 refresh_token,
             },
         )
-        .expect("default URLs are valid and HTTP client builds")
     }
 
     #[must_use]
@@ -408,6 +408,7 @@ mod tests {
             "client-secret".to_string(),
             "refresh-token".to_string(),
         )
+        .unwrap()
         .with_root_url(base.clone())
         .with_token_url(base);
 
@@ -878,6 +879,7 @@ mod tests {
             "item-1".to_string(),
             "test-access-token".to_string(),
         )
+        .unwrap()
         .with_root_url(base.clone())
         .with_token_url(base)
     }

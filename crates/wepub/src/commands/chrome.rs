@@ -68,13 +68,13 @@ fn build_store(args: &ChromePublishArgs) -> Result<ChromeStore> {
                 client_id.to_string(),
                 client_secret.to_string(),
                 refresh_token.to_string(),
-            ))
+            )?)
         }
         (false, Some(access_token)) => Ok(ChromeStore::from_access_token(
             args.publisher_id.clone(),
             args.item_id.clone(),
             access_token.to_string(),
-        )),
+        )?),
     }
 }
 
