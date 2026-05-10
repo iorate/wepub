@@ -109,7 +109,7 @@ pub enum ChannelArg {
     Unlisted,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
 pub enum ApplicationArg {
     Firefox,
     Android,

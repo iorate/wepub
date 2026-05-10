@@ -107,12 +107,16 @@ async fn read_text_input(path: &PathBuf) -> Result<String> {
 
 fn build_compatibility(apps: &[ApplicationArg]) -> Option<Compatibility> {
     if apps.is_empty() {
-        None
-    } else {
-        Some(Compatibility::Apps(
-            apps.iter().copied().map(Into::into).collect(),
-        ))
+        return None;
     }
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<Application> = apps
+        .iter()
+        .copied()
+        .filter(|app| seen.insert(*app))
+        .map(Into::into)
+        .collect();
+    Some(Compatibility::Apps(unique))
 }
 
 impl From<ChannelArg> for Channel {
