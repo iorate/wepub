@@ -24,22 +24,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Firefox (AMO) commands.
-    Firefox {
-        #[command(subcommand)]
-        command: FirefoxCommands,
-    },
-    /// Chrome Web Store commands.
-    Chrome {
-        #[command(subcommand)]
-        command: ChromeCommands,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum FirefoxCommands {
     /// Upload a zip and create a new version on AMO.
-    Publish(FirefoxPublishArgs),
+    Firefox(FirefoxArgs),
+    /// Upload a zip and submit a new version to the Chrome Web Store.
+    Chrome(ChromeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -53,7 +41,7 @@ pub enum FirefoxCommands {
         .multiple(false)
         .args(["approval_notes", "approval_notes_file"]),
 ))]
-pub struct FirefoxPublishArgs {
+pub struct FirefoxArgs {
     /// Path to the extension archive (zip).
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,
@@ -115,14 +103,8 @@ pub enum ApplicationArg {
     Android,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum ChromeCommands {
-    /// Upload a zip and submit a new version to the Chrome Web Store.
-    Publish(ChromePublishArgs),
-}
-
 #[derive(Debug, Args)]
-pub struct ChromePublishArgs {
+pub struct ChromeArgs {
     /// Path to the extension archive (zip).
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,

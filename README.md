@@ -21,7 +21,7 @@ Requires Rust 1.85+ (edition 2024).
 Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
 
 ```sh
-wepub firefox publish ./my-addon.zip \
+wepub firefox ./my-addon.zip \
   --addon-id   "myaddon@example.com" \
   --api-key    "user:1234567:89" \
   --api-secret "abcdef..." \
@@ -37,7 +37,7 @@ Credentials can also be supplied via environment variables:
 | `--api-secret`   | `WEPUB_FIREFOX_API_SECRET`     |
 | `--amo-base-url` | `WEPUB_FIREFOX_AMO_BASE_URL`   |
 
-Run `wepub firefox publish --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
+Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
 > Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
 
@@ -46,7 +46,7 @@ Run `wepub firefox publish --help` for the full list of flags (compatibility, re
 Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token, then:
 
 ```sh
-wepub chrome publish ./my-extension.zip \
+wepub chrome ./my-extension.zip \
   --publisher-id   "1234567890" \
   --item-id        "abcdefghijklmnopabcdefghijklmnop" \
   --client-id      "...apps.googleusercontent.com" \
@@ -69,7 +69,7 @@ Credentials and IDs can also be supplied via environment variables:
 | `--cws-root-url`  | `WEPUB_CHROME_CWS_ROOT_URL`    |
 | `--cws-token-url` | `WEPUB_CHROME_CWS_TOKEN_URL`   |
 
-Run `wepub chrome publish --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
+Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 
 > Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
 

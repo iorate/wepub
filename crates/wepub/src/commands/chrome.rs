@@ -1,15 +1,9 @@
 use anyhow::{Context, Result, bail};
 use wepub_core::chrome::{ChromeStore, PublishOptions, PublishResponse, PublishType};
 
-use crate::cli::{ChromeCommands, ChromePublishArgs, PublishTypeArg};
+use crate::cli::{ChromeArgs, PublishTypeArg};
 
-pub async fn run(command: ChromeCommands) -> Result<()> {
-    match command {
-        ChromeCommands::Publish(args) => publish(args).await,
-    }
-}
-
-async fn publish(args: ChromePublishArgs) -> Result<()> {
+pub async fn run(args: ChromeArgs) -> Result<()> {
     let mut store = build_store(&args)?;
     if let Some(url) = args.cws_root_url {
         store = store.with_root_url(url);
@@ -38,7 +32,7 @@ async fn publish(args: ChromePublishArgs) -> Result<()> {
     Ok(())
 }
 
-fn build_store(args: &ChromePublishArgs) -> Result<ChromeStore> {
+fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
     let client_set = (
         args.client_id.as_deref(),
         args.client_secret.as_deref(),

@@ -7,17 +7,11 @@ use wepub_core::firefox::{
     Application, Channel, Compatibility, FirefoxStore, PublishOptions, VersionResponse,
 };
 
-use crate::cli::{ApplicationArg, ChannelArg, FirefoxCommands, FirefoxPublishArgs};
+use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
 
 const RELEASE_NOTES_LOCALE: &str = "en-US";
 
-pub async fn run(command: FirefoxCommands) -> Result<()> {
-    match command {
-        FirefoxCommands::Publish(args) => publish(args).await,
-    }
-}
-
-async fn publish(args: FirefoxPublishArgs) -> Result<()> {
+pub async fn run(args: FirefoxArgs) -> Result<()> {
     if is_stdin_path(args.release_notes_file.as_deref())
         && is_stdin_path(args.approval_notes_file.as_deref())
     {
@@ -71,7 +65,7 @@ fn is_stdin_path(path: Option<&Path>) -> bool {
     path.is_some_and(|p| p.as_os_str() == "-")
 }
 
-async fn load_release_notes(args: &FirefoxPublishArgs) -> Result<HashMap<String, String>> {
+async fn load_release_notes(args: &FirefoxArgs) -> Result<HashMap<String, String>> {
     let text =
         match (&args.release_notes, &args.release_notes_file) {
             (Some(text), _) => Some(text.clone()),
@@ -85,7 +79,7 @@ async fn load_release_notes(args: &FirefoxPublishArgs) -> Result<HashMap<String,
     }))
 }
 
-async fn load_approval_notes(args: &FirefoxPublishArgs) -> Result<Option<String>> {
+async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
     match (&args.approval_notes, &args.approval_notes_file) {
         (Some(text), _) => Ok(Some(text.clone())),
         (_, Some(path)) => Ok(Some(read_text_input(path).await.with_context(|| {
