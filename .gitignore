@@ -1,6 +1,8 @@
-/target
-/local
-.env
+# Build outputs
+/target/
+
+# Local development
+/local/
 
 # Claude Code
 /.claude/settings.local.json
