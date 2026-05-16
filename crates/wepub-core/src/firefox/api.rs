@@ -5,7 +5,11 @@ use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{Result, WepubError, http::build_client};
+use crate::{
+    Result, WepubError,
+    common::{decode_response, join_endpoint, parse_root_url},
+    http::build_client,
+};
 
 use super::auth::generate_jwt;
 
@@ -207,9 +211,7 @@ impl FirefoxStore {
     /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
     /// URL.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        let parsed = Url::parse(root_url)
-            .map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
-        self.root_url = ensure_trailing_slash(parsed);
+        self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
@@ -271,9 +273,7 @@ impl FirefoxStore {
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
-        self.root_url
-            .join(path)
-            .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
+        join_endpoint(&self.root_url, path)
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
@@ -445,31 +445,6 @@ struct VersionCreateBody<'a> {
     release_notes: &'a HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
-}
-
-async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
-    let status = resp.status();
-    let body = resp.text().await?;
-    tracing::debug!(
-        status = status.as_u16(),
-        body = %body,
-        "received AMO response",
-    );
-    if !status.is_success() {
-        return Err(WepubError::Api {
-            status: status.as_u16(),
-            body,
-        });
-    }
-    serde_json::from_str(&body).map_err(WepubError::from)
-}
-
-fn ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        let new_path = format!("{}/", url.path());
-        url.set_path(&new_path);
-    }
-    url
 }
 
 #[cfg(test)]
@@ -860,20 +835,6 @@ mod tests {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
-    }
-
-    #[test]
-    fn ensure_trailing_slash_appends_when_missing() {
-        let url = Url::parse("https://example.com/api/v5").unwrap();
-        let result = ensure_trailing_slash(url);
-        assert_eq!(result.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
-    fn ensure_trailing_slash_is_idempotent() {
-        let url = Url::parse("https://example.com/api/v5/").unwrap();
-        let result = ensure_trailing_slash(url);
-        assert_eq!(result.as_str(), "https://example.com/api/v5/");
     }
 
     fn store_for(server: &MockServer) -> FirefoxStore {

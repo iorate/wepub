@@ -3,7 +3,11 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{Result, WepubError, http::build_client};
+use crate::{
+    Result, WepubError,
+    common::{decode_response, join_endpoint, parse_root_url},
+    http::build_client,
+};
 
 use super::auth::{TOKEN_URL, refresh_access_token};
 
@@ -189,9 +193,7 @@ impl ChromeStore {
     /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
     /// URL.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        let parsed = Url::parse(root_url)
-            .map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
-        self.root_url = ensure_trailing_slash(parsed);
+        self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
@@ -267,9 +269,7 @@ impl ChromeStore {
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
-        self.root_url
-            .join(path)
-            .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
+        join_endpoint(&self.root_url, path)
     }
 
     pub(crate) async fn get_token(&self) -> Result<String> {
@@ -501,31 +501,6 @@ impl From<&ChromePublishOptions> for PublishRequestBody {
 #[serde(rename_all = "camelCase")]
 struct DeployInfo {
     deploy_percentage: u8,
-}
-
-async fn decode_response<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
-    let status = resp.status();
-    let body = resp.text().await?;
-    tracing::debug!(
-        status = status.as_u16(),
-        body = %body,
-        "received Chrome Web Store response",
-    );
-    if !status.is_success() {
-        return Err(WepubError::Api {
-            status: status.as_u16(),
-            body,
-        });
-    }
-    serde_json::from_str(&body).map_err(WepubError::from)
-}
-
-fn ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        let new_path = format!("{}/", url.path());
-        url.set_path(&new_path);
-    }
-    url
 }
 
 #[cfg(test)]
