@@ -1,0 +1,62 @@
+[workspace]
+changelog_update = false
+git_release_enable = false
+git_tag_enable = false
+
+[[package]]
+name = "wepub"
+changelog_update = true
+changelog_include = ["wepub-core"]
+changelog_path = "./CHANGELOG.md"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+
+[changelog]
+header = "# Changelog"
+# https://release-plz.dev/docs/changelog/examples#styled-and-scoped
+body = """
+
+{% macro print_commit(commit) -%}
+    - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+      {% if commit.breaking %}[**breaking**] {% endif %}\
+      {{ commit.message | upper_first }} - \
+      ([{{ commit.id | truncate(length=7, end="") }}]({{ remote.link }}/commit/{{ commit.id }}))\
+{% endmacro -%}
+
+{% if version %}\
+    {% if previous.version %}\
+        ## [{{ version }}]({{ release_link }})
+    {% else %}\
+        ## [{{ version }}]
+    {% endif %}\
+{% endif %}\
+
+{% for group, commits in commits
+| filter(attribute="merge_commit", value=false)
+| unique(attribute="message")
+| group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+
+    {% for commit in commits
+    | filter(attribute="scope")
+    | sort(attribute="scope") %}
+        {{ self::print_commit(commit=commit) }}
+    {%- endfor -%}
+    {% raw %}\n{% endraw %}\
+    {%- for commit in commits %}
+        {%- if not commit.scope -%}
+            {{ self::print_commit(commit=commit) }}
+        {% endif -%}
+    {% endfor -%}
+{% endfor %}\n
+"""
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->⛰️ Features" },
+  { message = "^fix", group = "<!-- 1 -->🐛 Bug Fixes" },
+  { message = "^perf", group = "<!-- 2 -->⚡ Performance" },
+  { message = "^docs", group = "<!-- 3 -->📚 Documentation" },
+  { message = ".*", skip = true },
+]
+link_parsers = [
+  { pattern = "#(\\d+)", href = "{{ remote.link }}/issues/$1" },
+]
