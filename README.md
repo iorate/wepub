@@ -94,9 +94,9 @@ This is a Cargo workspace with two crates:
 - `crates/wepub` — CLI binary (`#[tokio::main]`, `clap`)
 
 ```sh
-cargo build --workspace
-cargo test  --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
 ```
 
 Pre-commit hooks (`prek`) run `cargo fmt --check` and `cargo clippy` on Rust file changes.
