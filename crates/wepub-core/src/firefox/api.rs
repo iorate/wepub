@@ -9,7 +9,7 @@ use crate::{Result, WepubError, http::build_client};
 
 use super::auth::generate_jwt;
 
-const DEFAULT_BASE_URL: &str = "https://addons.mozilla.org/api/v5/";
+const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
 const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -166,7 +166,7 @@ pub struct FirefoxStore {
     addon_id: String,
     issuer: String,
     secret: String,
-    base_url: Url,
+    root_url: Url,
     client: reqwest::Client,
 }
 
@@ -190,26 +190,26 @@ impl FirefoxStore {
             addon_id,
             issuer: jwt_issuer,
             secret: jwt_secret,
-            base_url: Url::parse(DEFAULT_BASE_URL).expect("DEFAULT_BASE_URL is a valid URL"),
+            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
             client: build_client()?,
         })
     }
 
-    /// Override the AMO API base URL.
+    /// Override the AMO API root URL.
     ///
-    /// Defaults to `https://addons.mozilla.org/api/v5/`. Intended for tests
+    /// Defaults to `https://addons.mozilla.org/`. Intended for tests
     /// or when pointing at a local `mozilla/addons-server` instance. A
     /// missing trailing slash is added automatically so that relative paths
     /// join correctly.
     ///
     /// # Errors
     ///
-    /// Returns [`WepubError::InvalidUrl`] if `base_url` does not parse as a
+    /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
     /// URL.
-    pub fn with_base_url(mut self, base_url: &str) -> Result<Self> {
-        let parsed = Url::parse(base_url)
-            .map_err(|e| WepubError::InvalidUrl(format!("{base_url:?}: {e}")))?;
-        self.base_url = ensure_trailing_slash(parsed);
+    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
+        let parsed = Url::parse(root_url)
+            .map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
+        self.root_url = ensure_trailing_slash(parsed);
         Ok(self)
     }
 
@@ -271,13 +271,13 @@ impl FirefoxStore {
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
-        self.base_url
+        self.root_url
             .join(path)
             .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
-        let url = self.endpoint("addons/upload/")?;
+        let url = self.endpoint("api/v5/addons/upload/")?;
         let auth = self.auth_header()?;
 
         let len = zip.len() as u64;
@@ -307,7 +307,7 @@ impl FirefoxStore {
         uuid: &str,
         config: &FirefoxPollConfig,
     ) -> Result<UploadResponse> {
-        let url = self.endpoint(&format!("addons/upload/{uuid}/"))?;
+        let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
         loop {
@@ -359,7 +359,7 @@ impl FirefoxStore {
         release_notes: &HashMap<String, String>,
         approval_notes: Option<&str>,
     ) -> Result<VersionResponse> {
-        let url = self.endpoint(&format!("addons/addon/{}/versions/", self.addon_id))?;
+        let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
         let auth = self.auth_header()?;
 
         let body = VersionCreateBody {
@@ -392,7 +392,7 @@ impl FirefoxStore {
         source: Vec<u8>,
     ) -> Result<VersionResponse> {
         let url = self.endpoint(&format!(
-            "addons/addon/{}/versions/{version_id}/",
+            "api/v5/addons/addon/{}/versions/{version_id}/",
             self.addon_id
         ))?;
         let auth = self.auth_header()?;
@@ -483,7 +483,7 @@ mod tests {
     async fn upload_posts_multipart_and_parses_response() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/addons/upload/"))
+            .and(path("/api/v5/addons/upload/"))
             .and(header_exists("authorization"))
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(upload_json("abc-123", false, false)),
@@ -507,7 +507,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-1/"))
+            .and(path("/api/v5/addons/upload/uuid-1/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-1", false, false)),
             )
@@ -516,7 +516,7 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-1/"))
+            .and(path("/api/v5/addons/upload/uuid-1/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-1", true, true)),
             )
@@ -548,7 +548,7 @@ mod tests {
             "version": null,
         });
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-2/"))
+            .and(path("/api/v5/addons/upload/uuid-2/"))
             .respond_with(ResponseTemplate::new(200).set_body_json(body))
             .mount(&server)
             .await;
@@ -572,7 +572,7 @@ mod tests {
     async fn wait_until_validated_times_out_when_processing_never_completes() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-3/"))
+            .and(path("/api/v5/addons/upload/uuid-3/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-3", false, false)),
             )
@@ -598,7 +598,7 @@ mod tests {
     async fn create_version_posts_json_and_parses_id() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/addons/addon/test-addon/versions/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/"))
             .and(header_exists("authorization"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 4242 })))
             .expect(1)
@@ -618,7 +618,7 @@ mod tests {
     async fn patch_version_source_sends_multipart_patch() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/addons/addon/test-addon/versions/4242/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/4242/"))
             .and(header_exists("authorization"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 4242 })))
             .expect(1)
@@ -639,7 +639,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/addons/upload/"))
+            .and(path("/api/v5/addons/upload/"))
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(upload_json("uuid-pub", false, false)),
             )
@@ -648,7 +648,7 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-pub/"))
+            .and(path("/api/v5/addons/upload/uuid-pub/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-pub", true, true)),
             )
@@ -656,14 +656,14 @@ mod tests {
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/addons/addon/test-addon/versions/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 7777 })))
             .expect(1)
             .mount(&server)
             .await;
 
         Mock::given(method("PATCH"))
-            .and(path("/addons/addon/test-addon/versions/7777/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/7777/"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 7777 })))
             .expect(1)
             .mount(&server)
@@ -683,7 +683,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/addons/upload/"))
+            .and(path("/api/v5/addons/upload/"))
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(upload_json("uuid-ns", true, true)),
             )
@@ -692,7 +692,7 @@ mod tests {
             .await;
 
         Mock::given(method("GET"))
-            .and(path("/addons/upload/uuid-ns/"))
+            .and(path("/api/v5/addons/upload/uuid-ns/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-ns", true, true)),
             )
@@ -700,14 +700,14 @@ mod tests {
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/addons/addon/test-addon/versions/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/"))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 9999 })))
             .expect(1)
             .mount(&server)
             .await;
 
         Mock::given(method("PATCH"))
-            .and(path("/addons/addon/test-addon/versions/9999/"))
+            .and(path("/api/v5/addons/addon/test-addon/versions/9999/"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 9999 })))
             .expect(0)
             .mount(&server)
@@ -725,7 +725,7 @@ mod tests {
     async fn publish_propagates_upload_api_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/addons/upload/"))
+            .and(path("/api/v5/addons/upload/"))
             .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
             .expect(1)
             .mount(&server)
@@ -827,7 +827,7 @@ mod tests {
             "secret".into(),
         )
         .unwrap();
-        let url = store.endpoint("addons/upload/").unwrap();
+        let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
             "https://addons.mozilla.org/api/v5/addons/upload/"
@@ -835,29 +835,29 @@ mod tests {
     }
 
     #[test]
-    fn with_base_url_overrides_default() {
+    fn with_root_url_overrides_default() {
         let store = FirefoxStore::from_jwt_credentials(
             "test-addon".into(),
             "issuer".into(),
             "secret".into(),
         )
         .unwrap()
-        .with_base_url("http://127.0.0.1:8000/api/v5/")
+        .with_root_url("http://127.0.0.1:8000/")
         .unwrap();
-        let url = store.endpoint("addons/upload/").unwrap();
+        let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
-    fn with_base_url_rejects_garbage() {
+    fn with_root_url_rejects_garbage() {
         let store = FirefoxStore::from_jwt_credentials(
             "test-addon".into(),
             "issuer".into(),
             "secret".into(),
         )
         .unwrap();
-        let Err(err) = store.with_base_url("not a url") else {
-            panic!("expected with_base_url to reject");
+        let Err(err) = store.with_root_url("not a url") else {
+            panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
@@ -879,7 +879,7 @@ mod tests {
     fn store_for(server: &MockServer) -> FirefoxStore {
         FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
-            .with_base_url(&server.uri())
+            .with_root_url(&server.uri())
             .unwrap()
     }
 
