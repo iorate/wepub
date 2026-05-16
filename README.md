@@ -32,12 +32,12 @@ wepub firefox ./my-addon.zip \
 
 Credentials can also be supplied via environment variables:
 
-| Flag             | Environment variable           |
-| ---------------- | ------------------------------ |
-| `--addon-id`     | `WEPUB_FIREFOX_ADDON_ID`       |
-| `--api-key`      | `WEPUB_FIREFOX_API_KEY`        |
-| `--api-secret`   | `WEPUB_FIREFOX_API_SECRET`     |
-| `--amo-base-url` | `WEPUB_FIREFOX_AMO_BASE_URL`   |
+| Flag              | Environment variable           |
+| ----------------- | ------------------------------ |
+| `--addon-id`      | `WEPUB_FIREFOX_ADDON_ID`       |
+| `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
+| `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
+| `--test-root-url` | `WEPUB_FIREFOX_TEST_ROOT_URL`  |
 
 Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
@@ -60,16 +60,16 @@ Alternatively, supply a pre-fetched OAuth access token (e.g. from `gcloud auth p
 
 Credentials and IDs can also be supplied via environment variables:
 
-| Flag              | Environment variable           |
-| ----------------- | ------------------------------ |
-| `--publisher-id`  | `WEPUB_CHROME_PUBLISHER_ID`    |
-| `--item-id`       | `WEPUB_CHROME_ITEM_ID`         |
-| `--client-id`     | `WEPUB_CHROME_CLIENT_ID`       |
-| `--client-secret` | `WEPUB_CHROME_CLIENT_SECRET`   |
-| `--refresh-token` | `WEPUB_CHROME_REFRESH_TOKEN`   |
-| `--access-token`  | `WEPUB_CHROME_ACCESS_TOKEN`    |
-| `--cws-root-url`  | `WEPUB_CHROME_CWS_ROOT_URL`    |
-| `--cws-token-url` | `WEPUB_CHROME_CWS_TOKEN_URL`   |
+| Flag               | Environment variable           |
+| ------------------ | ------------------------------ |
+| `--publisher-id`   | `WEPUB_CHROME_PUBLISHER_ID`    |
+| `--item-id`        | `WEPUB_CHROME_ITEM_ID`         |
+| `--client-id`      | `WEPUB_CHROME_CLIENT_ID`       |
+| `--client-secret`  | `WEPUB_CHROME_CLIENT_SECRET`   |
+| `--refresh-token`  | `WEPUB_CHROME_REFRESH_TOKEN`   |
+| `--access-token`   | `WEPUB_CHROME_ACCESS_TOKEN`    |
+| `--test-root-url`  | `WEPUB_CHROME_TEST_ROOT_URL`   |
+| `--test-token-url` | `WEPUB_CHROME_TEST_TOKEN_URL`  |
 
 Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 

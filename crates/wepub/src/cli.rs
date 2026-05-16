@@ -62,9 +62,9 @@ pub struct FirefoxArgs {
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
-    /// Override the AMO API base URL (for local addons-server etc.).
-    #[arg(long, env = "WEPUB_FIREFOX_AMO_BASE_URL")]
-    pub amo_base_url: Option<Url>,
+    /// Override the AMO API root URL (for local addons-server etc.).
+    #[arg(long, env = "WEPUB_FIREFOX_TEST_ROOT_URL")]
+    pub test_root_url: Option<Url>,
 
     /// Compatible applications, comma-separated (e.g. "firefox,android").
     #[arg(long, value_delimiter = ',')]
@@ -146,12 +146,12 @@ pub struct ChromeArgs {
     pub deploy_percentage: Option<u8>,
 
     /// Override the CWS API root URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_CWS_ROOT_URL")]
-    pub cws_root_url: Option<Url>,
+    #[arg(long, env = "WEPUB_CHROME_TEST_ROOT_URL")]
+    pub test_root_url: Option<Url>,
 
     /// Override the OAuth token endpoint URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_CWS_TOKEN_URL")]
-    pub cws_token_url: Option<Url>,
+    #[arg(long, env = "WEPUB_CHROME_TEST_TOKEN_URL")]
+    pub test_token_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

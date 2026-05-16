@@ -5,10 +5,10 @@ use crate::cli::{ChromeArgs, PublishTypeArg};
 
 pub async fn run(args: ChromeArgs) -> Result<()> {
     let mut store = build_store(&args)?;
-    if let Some(url) = args.cws_root_url {
+    if let Some(url) = args.test_root_url {
         store = store.with_root_url(url.as_str())?;
     }
-    if let Some(url) = args.cws_token_url {
+    if let Some(url) = args.test_token_url {
         store = store.with_token_url(url.as_str())?;
     }
 
