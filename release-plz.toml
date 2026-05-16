@@ -2,6 +2,7 @@
 changelog_update = false
 git_release_enable = false
 git_tag_enable = false
+release_commits = "^(feat|fix|perf|docs)"
 
 [[package]]
 name = "wepub"
