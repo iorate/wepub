@@ -41,7 +41,7 @@ Credentials can also be supplied via environment variables:
 
 Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
-> Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
+**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
 
 ### Chrome Web Store
 
@@ -73,7 +73,7 @@ Credentials and IDs can also be supplied via environment variables:
 
 Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 
-> Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+**Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
 
 ### `.env` file
 
