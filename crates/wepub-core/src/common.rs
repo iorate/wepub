@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::{Phase, Result, StoreId, WepubError};
+use crate::{Result, WepubError};
 
 // A trailing slash is required so `Url::join` appends relative paths
 // instead of replacing the last path segment.
@@ -42,11 +42,11 @@ pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> S
 }
 
 // Decode failures are tagged `UnexpectedResponse` (server violated its
-// wire contract), not `HttpStatus` (which is reserved for non-2xx).
+// wire contract), not `HttpStatus` (which is reserved for non-2xx). The
+// preceding `received response` debug log carries the URL and raw body,
+// so callers don't need to inject store/operation context here.
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
-    store: StoreId,
-    phase: Phase,
 ) -> Result<T> {
     let status = resp.status();
     let body = resp.text().await?;
@@ -62,8 +62,6 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
         });
     }
     serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-        store,
-        phase,
         detail: format!("failed to decode response: {e}"),
     })
 }

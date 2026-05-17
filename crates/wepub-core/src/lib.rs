@@ -46,4 +46,4 @@ pub mod chrome;
 pub mod edge;
 pub mod firefox;
 
-pub use error::{Phase, Result, StoreId, WepubError};
+pub use error::{Result, WepubError};

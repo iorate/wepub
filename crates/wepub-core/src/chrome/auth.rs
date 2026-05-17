@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use url::Url;
 
-use crate::{Phase, Result, StoreId, WepubError, common::log_request};
+use crate::{Result, WepubError, common::log_request};
 
 pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
@@ -45,8 +45,6 @@ pub(crate) async fn refresh_access_token(
 
     let parsed: TokenResponse =
         serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-            store: StoreId::Chrome,
-            phase: Phase::TokenRefresh,
             detail: format!("failed to decode token response: {e}"),
         })?;
     Ok(parsed.access_token)
@@ -174,13 +172,7 @@ mod tests {
 
         let err = refresh(&server, "client-secret").await.unwrap_err();
         match err {
-            WepubError::UnexpectedResponse {
-                store,
-                phase,
-                detail,
-            } => {
-                assert_eq!(store, StoreId::Chrome);
-                assert_eq!(phase, Phase::TokenRefresh);
+            WepubError::UnexpectedResponse { detail } => {
                 assert!(
                     detail.contains("access_token"),
                     "expected detail to mention the missing field, got: {detail}",

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, StoreId, WepubError,
+    Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -59,7 +59,7 @@ pub enum PublishType {
 pub struct PollConfig {
     /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
-    /// Maximum total time to wait before giving up with [`WepubError::Timeout`].
+    /// Maximum total time to wait before giving up with [`WepubError::PollTimeout`].
     pub timeout: Duration,
 }
 
@@ -190,7 +190,7 @@ impl Store {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
     /// [`WepubError::UnexpectedResponse`],
     /// [`WepubError::ChromeUploadFailed`],
     /// [`WepubError::ChromePublishFailed`] or [`WepubError::Internal`]
@@ -278,7 +278,7 @@ impl Store {
             .send()
             .await?;
 
-        let body: UploadResponse = decode_response(resp, StoreId::Chrome, Phase::Upload).await?;
+        let body: UploadResponse = decode_response(resp).await?;
         Ok(body.upload_state)
     }
 
@@ -315,38 +315,26 @@ impl Store {
                     .bearer_auth(token)
                     .send()
                     .await?;
-                let body: FetchStatusResponse =
-                    decode_response(resp, StoreId::Chrome, Phase::Upload).await?;
+                let body: FetchStatusResponse = decode_response(resp).await?;
                 body.last_async_upload_state
             };
 
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
-                Some(UploadState::Failed) => {
+                Some(UploadState::InProgress) => {}
+                // FAILED, NOT_FOUND, and absent lastAsyncUploadState are all
+                // treated as upload failure: FAILED is the explicit failure
+                // signal, while NOT_FOUND / absent mean the server has no
+                // record of the upload we just performed.
+                _ => {
                     return Err(WepubError::ChromeUploadFailed {
                         item_id: self.item_id.clone(),
                     });
                 }
-                // None (lastAsyncUploadState absent, i.e. no async upload in
-                // the past 24h) is treated the same as the explicit NOT_FOUND
-                // value: we have just uploaded, so the server should know
-                // about it. Either response indicates the server is in a
-                // shape we did not expect.
-                Some(UploadState::NotFound) | None => {
-                    return Err(WepubError::UnexpectedResponse {
-                        store: StoreId::Chrome,
-                        phase: Phase::Upload,
-                        detail: "fetchStatus reported the upload as missing (NOT_FOUND or lastAsyncUploadState absent)"
-                            .to_string(),
-                    });
-                }
-                Some(UploadState::InProgress) => {}
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Timeout {
-                    store: StoreId::Chrome,
-                    phase: Phase::Upload,
+                return Err(WepubError::PollTimeout {
                     elapsed: config.timeout,
                 });
             }
@@ -383,8 +371,7 @@ impl Store {
             .send()
             .await?;
 
-        let parsed: PublishResponse =
-            decode_response(resp, StoreId::Chrome, Phase::Publish).await?;
+        let parsed: PublishResponse = decode_response(resp).await?;
         match parsed.state {
             ItemState::Rejected | ItemState::Cancelled => {
                 let detail = pretty_json(&parsed);
@@ -769,8 +756,8 @@ mod tests {
     }
 
     // Absent `lastAsyncUploadState` in the poll response means the server
-    // forgot the upload we just made; surface that as `UnexpectedResponse`
-    // rather than letting the loop spin on `None`.
+    // forgot the upload we just made; treat it as an upload failure rather
+    // than letting the loop spin on `None`.
     #[tokio::test]
     async fn wait_until_uploaded_errors_when_polling_response_omits_state() {
         let server = MockServer::start().await;
@@ -788,11 +775,8 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::UnexpectedResponse { store, phase, .. } => {
-                assert_eq!(store, StoreId::Chrome);
-                assert_eq!(phase, Phase::Upload);
-            }
-            other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
+            WepubError::ChromeUploadFailed { item_id } => assert_eq!(item_id, "item-1"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 
@@ -815,11 +799,8 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::UnexpectedResponse { store, phase, .. } => {
-                assert_eq!(store, StoreId::Chrome);
-                assert_eq!(phase, Phase::Upload);
-            }
-            other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
+            WepubError::ChromeUploadFailed { item_id } => assert_eq!(item_id, "item-1"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 

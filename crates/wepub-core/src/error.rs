@@ -1,69 +1,9 @@
-use std::fmt;
 use std::time::Duration;
 
 use thiserror::Error;
 
 /// Convenience alias for [`std::result::Result`] specialized to [`WepubError`].
 pub type Result<T> = std::result::Result<T, WepubError>;
-
-/// Identifies which store backend a failure originated from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreId {
-    /// Chrome Web Store.
-    Chrome,
-    /// Firefox Add-ons (addons.mozilla.org).
-    Firefox,
-    /// Edge Add-ons.
-    Edge,
-}
-
-impl StoreId {
-    fn as_str(self) -> &'static str {
-        match self {
-            StoreId::Chrome => "chrome",
-            StoreId::Firefox => "firefox",
-            StoreId::Edge => "edge",
-        }
-    }
-}
-
-impl fmt::Display for StoreId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Identifies which logical phase of a publish run a failure originated
-/// from. Used by cross-cutting variants ([`WepubError::Timeout`] and
-/// [`WepubError::UnexpectedResponse`]) so callers can locate the failure
-/// without parsing string detail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    /// Uploading the extension archive (and, for Firefox, polling the
-    /// validation result).
-    Upload,
-    /// Submitting the uploaded artefact for publish (and, for Edge,
-    /// polling the publish operation status).
-    Publish,
-    /// Exchanging a refresh token for an access token. Chrome-only.
-    TokenRefresh,
-}
-
-impl Phase {
-    fn as_str(self) -> &'static str {
-        match self {
-            Phase::Upload => "upload",
-            Phase::Publish => "publish",
-            Phase::TokenRefresh => "token-refresh",
-        }
-    }
-}
-
-impl fmt::Display for Phase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
 
 /// Error type returned by every fallible call in this crate.
 ///
@@ -72,17 +12,20 @@ impl fmt::Display for Phase {
 /// - Transport / HTTP layer failures that can occur during normal
 ///   operation ([`Network`](WepubError::Network),
 ///   [`HttpStatus`](WepubError::HttpStatus)).
-/// - Cross-cutting failures tagged with [`StoreId`] and [`Phase`]:
-///   [`Timeout`](WepubError::Timeout) for polling that ran out of budget,
-///   and [`UnexpectedResponse`](WepubError::UnexpectedResponse) for
-///   responses that violated the documented wire shape (e.g. malformed
-///   JSON, missing required fields, missing headers). The latter
-///   "should not happen" against a conforming server.
+/// - Cross-cutting failures:
+///   [`PollTimeout`](WepubError::PollTimeout) for a polling loop that
+///   exhausted its per-store `PollConfig::timeout` budget, and
+///   [`UnexpectedResponse`](WepubError::UnexpectedResponse) for responses
+///   that violated the documented wire shape (e.g. malformed JSON,
+///   missing required fields, missing headers). The latter "should not
+///   happen" against a conforming server. The store and the operation
+///   being attempted at the time are visible in the `tracing` log
+///   stream immediately preceding the failure.
 /// - Local I/O / configuration ([`Io`](WepubError::Io),
 ///   [`InvalidUrl`](WepubError::InvalidUrl)) and the catch-all
 ///   [`Internal`](WepubError::Internal) for programmer-error states.
 /// - Per-store domain failures prefixed by store name: the HTTP call
-///   succeeded but the server reported the publish request as rejected.
+///   succeeded but the server reported the submission as rejected.
 #[derive(Debug, Error)]
 pub enum WepubError {
     /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
@@ -100,14 +43,12 @@ pub enum WepubError {
         body: String,
     },
 
-    /// A polling loop exceeded its budget without reaching a terminal
-    /// state.
-    #[error("{store} {phase} polling timed out after {elapsed:?}")]
-    Timeout {
-        /// Which store the timed-out poll targeted.
-        store: StoreId,
-        /// Which phase the timed-out poll belonged to.
-        phase: Phase,
+    /// A polling loop exceeded its per-store `PollConfig::timeout` budget
+    /// without reaching a terminal state. The preceding `tracing` log
+    /// identifies which poll (e.g. `polling Firefox Add-ons upload status`)
+    /// was in flight.
+    #[error("polling timed out after {elapsed:?}")]
+    PollTimeout {
         /// Total elapsed time before giving up.
         elapsed: Duration,
     },
@@ -117,15 +58,11 @@ pub enum WepubError {
     /// headers, or an enum value the API documents as never appearing.
     /// Against a conforming server this should not happen; reaching this
     /// variant points at an API change or a server-side bug. Inspect the
-    /// `debug`-level request log for the raw body.
-    #[error("unexpected response from {store} during {phase}: {detail}")]
+    /// `debug`-level request log for the raw body, and the preceding
+    /// `info`-level log for which operation was in flight.
+    #[error("unexpected response: {detail}")]
     UnexpectedResponse {
-        /// Store whose response was malformed.
-        store: StoreId,
-        /// Phase during which the malformed response was received.
-        phase: Phase,
-        /// Short description of the wire-shape violation (e.g. a
-        /// `serde_json::Error` message or "missing Location header").
+        /// Short description of the wire-shape violation.
         detail: String,
     },
 
@@ -145,9 +82,9 @@ pub enum WepubError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// Chrome Web Store reported `uploadState = FAILED` for the asynchronous
-    /// upload. The official V2 response carries no failure detail, so only
-    /// the item id is preserved.
+    /// Chrome Web Store reported the asynchronous upload as failed. The
+    /// V2 response carries no failure detail, so only the item id is
+    /// preserved.
     #[error("chrome upload failed for item {item_id}")]
     ChromeUploadFailed {
         /// Chrome Web Store item id whose upload failed.

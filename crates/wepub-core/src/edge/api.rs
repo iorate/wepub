@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, StoreId, WepubError,
+    Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -35,7 +35,7 @@ pub struct PollConfig {
     /// Delay between successive polls of an operation status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait for a single operation (upload or
-    /// publish) before giving up with [`WepubError::Timeout`].
+    /// publish) before giving up with [`WepubError::PollTimeout`].
     pub timeout: Duration,
 }
 
@@ -122,7 +122,7 @@ impl Store {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
     /// [`WepubError::UnexpectedResponse`],
     /// [`WepubError::EdgeUploadFailed`],
     /// [`WepubError::EdgePublishFailed`] or [`WepubError::Internal`]
@@ -178,7 +178,7 @@ impl Store {
             .send()
             .await?;
 
-        Self::extract_operation_id(resp, Phase::Upload).await
+        Self::extract_operation_id(resp).await
     }
 
     async fn wait_until_uploaded(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
@@ -202,8 +202,7 @@ impl Store {
                 .header("X-ClientID", &self.client_id)
                 .send()
                 .await?;
-            let body: OperationResponse =
-                decode_response(resp, StoreId::Edge, Phase::Upload).await?;
+            let body: OperationResponse = decode_response(resp).await?;
 
             match body.status {
                 Some(OperationStatus::Succeeded) => return Ok(()),
@@ -215,8 +214,6 @@ impl Store {
                 }
                 None => {
                     return Err(WepubError::UnexpectedResponse {
-                        store: StoreId::Edge,
-                        phase: Phase::Upload,
                         detail: "upload status response missing `status` field".to_string(),
                     });
                 }
@@ -224,9 +221,7 @@ impl Store {
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Timeout {
-                    store: StoreId::Edge,
-                    phase: Phase::Upload,
+                return Err(WepubError::PollTimeout {
                     elapsed: config.timeout,
                 });
             }
@@ -256,7 +251,7 @@ impl Store {
         }
 
         let resp = request.send().await?;
-        Self::extract_operation_id(resp, Phase::Publish).await
+        Self::extract_operation_id(resp).await
     }
 
     async fn wait_until_published(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
@@ -280,8 +275,7 @@ impl Store {
                 .header("X-ClientID", &self.client_id)
                 .send()
                 .await?;
-            let body: OperationResponse =
-                decode_response(resp, StoreId::Edge, Phase::Publish).await?;
+            let body: OperationResponse = decode_response(resp).await?;
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
@@ -306,9 +300,7 @@ impl Store {
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Timeout {
-                    store: StoreId::Edge,
-                    phase: Phase::Publish,
+                return Err(WepubError::PollTimeout {
                     elapsed: config.timeout,
                 });
             }
@@ -325,7 +317,7 @@ impl Store {
         format!("ApiKey {}", self.api_key)
     }
 
-    async fn extract_operation_id(resp: reqwest::Response, phase: Phase) -> Result<String> {
+    async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await?;
@@ -338,22 +330,16 @@ impl Store {
             .headers()
             .get(reqwest::header::LOCATION)
             .ok_or_else(|| WepubError::UnexpectedResponse {
-                store: StoreId::Edge,
-                phase,
                 detail: "202 response missing Location header".to_string(),
             })?;
         let operation_id = location
             .to_str()
             .map_err(|e| WepubError::UnexpectedResponse {
-                store: StoreId::Edge,
-                phase,
-                detail: format!("non-ASCII Location header: {e}"),
+                detail: format!("Location header is not ASCII: {e}"),
             })?
             .to_string();
         if operation_id.is_empty() {
             return Err(WepubError::UnexpectedResponse {
-                store: StoreId::Edge,
-                phase,
                 detail: "202 response Location header was empty".to_string(),
             });
         }
@@ -541,8 +527,8 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Timeout { .. } => {}
-            other => panic!("expected WepubError::Timeout, got {other:?}"),
+            WepubError::PollTimeout { .. } => {}
+            other => panic!("expected WepubError::PollTimeout, got {other:?}"),
         }
     }
 

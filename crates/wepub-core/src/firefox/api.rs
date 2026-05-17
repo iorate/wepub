@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, StoreId, WepubError,
+    Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -49,7 +49,7 @@ pub struct PollConfig {
     /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
-    /// [`WepubError::Timeout`].
+    /// [`WepubError::PollTimeout`].
     pub timeout: Duration,
 }
 
@@ -224,7 +224,7 @@ impl Store {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
     /// [`WepubError::UnexpectedResponse`],
     /// [`WepubError::FirefoxValidationFailed`], [`WepubError::Io`] or
     /// [`WepubError::Internal`] depending on which step failed.
@@ -301,7 +301,7 @@ impl Store {
             .send()
             .await?;
 
-        decode_response(resp, StoreId::Firefox, Phase::Upload).await
+        decode_response(resp).await
     }
 
     async fn wait_until_validated(
@@ -327,8 +327,7 @@ impl Store {
                 .header(reqwest::header::AUTHORIZATION, auth)
                 .send()
                 .await?;
-            let upload: UploadResponse =
-                decode_response(resp, StoreId::Firefox, Phase::Upload).await?;
+            let upload: UploadResponse = decode_response(resp).await?;
 
             if upload.processed {
                 if upload.valid {
@@ -336,9 +335,7 @@ impl Store {
                 }
                 let Some(validation) = upload.validation.as_ref() else {
                     return Err(WepubError::UnexpectedResponse {
-                        store: StoreId::Firefox,
-                        phase: Phase::Upload,
-                        detail: "Firefox Add-ons reported valid=false without a validation field"
+                        detail: "upload reported valid=false without a validation field"
                             .to_string(),
                     });
                 };
@@ -350,9 +347,7 @@ impl Store {
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Timeout {
-                    store: StoreId::Firefox,
-                    phase: Phase::Upload,
+                return Err(WepubError::PollTimeout {
                     elapsed: config.timeout,
                 });
             }
@@ -394,7 +389,7 @@ impl Store {
             .send()
             .await?;
 
-        decode_response(resp, StoreId::Firefox, Phase::Publish).await
+        decode_response(resp).await
     }
 
     async fn patch_version_source(
@@ -431,7 +426,7 @@ impl Store {
             .send()
             .await?;
 
-        decode_response(resp, StoreId::Firefox, Phase::Publish).await
+        decode_response(resp).await
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -586,8 +581,8 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Timeout { .. } => {}
-            other => panic!("expected WepubError::Timeout, got {other:?}"),
+            WepubError::PollTimeout { .. } => {}
+            other => panic!("expected WepubError::PollTimeout, got {other:?}"),
         }
     }
 
