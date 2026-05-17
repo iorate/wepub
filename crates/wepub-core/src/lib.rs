@@ -22,7 +22,7 @@
 //! # async fn run() -> wepub_core::Result<()> {
 //! use wepub_core::firefox::{FirefoxPublishOptions, FirefoxStore};
 //!
-//! let store = FirefoxStore::from_jwt_credentials(
+//! let store = FirefoxStore::from_credentials(
 //!     "myaddon@example.com".into(),
 //!     "user:12345:6789".into(),
 //!     "jwt-secret".into(),

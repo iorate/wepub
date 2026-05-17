@@ -2,7 +2,7 @@
 //!
 //! The entry point is [`EdgeStore`]. Build it with the API credentials
 //! issued by Microsoft Partner Center
-//! ([`EdgeStore::from_api_credentials`]), then call [`EdgeStore::publish`]
+//! ([`EdgeStore::from_credentials`]), then call [`EdgeStore::publish`]
 //! to upload a packaged extension and submit it for review.
 
 mod api;

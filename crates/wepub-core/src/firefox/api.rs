@@ -177,7 +177,7 @@ impl FirefoxStore {
     ///
     /// Fails if the underlying HTTP client cannot be built (e.g. rustls
     /// platform-verifier initialization fails).
-    pub fn from_jwt_credentials(
+    pub fn from_credentials(
         addon_id: String,
         jwt_issuer: String,
         jwt_secret: String,
@@ -234,7 +234,7 @@ impl FirefoxStore {
     /// # async fn run() -> wepub_core::Result<()> {
     /// use wepub_core::firefox::{FirefoxStore, FirefoxPublishOptions};
     ///
-    /// let store = FirefoxStore::from_jwt_credentials(
+    /// let store = FirefoxStore::from_credentials(
     ///     "myaddon@example.com".into(),
     ///     "user:12345:6789".into(),
     ///     "jwt-secret".into(),
@@ -812,12 +812,9 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap();
+        let store =
+            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+                .unwrap();
         let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
@@ -827,26 +824,20 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap()
-        .with_root_url("http://127.0.0.1:8000/")
-        .unwrap();
+        let store =
+            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+                .unwrap()
+                .with_root_url("http://127.0.0.1:8000/")
+                .unwrap();
         let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap();
+        let store =
+            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+                .unwrap();
         let Err(err) = store.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
@@ -854,7 +845,7 @@ mod tests {
     }
 
     fn store_for(server: &MockServer) -> FirefoxStore {
-        FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
+        FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()

@@ -54,7 +54,7 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
                     "--client-id, --client-secret and --refresh-token must all be provided together"
                 );
             };
-            Ok(ChromeStore::from_client_credentials(
+            Ok(ChromeStore::from_credentials(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
                 client_id.to_string(),

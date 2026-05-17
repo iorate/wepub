@@ -123,7 +123,7 @@ impl ChromeStore {
     /// exchange itself happens lazily inside `publish`, so credential
     /// problems surface there as one of the [`WepubError`] variants
     /// described on `publish`.
-    pub fn from_client_credentials(
+    pub fn from_credentials(
         publisher_id: String,
         item_id: String,
         client_id: String,
@@ -160,7 +160,7 @@ impl ChromeStore {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
     /// tests; only consulted when the store was built with
-    /// [`from_client_credentials`](ChromeStore::from_client_credentials).
+    /// [`from_credentials`](ChromeStore::from_credentials).
     ///
     /// # Errors
     ///
@@ -202,7 +202,7 @@ impl ChromeStore {
     /// # async fn run() -> wepub_core::Result<()> {
     /// use wepub_core::chrome::{ChromeStore, ChromePublishOptions, PublishType};
     ///
-    /// let store = ChromeStore::from_client_credentials(
+    /// let store = ChromeStore::from_credentials(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
     ///     "client-id".into(),
@@ -530,11 +530,11 @@ mod tests {
 
     const TEST_TOKEN: &str = "test-access-token";
 
-    // End-to-end check that from_client_credentials's get_token triggers a
-    // token exchange and the resulting access token can be used as a Bearer
+    // End-to-end check that from_credentials's get_token triggers a token
+    // exchange and the resulting access token can be used as a Bearer
     // credential on subsequent API calls.
     #[tokio::test]
-    async fn from_client_credentials_refreshes_token_before_calling_api() {
+    async fn from_credentials_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
@@ -560,7 +560,7 @@ mod tests {
             .await;
 
         let base = Url::parse(&server.uri()).unwrap();
-        let store = ChromeStore::from_client_credentials(
+        let store = ChromeStore::from_credentials(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "client-id".to_string(),

@@ -75,7 +75,7 @@ impl EdgeStore {
     ///
     /// Fails if the underlying HTTP client cannot be built (e.g. rustls
     /// platform-verifier initialization fails).
-    pub fn from_api_credentials(
+    pub fn from_credentials(
         product_id: String,
         client_id: String,
         api_key: String,
@@ -135,7 +135,7 @@ impl EdgeStore {
     /// # async fn run() -> wepub_core::Result<()> {
     /// use wepub_core::edge::{EdgePublishOptions, EdgeStore};
     ///
-    /// let store = EdgeStore::from_api_credentials(
+    /// let store = EdgeStore::from_credentials(
     ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
     ///     "client-id".into(),
     ///     "api-key".into(),
@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn endpoint_joins_relative_path() {
         let store =
-            EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
                 .unwrap();
         let url = store.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn with_root_url_overrides_default() {
         let store =
-            EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
                 .unwrap()
                 .with_root_url("http://127.0.0.1:8000/")
                 .unwrap();
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn with_root_url_rejects_garbage() {
         let store =
-            EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
                 .unwrap();
         let Err(err) = store.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
@@ -811,7 +811,7 @@ mod tests {
     }
 
     fn store_for(server: &MockServer) -> EdgeStore {
-        EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+        EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()
