@@ -40,14 +40,11 @@ pub struct PublishOptions {
 /// staging for a manual rollout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PublishType {
-    /// Publish immediately after review (the default). Maps to the wire
-    /// value `DEFAULT_PUBLISH`, but `wepub-core` simply omits the field so
-    /// the server falls back to its own default.
+    /// Publish immediately after review (the default).
     #[default]
     Default,
     /// Hold the reviewed version in staging until a Developer Dashboard
-    /// operator triggers the rollout. Maps to the wire value
-    /// `STAGED_PUBLISH`.
+    /// operator triggers the rollout.
     Staged,
 }
 
@@ -57,7 +54,7 @@ pub enum PublishType {
 /// Defaults to 2 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
 pub struct PollConfig {
-    /// Delay between successive `fetchStatus` calls.
+    /// Delay between successive polls.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with [`WepubError::PollTimeout`].
     pub timeout: Duration,
@@ -95,8 +92,7 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
-    /// platform-verifier initialization fails).
+    /// Fails if the underlying HTTP client cannot be built.
     pub fn from_access_token(
         publisher_id: String,
         item_id: String,
@@ -111,16 +107,11 @@ impl Store {
 
     /// Build a store from a long-lived OAuth refresh token.
     ///
-    /// `wepub-core` exchanges the refresh token for an access token once at
-    /// the start of [`publish`](Store::publish) and reuses it for the
-    /// remaining requests of that call.
+    /// An access token is fetched lazily during [`publish`](Store::publish).
     ///
     /// # Errors
     ///
-    /// Fails if the underlying HTTP client cannot be built. The token
-    /// exchange itself happens lazily inside `publish`, so credential
-    /// problems surface there as one of the [`WepubError`] variants
-    /// described on `publish`.
+    /// Fails if the underlying HTTP client cannot be built.
     pub fn from_credentials(
         publisher_id: String,
         item_id: String,
@@ -172,27 +163,11 @@ impl Store {
 
     /// Upload `zip` and submit the resulting item version for publish.
     ///
-    /// Internally this performs three steps: token exchange (refresh-token
-    /// flow only), upload, and `:publish`. If the upload returns
-    /// `IN_PROGRESS`, the call polls `:fetchStatus` according to
-    /// `options.poll` until the upload reaches `SUCCEEDED` or the timeout
-    /// elapses. A 200 OK response from `:publish` whose state is
-    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::ChromePublishFailed`].
-    ///
-    /// Progress (`uploading to Chrome Web Store`, `polling Chrome Web Store
-    /// upload status`, `submitting to Chrome Web Store for publish`,
-    /// `Chrome Web Store publish succeeded`) is emitted through the
-    /// `tracing` crate; library consumers configure their own subscriber
-    /// to render or capture it.
-    ///
-    /// # Errors
-    ///
-    /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
-    /// [`WepubError::UnexpectedResponse`],
-    /// [`WepubError::ChromeUploadFailed`],
-    /// [`WepubError::ChromePublishFailed`] or [`WepubError::Internal`]
-    /// depending on which step failed.
+    /// If the upload is still in progress when it is accepted, the call
+    /// polls for completion according to `options.poll` until the upload
+    /// succeeds or the timeout elapses. A publish request that reaches a
+    /// terminal failure state is reported as
+    /// [`WepubError::ChromePublishFailed`].
     ///
     /// # Examples
     ///
@@ -430,10 +405,7 @@ struct FetchStatusResponse {
     last_async_upload_state: Option<UploadState>,
 }
 
-// State of an asynchronous upload reported by `:fetchStatus`.
-//
-// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
-// expected never to appear on the wire; serde will refuse to decode it.
+// `UPLOAD_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UploadState {
@@ -477,11 +449,6 @@ struct DeployInfo {
     deploy_percentage: u8,
 }
 
-// Successful response from the Chrome Web Store `:publish` endpoint. Internal-only:
-// terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
-// via `tracing::info!` from inside `publish`, so callers do not need the
-// raw values.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishResponse {
@@ -489,11 +456,7 @@ struct PublishResponse {
     state: ItemState,
 }
 
-// State of a Chrome Web Store item right after a publish request.
-//
-// Only the values documented in the official Chrome Web Store v2 reference are surfaced;
-// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
-// deserialization to fail fast on unknown wire values.
+// `ITEM_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ItemState {
@@ -515,9 +478,6 @@ mod tests {
 
     const TEST_TOKEN: &str = "test-access-token";
 
-    // End-to-end check that from_credentials's get_token triggers a token
-    // exchange and the resulting access token can be used as a Bearer
-    // credential on subsequent API calls.
     #[tokio::test]
     async fn from_credentials_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
@@ -661,8 +621,6 @@ mod tests {
     #[tokio::test]
     async fn wait_until_uploaded_returns_immediately_when_initial_is_succeeded() {
         let server = MockServer::start().await;
-        // Caller already knows the upload succeeded, so wait must not call
-        // fetchStatus at all.
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "lastAsyncUploadState": "SUCCEEDED",
@@ -682,7 +640,6 @@ mod tests {
     #[tokio::test]
     async fn wait_until_uploaded_errors_immediately_when_initial_is_failed() {
         let server = MockServer::start().await;
-        // FAILED is terminal, so no fetchStatus call should be made.
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
@@ -705,9 +662,6 @@ mod tests {
     #[tokio::test]
     async fn wait_until_uploaded_polls_until_succeeded() {
         let server = MockServer::start().await;
-        // Initial state is IN_PROGRESS, so wait must sleep then call
-        // fetchStatus, which on this mock returns SUCCEEDED. The matcher
-        // also pins the polling endpoint URL and Authorization header.
         Mock::given(method("GET"))
             .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
             .and(header("authorization", "Bearer test-access-token"))
@@ -726,9 +680,6 @@ mod tests {
         assert!(matches!(state, UploadState::Succeeded));
     }
 
-    // The fetchStatus V2 response schema does not include any field for
-    // failure detail - only `lastAsyncUploadState`. So when state is FAILED,
-    // we surface the official enum description verbatim and stop there.
     #[tokio::test]
     async fn wait_until_uploaded_errors_when_polling_returns_failed() {
         let server = MockServer::start().await;
@@ -752,9 +703,6 @@ mod tests {
         }
     }
 
-    // Absent `lastAsyncUploadState` in the poll response means the server
-    // forgot the upload we just made; treat it as an upload failure rather
-    // than letting the loop spin on `None`.
     #[tokio::test]
     async fn wait_until_uploaded_errors_when_polling_response_omits_state() {
         let server = MockServer::start().await;
@@ -777,9 +725,6 @@ mod tests {
         }
     }
 
-    // NOT_FOUND from the poll response is the explicit "no upload attempt
-    // found" enum value. We just uploaded, so a conforming server should
-    // know about it; treat the same as absent state.
     #[tokio::test]
     async fn wait_until_uploaded_errors_when_polling_returns_not_found() {
         let server = MockServer::start().await;
@@ -823,8 +768,6 @@ mod tests {
         );
     }
 
-    // With all fields at defaults the request body must contain none of the
-    // optional keys, so the server side falls back to API defaults.
     #[tokio::test]
     async fn submit_for_publish_default_sends_minimal_body() {
         let server = MockServer::start().await;
@@ -910,9 +853,6 @@ mod tests {
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // Terminal failure states must surface as WepubError::ChromePublishFailed
-    // even though the HTTP call itself returned 200. CLI users rely on the
-    // exit code to detect that the publish request was not accepted.
     #[tokio::test]
     async fn submit_for_publish_errors_on_rejected_state() {
         let server = MockServer::start().await;
@@ -963,9 +903,6 @@ mod tests {
         }
     }
 
-    // Non-terminal ItemState wire values from the official docs must
-    // round-trip. ITEM_STATE_UNSPECIFIED is documented as "unused" so we drop
-    // it from the public enum and let serde fail-fast if it ever appears.
     #[tokio::test]
     async fn submit_for_publish_decodes_non_terminal_item_states() {
         let cases = [
@@ -1038,8 +975,6 @@ mod tests {
             .unwrap();
     }
 
-    // When upload returns SUCCEEDED immediately, no fetchStatus call should be
-    // made; we go straight from upload to the publish endpoint.
     #[tokio::test]
     async fn publish_skips_polling_when_upload_returns_succeeded() {
         let server = MockServer::start().await;

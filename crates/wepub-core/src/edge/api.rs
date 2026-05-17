@@ -17,8 +17,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Optional notes for the Edge Add-ons certification team
-    /// (reviewer-facing). Sent as the `notes` field in the publish
-    /// request body. `None` sends no body.
+    /// (reviewer-facing).
     pub notes: Option<String>,
 
     /// Polling cadence and overall timeout used while waiting for the
@@ -32,7 +31,7 @@ pub struct PublishOptions {
 /// Defaults to 5 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
 pub struct PollConfig {
-    /// Delay between successive polls of an operation status endpoint.
+    /// Delay between successive polls.
     pub interval: Duration,
     /// Maximum total time to wait for a single operation (upload or
     /// publish) before giving up with [`WepubError::PollTimeout`].
@@ -107,26 +106,9 @@ impl Store {
 
     /// Upload `zip` and submit the resulting draft for publish.
     ///
-    /// Internally this performs four steps: upload the archive, poll
-    /// the upload operation until it reaches `Succeeded`, submit the
-    /// draft for publish, and poll the publish operation until it
-    /// reaches `Succeeded`. The polling cadence is controlled by
-    /// `options.poll`.
-    ///
-    /// Progress (`uploading to Edge Add-ons`, `polling Edge Add-ons upload
-    /// status`, `submitting to Edge Add-ons for publish`, `polling Edge
-    /// Add-ons publish status`, `Edge Add-ons publish succeeded`) is emitted
-    /// through the `tracing` crate; library consumers configure their own
-    /// subscriber to render or capture it.
-    ///
-    /// # Errors
-    ///
-    /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
-    /// [`WepubError::UnexpectedResponse`],
-    /// [`WepubError::EdgeUploadFailed`],
-    /// [`WepubError::EdgePublishFailed`] or [`WepubError::Internal`]
-    /// depending on which step failed.
+    /// Waits for the upload to be ingested, submits the draft for
+    /// publish, and waits for the publish operation to complete. The
+    /// polling cadence for both waits is controlled by `options.poll`.
     ///
     /// # Examples
     ///
@@ -344,10 +326,9 @@ impl Store {
     }
 }
 
-// State of an asynchronous operation reported by the Edge Add-ons API.
-//
 // The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
-// which matches Rust's idiomatic variant casing.
+// which matches Rust's idiomatic variant casing, so no `#[serde(rename_all)]`
+// is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 enum OperationStatus {
     InProgress,
@@ -355,10 +336,9 @@ enum OperationStatus {
     Failed,
 }
 
-// Body of a status response from either the upload or the publish
-// operation endpoint. The "Unexpected" shape documented for the publish
-// endpoint lacks `status`; serde fills it with `None` so callers can
-// distinguish it from a regular response.
+// The "Unexpected" shape documented for the publish endpoint lacks `status`;
+// serde fills it with `None` so callers can distinguish it from a regular
+// response.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
@@ -610,9 +590,6 @@ mod tests {
             .unwrap();
     }
 
-    // Each known errorCode documented in the v1.1 reference must surface
-    // as WepubError::EdgePublishFailed with the errorCode preserved in
-    // the detail so CLI users can diagnose the rejection.
     #[tokio::test]
     async fn wait_until_published_errors_on_each_known_error_code() {
         let cases = [
@@ -673,9 +650,6 @@ mod tests {
         }
     }
 
-    // The publish endpoint documents an "Unexpected" shape that lacks
-    // the `status` field entirely. Treat the absence as a failure and
-    // surface the message in WepubError::EdgePublishFailed.
     #[tokio::test]
     async fn wait_until_published_handles_documented_unexpected_shape() {
         let server = MockServer::start().await;

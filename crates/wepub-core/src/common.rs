@@ -1,5 +1,3 @@
-//! Internal helpers shared across store backends (chrome, firefox, edge).
-
 use url::Url;
 
 use crate::{Result, WepubError};
@@ -23,9 +21,6 @@ pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
         .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
 }
 
-// Pair with a subsequent `received response` debug log (either via
-// `decode_response` or hand-written) so the two halves of the
-// exchange appear together in time order.
 pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     tracing::debug!(
         method = %method,
@@ -34,17 +29,6 @@ pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     );
 }
 
-// Used to render a structured response body into the `detail` field of
-// `*Failed` variants. Falls back to `Debug` if serialization fails so we
-// never lose information.
-pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value:?}"))
-}
-
-// Decode failures are tagged `UnexpectedResponse` (server violated its
-// wire contract), not `HttpStatus` (which is reserved for non-2xx). The
-// preceding `received response` debug log carries the URL and raw body,
-// so callers don't need to inject store/operation context here.
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T> {
@@ -64,6 +48,10 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
         detail: format!("failed to decode response: {e}"),
     })
+}
+
+pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
 #[cfg(test)]

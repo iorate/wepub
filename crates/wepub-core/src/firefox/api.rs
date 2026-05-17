@@ -46,7 +46,7 @@ pub struct PublishOptions {
 /// Defaults to 1 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
 pub struct PollConfig {
-    /// Delay between successive polls of the upload status endpoint.
+    /// Delay between successive polls.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
     /// [`WepubError::PollTimeout`].
@@ -83,11 +83,6 @@ impl Channel {
 }
 
 /// Compatibility declaration sent to Firefox Add-ons when creating the version.
-///
-/// The wire format accepts either a flat list of compatible apps (with
-/// versions inferred from the manifest) or an object mapping each app to an
-/// explicit version range. `wepub-core` exposes both shapes through this
-/// enum.
 #[derive(Debug, Clone)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
@@ -138,9 +133,6 @@ impl Serialize for Application {
 
 /// Explicit `min` / `max` application version pair used by
 /// [`Compatibility::Detailed`].
-///
-/// Either bound can be `None`, in which case the corresponding manifest
-/// value is used.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
@@ -210,24 +202,9 @@ impl Store {
 
     /// Upload `zip` and create a new version on the bound add-on.
     ///
-    /// The call performs four steps internally: upload the archive, poll
-    /// Firefox Add-ons until validation finishes, create the version, and
-    /// (if `options.source` is set) attach the source archive in a follow-up
-    /// PATCH. The polling cadence is controlled by `options.poll`.
-    ///
-    /// Progress (`uploading to Firefox Add-ons`, `polling Firefox Add-ons
-    /// upload status`, `submitting to Firefox Add-ons for publish`,
-    /// `Firefox Add-ons publish succeeded`) is emitted through the
-    /// `tracing` crate; library consumers configure their own subscriber
-    /// to render or capture it.
-    ///
-    /// # Errors
-    ///
-    /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
-    /// [`WepubError::UnexpectedResponse`],
-    /// [`WepubError::FirefoxValidationFailed`] or
-    /// [`WepubError::Internal`] depending on which step failed.
+    /// Waits for Firefox Add-ons validation to finish, creates the new
+    /// version, and (when `options.source` is set) attaches the source
+    /// archive. The polling cadence is controlled by `options.poll`.
     ///
     /// # Examples
     ///
@@ -438,14 +415,6 @@ impl Store {
     }
 }
 
-// Successful response from creating a new add-on version on Firefox Add-ons.
-// Internal-only: the id is echoed via `tracing::info!` from `publish` and
-// not surfaced to the caller because the only documented use was logging.
-#[derive(Debug, Clone, Deserialize)]
-struct VersionResponse {
-    id: u64,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 struct UploadResponse {
     uuid: String,
@@ -464,6 +433,11 @@ struct VersionCreateBody<'a> {
     release_notes: &'a HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct VersionResponse {
+    id: u64,
 }
 
 #[cfg(test)]
@@ -737,8 +711,6 @@ mod tests {
             other => panic!("expected WepubError::HttpStatus, got {other:?}"),
         }
     }
-
-    // ---- Unit tests for serialization and URL helpers ----
 
     #[test]
     fn channel_serialises_as_amo_expects() {
