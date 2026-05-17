@@ -99,7 +99,7 @@ Credentials and IDs can also be supplied via environment variables:
 
 Run `wepub edge --help` for the full list of flags (notes for the certification team, etc.).
 
-**Note:** Only existing add-ons can be updated. The very first version of a product must still be created and published through Partner Center.
+**Note:** Only existing products can be updated. The very first version of a product must still be created and published through Partner Center.
 
 ### `.env` file
 
