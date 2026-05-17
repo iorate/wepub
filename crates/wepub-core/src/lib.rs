@@ -7,12 +7,12 @@
 //!
 //! Currently supported stores:
 //!
-//! - **Firefox AMO** via [`firefox::FirefoxStore`]. Uses an HS256 JWT
+//! - **Firefox Add-ons** via [`firefox::FirefoxStore`]. Uses an HS256 JWT
 //!   credential pair.
 //! - **Chrome Web Store** via [`chrome::ChromeStore`]. Uses an OAuth refresh
 //!   token (or a pre-fetched access token).
-//! - **Microsoft Edge Add-ons** via [`edge::EdgeStore`]. Uses the Partner
-//!   Center API key + Client ID credential pair (v1.1).
+//! - **Edge Add-ons** via [`edge::EdgeStore`]. Uses the Partner Center API
+//!   key + Client ID credential pair (v1.1).
 //!
 //! All stores share the [`WepubError`] error type and the [`Result`] alias.
 //!

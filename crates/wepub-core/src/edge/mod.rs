@@ -1,4 +1,4 @@
-//! Microsoft Edge Add-ons Update REST API (v1.1) client.
+//! Edge Add-ons Update REST API (v1.1) client.
 //!
 //! The entry point is [`EdgeStore`]. Build it with the API credentials
 //! issued by Microsoft Partner Center

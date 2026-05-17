@@ -26,16 +26,17 @@ pub struct FirefoxPublishOptions {
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
-    /// Release notes keyed by AMO locale code (e.g. `"en-US"`).
+    /// Release notes keyed by Firefox Add-ons locale code (e.g. `"en-US"`).
     pub release_notes: HashMap<String, String>,
-    /// Optional message to AMO reviewers, typically containing build
-    /// reproduction steps.
+    /// Optional message to Firefox Add-ons reviewers, typically containing
+    /// build reproduction steps.
     pub approval_notes: Option<String>,
-    /// Optional source archive to attach to the version. AMO requires this
-    /// when reviewers cannot reproduce the bundled artefact from the listing.
+    /// Optional source archive to attach to the version. Firefox Add-ons
+    /// requires this when reviewers cannot reproduce the bundled artefact
+    /// from the listing.
     pub source: Option<Vec<u8>>,
-    /// Polling cadence and overall timeout used while waiting for AMO to
-    /// finish validating the upload.
+    /// Polling cadence and overall timeout used while waiting for Firefox
+    /// Add-ons to finish validating the upload.
     pub poll: FirefoxPollConfig,
 }
 
@@ -61,7 +62,7 @@ impl Default for FirefoxPollConfig {
     }
 }
 
-/// Distribution channel for an AMO version.
+/// Distribution channel for a Firefox Add-ons version.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Channel {
     /// Listed on addons.mozilla.org. Goes through public review (the
@@ -81,9 +82,9 @@ impl Channel {
     }
 }
 
-/// Compatibility declaration sent to AMO when creating the version.
+/// Compatibility declaration sent to Firefox Add-ons when creating the version.
 ///
-/// AMO's wire format accepts either a flat list of compatible apps (with
+/// The wire format accepts either a flat list of compatible apps (with
 /// versions inferred from the manifest) or an object mapping each app to an
 /// explicit version range. `wepub-core` exposes both shapes through this
 /// enum.
@@ -108,7 +109,7 @@ impl Serialize for Compatibility {
     }
 }
 
-/// AMO application identifier used in compatibility declarations.
+/// Firefox Add-ons application identifier used in compatibility declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Application {
     /// Desktop Firefox.
@@ -152,12 +153,12 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// Client for the AMO Add-on Versions API (v5).
+/// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
 /// The store holds the JWT credential pair and a reusable HTTP client; it
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
-// Debug intentionally omitted: holds the AMO JWT secret.
+// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
 pub struct FirefoxStore {
     addon_id: String,
     issuer: String,
@@ -191,7 +192,7 @@ impl FirefoxStore {
         })
     }
 
-    /// Override the AMO API root URL.
+    /// Override the Firefox Add-ons API root URL.
     ///
     /// Defaults to `https://addons.mozilla.org/`. Intended for tests
     /// or when pointing at a local `mozilla/addons-server` instance. A
@@ -210,8 +211,8 @@ impl FirefoxStore {
     /// Upload `zip` and create a new version on the bound add-on.
     ///
     /// The call performs four steps internally: upload the archive, poll
-    /// AMO until validation finishes, create the version, and (if
-    /// `options.source` is set) attach the source archive in a follow-up
+    /// Firefox Add-ons until validation finishes, create the version, and
+    /// (if `options.source` is set) attach the source archive in a follow-up
     /// PATCH. The polling cadence is controlled by `options.poll`.
     ///
     /// Progress (`uploading to Firefox Add-ons`, `polling Firefox Add-ons
@@ -337,7 +338,8 @@ impl FirefoxStore {
                     return Err(WepubError::UnexpectedResponse {
                         store: Store::Firefox,
                         phase: Phase::Upload,
-                        detail: "AMO reported valid=false without a validation field".to_string(),
+                        detail: "Firefox Add-ons reported valid=false without a validation field"
+                            .to_string(),
                     });
                 };
                 let detail = pretty_json(validation);
@@ -442,7 +444,7 @@ impl FirefoxStore {
     }
 }
 
-// Successful response from creating a new add-on version on AMO.
+// Successful response from creating a new add-on version on Firefox Add-ons.
 // Internal-only: the id is echoed via `tracing::info!` from `publish` and
 // not surfaced to the caller because the only documented use was logging.
 #[derive(Debug, Clone, Deserialize)]

@@ -13,7 +13,7 @@ pub enum Store {
     Firefox,
     /// Chrome Web Store.
     Chrome,
-    /// Microsoft Edge Add-ons.
+    /// Edge Add-ons.
     Edge,
 }
 
@@ -145,33 +145,33 @@ pub enum WepubError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// AMO reported the upload as `valid: false`. `detail` is the
-    /// pretty-printed `validation` JSON tree returned by AMO.
+    /// Firefox Add-ons reported the upload as `valid: false`. `detail` is
+    /// the pretty-printed `validation` JSON tree returned by the API.
     #[error("firefox validation failed for upload {uuid}: {detail}")]
     FirefoxValidationFailed {
-        /// AMO upload UUID returned by `POST /addons/upload/`.
+        /// Firefox Add-ons upload UUID returned by `POST /addons/upload/`.
         uuid: String,
-        /// Pretty-printed AMO `validation` field.
+        /// Pretty-printed Firefox Add-ons `validation` field.
         detail: String,
     },
 
-    /// CWS reported `uploadState = FAILED` for the asynchronous upload.
-    /// The official V2 response carries no failure detail, so only the
-    /// item id is preserved.
+    /// Chrome Web Store reported `uploadState = FAILED` for the asynchronous
+    /// upload. The official V2 response carries no failure detail, so only
+    /// the item id is preserved.
     #[error("chrome upload failed for item {item_id}")]
     ChromeUploadFailed {
-        /// CWS item id whose upload failed.
+        /// Chrome Web Store item id whose upload failed.
         item_id: String,
     },
 
-    /// The CWS `:publish` endpoint returned 200 OK but the item reached a
-    /// terminal failure state (`REJECTED` or `CANCELLED`). `detail` is
-    /// the pretty-printed publish response.
+    /// The Chrome Web Store `:publish` endpoint returned 200 OK but the item
+    /// reached a terminal failure state (`REJECTED` or `CANCELLED`).
+    /// `detail` is the pretty-printed publish response.
     #[error("chrome publish failed for item {item_id}: {detail}")]
     ChromePublishFailed {
-        /// CWS item id reported in the publish response.
+        /// Chrome Web Store item id reported in the publish response.
         item_id: String,
-        /// Pretty-printed CWS publish response body.
+        /// Pretty-printed Chrome Web Store publish response body.
         detail: String,
     },
 

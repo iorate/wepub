@@ -54,7 +54,7 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
     store
         .publish(zip, options)
         .await
-        .context("AMO publish failed")?;
+        .context("Firefox Add-ons publish failed")?;
     Ok(())
 }
 

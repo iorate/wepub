@@ -432,7 +432,7 @@ enum Credentials {
     },
 }
 
-// Successful response from the CWS `:publish` endpoint. Internal-only:
+// Successful response from the Chrome Web Store `:publish` endpoint. Internal-only:
 // terminal states (`Rejected`, `Cancelled`) are turned into
 // `WepubError::ChromePublishFailed`, the non-terminal states are echoed
 // via `tracing::info!` from inside `publish`, so callers do not need the
@@ -446,7 +446,7 @@ struct PublishResponse {
 
 // State of a Chrome Web Store item right after a publish request.
 //
-// Only the values documented in the official CWS v2 reference are surfaced;
+// Only the values documented in the official Chrome Web Store v2 reference are surfaced;
 // `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
 // deserialization to fail fast on unknown wire values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

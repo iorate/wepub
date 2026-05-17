@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Firefox (AMO), Chrome Web Store and Microsoft Edge Add-ons are supported.
+Firefox Add-ons, Chrome Web Store and Edge Add-ons are supported.
 
 ## Install
 
@@ -18,7 +18,7 @@ Requires Rust 1.88+.
 
 ## Usage
 
-### Firefox (AMO)
+### Firefox Add-ons
 
 Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
 
@@ -41,7 +41,7 @@ Credentials can also be supplied via environment variables:
 
 Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
-**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
+**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the Firefox Add-ons web UI.
 
 ### Chrome Web Store
 
@@ -75,7 +75,7 @@ Run `wepub chrome --help` for the full list of flags (publish type, deploy perce
 
 **Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
 
-### Microsoft Edge Add-ons
+### Edge Add-ons
 
 Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key, then:
 

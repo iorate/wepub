@@ -16,7 +16,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`EdgeStore::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
 pub struct EdgePublishOptions {
-    /// Optional notes for the Microsoft Edge Add-ons certification team
+    /// Optional notes for the Edge Add-ons certification team
     /// (reviewer-facing). Sent as the `notes` field in the publish
     /// request body. `None` sends no body.
     pub notes: Option<String>,
@@ -48,7 +48,7 @@ impl Default for EdgePollConfig {
     }
 }
 
-/// Client for the Microsoft Edge Add-ons Update REST API (v1.1).
+/// Client for the Edge Add-ons Update REST API (v1.1).
 ///
 /// The store holds the Partner Center credentials and a reusable HTTP
 /// client; it is cheap to construct and intended to live for the
@@ -113,12 +113,11 @@ impl EdgeStore {
     /// reaches `Succeeded`. The polling cadence is controlled by
     /// `options.poll`.
     ///
-    /// Progress (`uploading to Microsoft Edge Add-ons`, `polling Microsoft
-    /// Edge Add-ons upload status`, `submitting to Microsoft Edge Add-ons
-    /// for publish`, `polling Microsoft Edge Add-ons publish status`,
-    /// `Microsoft Edge Add-ons publish succeeded`) is emitted through the
-    /// `tracing` crate; library consumers configure their own subscriber
-    /// to render or capture it.
+    /// Progress (`uploading to Edge Add-ons`, `polling Edge Add-ons upload
+    /// status`, `submitting to Edge Add-ons for publish`, `polling Edge
+    /// Add-ons publish status`, `Edge Add-ons publish succeeded`) is emitted
+    /// through the `tracing` crate; library consumers configure their own
+    /// subscriber to render or capture it.
     ///
     /// # Errors
     ///
@@ -159,7 +158,7 @@ impl EdgeStore {
     async fn upload(&self, zip: Vec<u8>) -> Result<String> {
         tracing::info!(
             product_id = %self.product_id,
-            "uploading to Microsoft Edge Add-ons"
+            "uploading to Edge Add-ons"
         );
 
         let method = reqwest::Method::POST;
@@ -192,7 +191,7 @@ impl EdgeStore {
         loop {
             tracing::info!(
                 product_id = %self.product_id,
-                "polling Microsoft Edge Add-ons upload status"
+                "polling Edge Add-ons upload status"
             );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
@@ -239,7 +238,7 @@ impl EdgeStore {
         tracing::info!(
             product_id = %self.product_id,
             has_notes = notes.is_some(),
-            "submitting to Microsoft Edge Add-ons for publish"
+            "submitting to Edge Add-ons for publish"
         );
 
         let method = reqwest::Method::POST;
@@ -273,7 +272,7 @@ impl EdgeStore {
         loop {
             tracing::info!(
                 product_id = %self.product_id,
-                "polling Microsoft Edge Add-ons publish status"
+                "polling Edge Add-ons publish status"
             );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
@@ -292,7 +291,7 @@ impl EdgeStore {
                     tracing::info!(
                         product_id = %self.product_id,
                         message = body.message.as_deref(),
-                        "Microsoft Edge Add-ons publish succeeded"
+                        "Edge Add-ons publish succeeded"
                     );
                     return Ok(());
                 }

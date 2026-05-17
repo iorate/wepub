@@ -24,11 +24,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Upload a zip and create a new version on AMO.
+    /// Upload a zip and submit a new version to Firefox Add-ons.
     Firefox(FirefoxArgs),
-    /// Upload a zip and submit a new version to the Chrome Web Store.
+    /// Upload a zip and submit a new version to Chrome Web Store.
     Chrome(ChromeArgs),
-    /// Upload a zip and submit a new version to Microsoft Edge Add-ons.
+    /// Upload a zip and submit a new version to Edge Add-ons.
     Edge(EdgeArgs),
 }
 
@@ -56,15 +56,15 @@ pub struct FirefoxArgs {
     #[arg(long, value_enum, default_value_t = ChannelArg::Listed)]
     pub channel: ChannelArg,
 
-    /// AMO API key (JWT issuer).
+    /// Firefox Add-ons API key (JWT issuer).
     #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
     pub api_key: String,
 
-    /// AMO API secret (JWT secret).
+    /// Firefox Add-ons API secret (JWT secret).
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
-    /// Override the AMO API root URL (for local addons-server etc.).
+    /// Override the Firefox Add-ons API root URL (for local addons-server etc.).
     #[arg(long, env = "WEPUB_FIREFOX_TEST_ROOT_URL")]
     pub test_root_url: Option<Url>,
 
@@ -80,7 +80,7 @@ pub struct FirefoxArgs {
     #[arg(long, value_name = "PATH")]
     pub release_notes_file: Option<PathBuf>,
 
-    /// Approval notes for AMO reviewers. Mutually exclusive with --approval-notes-file.
+    /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
     #[arg(long)]
     pub approval_notes: Option<String>,
 
@@ -147,7 +147,7 @@ pub struct ChromeArgs {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
     pub deploy_percentage: Option<u8>,
 
-    /// Override the CWS API root URL (for testing).
+    /// Override the Chrome Web Store API root URL (for testing).
     #[arg(long, env = "WEPUB_CHROME_TEST_ROOT_URL")]
     pub test_root_url: Option<Url>,
 
