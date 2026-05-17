@@ -220,10 +220,9 @@ impl Store {
                 Some(OperationStatus::InProgress) => {}
             }
 
-            if started.elapsed() >= config.timeout {
-                return Err(WepubError::PollTimeout {
-                    elapsed: config.timeout,
-                });
+            let elapsed = started.elapsed();
+            if elapsed >= config.timeout {
+                return Err(WepubError::PollTimeout { elapsed });
             }
 
             tokio::time::sleep(config.interval).await;
@@ -298,10 +297,9 @@ impl Store {
                 Some(OperationStatus::InProgress) => {}
             }
 
-            if started.elapsed() >= config.timeout {
-                return Err(WepubError::PollTimeout {
-                    elapsed: config.timeout,
-                });
+            let elapsed = started.elapsed();
+            if elapsed >= config.timeout {
+                return Err(WepubError::PollTimeout { elapsed });
             }
 
             tokio::time::sleep(config.interval).await;

@@ -331,10 +331,9 @@ impl Store {
                 }
             }
 
-            if started.elapsed() >= config.timeout {
-                return Err(WepubError::PollTimeout {
-                    elapsed: config.timeout,
-                });
+            let elapsed = started.elapsed();
+            if elapsed >= config.timeout {
+                return Err(WepubError::PollTimeout { elapsed });
             }
 
             tokio::time::sleep(config.interval).await;
