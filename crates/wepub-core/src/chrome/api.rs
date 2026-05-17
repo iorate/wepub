@@ -9,7 +9,7 @@ use crate::{
     http::build_client,
 };
 
-use super::auth::{TOKEN_URL, refresh_access_token};
+use super::auth::{DEFAULT_TOKEN_URL, refresh_access_token};
 
 const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -417,7 +417,7 @@ impl ChromeStore {
             item_id,
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(TOKEN_URL).expect("TOKEN_URL is a valid URL"),
+            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
             client: build_client()?,
         })
     }

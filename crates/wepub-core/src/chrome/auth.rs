@@ -3,7 +3,7 @@ use url::Url;
 
 use crate::{Phase, Result, Store, WepubError, common::log_request};
 
-pub(crate) const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
 pub(crate) async fn refresh_access_token(
     client: &reqwest::Client,

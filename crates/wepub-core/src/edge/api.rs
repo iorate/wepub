@@ -12,7 +12,6 @@ use crate::{
 const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-const UPLOAD_CONTENT_TYPE: &str = "application/zip";
 
 /// Options that shape how [`EdgeStore::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
@@ -176,7 +175,7 @@ impl EdgeStore {
         log_request(&method, &url);
         let resp = self
             .auth(self.client.request(method, url))
-            .header(reqwest::header::CONTENT_TYPE, UPLOAD_CONTENT_TYPE)
+            .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
             .send()
             .await?;
