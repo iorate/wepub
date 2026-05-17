@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
 
@@ -174,7 +174,10 @@ impl EdgeStore {
 
         log_request(&method, &url);
         let resp = self
-            .auth(self.client.request(method, url))
+            .client
+            .request(method, url)
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header("X-ClientID", &self.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
             .send()
@@ -188,8 +191,61 @@ impl EdgeStore {
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
         ))?;
-        self.poll_operation(&url, config, OperationKind::Upload)
-            .await
+        let started = Instant::now();
+
+        loop {
+            let method = reqwest::Method::GET;
+            log_request(&method, &url);
+            let resp = self
+                .client
+                .request(method, url.clone())
+                .header(reqwest::header::AUTHORIZATION, self.auth_header())
+                .header("X-ClientID", &self.client_id)
+                .send()
+                .await?;
+            let body: OperationResponse = decode_response(resp, Store::Edge, Phase::Upload).await?;
+
+            tracing::info!(
+                product_id = %self.product_id,
+                status = ?body.status,
+                "polling Microsoft Edge Add-ons upload status"
+            );
+
+            match body.status {
+                Some(OperationStatus::Succeeded) => {
+                    tracing::info!(
+                        product_id = %self.product_id,
+                        message = body.message.as_deref(),
+                        "Microsoft Edge Add-ons upload succeeded"
+                    );
+                    return Ok(());
+                }
+                Some(OperationStatus::Failed) => {
+                    return Err(WepubError::EdgeUploadFailed {
+                        product_id: self.product_id.clone(),
+                        detail: pretty_json(&body),
+                    });
+                }
+                None => {
+                    return Err(WepubError::UnexpectedResponse {
+                        store: Store::Edge,
+                        phase: Phase::Upload,
+                        detail: "upload status response missing `status` field".to_string(),
+                    });
+                }
+                Some(OperationStatus::InProgress) => {}
+            }
+
+            if started.elapsed() >= config.timeout {
+                return Err(WepubError::Timeout {
+                    store: Store::Edge,
+                    phase: Phase::Upload,
+                    elapsed: config.timeout,
+                });
+            }
+
+            tokio::time::sleep(config.interval).await;
+        }
     }
 
     async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
@@ -203,7 +259,11 @@ impl EdgeStore {
         );
 
         log_request(&method, &url);
-        let mut request = self.auth(self.client.request(method, url));
+        let mut request = self
+            .client
+            .request(method, url)
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
+            .header("X-ClientID", &self.client_id);
         if let Some(notes) = notes {
             request = request.form(&[("notes", notes)]);
         }
@@ -221,33 +281,25 @@ impl EdgeStore {
             "v1/products/{}/submissions/operations/{operation_id}",
             self.product_id
         ))?;
-        self.poll_operation(&url, config, OperationKind::Publish)
-            .await
-    }
-
-    async fn poll_operation(
-        &self,
-        url: &Url,
-        config: &EdgePollConfig,
-        kind: OperationKind,
-    ) -> Result<()> {
         let started = Instant::now();
-
-        let phase = kind.phase();
 
         loop {
             let method = reqwest::Method::GET;
-            log_request(&method, url);
+            log_request(&method, &url);
             let resp = self
-                .auth(self.client.request(method, url.clone()))
+                .client
+                .request(method, url.clone())
+                .header(reqwest::header::AUTHORIZATION, self.auth_header())
+                .header("X-ClientID", &self.client_id)
                 .send()
                 .await?;
-            let body: OperationResponse = decode_response(resp, Store::Edge, phase).await?;
+            let body: OperationResponse =
+                decode_response(resp, Store::Edge, Phase::Publish).await?;
 
             tracing::info!(
                 product_id = %self.product_id,
                 status = ?body.status,
-                "polling Microsoft Edge Add-ons {phase} status"
+                "polling Microsoft Edge Add-ons publish status"
             );
 
             match body.status {
@@ -255,15 +307,19 @@ impl EdgeStore {
                     tracing::info!(
                         product_id = %self.product_id,
                         message = body.message.as_deref(),
-                        "Microsoft Edge Add-ons {phase} succeeded"
+                        "Microsoft Edge Add-ons publish succeeded"
                     );
                     return Ok(());
                 }
-                // Absent `status` is the documented "unexpected failure"
-                // shape for the publish operation; treat it the same as
-                // an explicit Failed instead of continuing to poll.
+                // Absent `status` is a documented failure shape for the
+                // publish operation (200 OK with `{ id, message }` only,
+                // labeled "Unexpected" in the Edge API reference). Treat
+                // it as a regular Failed instead of continuing to poll.
                 Some(OperationStatus::Failed) | None => {
-                    return Err(self.make_failure(kind, &body));
+                    return Err(WepubError::EdgePublishFailed {
+                        product_id: self.product_id.clone(),
+                        detail: pretty_json(&body),
+                    });
                 }
                 Some(OperationStatus::InProgress) => {}
             }
@@ -271,18 +327,13 @@ impl EdgeStore {
             if started.elapsed() >= config.timeout {
                 return Err(WepubError::Timeout {
                     store: Store::Edge,
-                    phase: kind.phase(),
+                    phase: Phase::Publish,
                     elapsed: config.timeout,
                 });
             }
 
             tokio::time::sleep(config.interval).await;
         }
-    }
-
-    fn make_failure(&self, kind: OperationKind, body: &OperationResponse) -> WepubError {
-        let detail = serde_json::to_string_pretty(body).unwrap_or_else(|_| format!("{body:?}"));
-        kind.failure_error(self.product_id.clone(), detail)
     }
 
     async fn extract_operation_id(resp: reqwest::Response, phase: Phase) -> Result<String> {
@@ -316,13 +367,8 @@ impl EdgeStore {
         Ok(operation_id)
     }
 
-    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        builder
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("ApiKey {}", self.api_key),
-            )
-            .header("X-ClientID", &self.client_id)
+    fn auth_header(&self) -> String {
+        format!("ApiKey {}", self.api_key)
     }
 }
 
@@ -338,9 +384,9 @@ enum OperationStatus {
 }
 
 // Body of a status response from either the upload or the publish
-// operation endpoint. The "unexpected failure" shape documented for the
-// publish endpoint lacks `status`; serde fills it with `None` so callers
-// can distinguish it from a regular response.
+// operation endpoint. The "Unexpected" shape documented for the publish
+// endpoint lacks `status`; serde fills it with `None` so callers can
+// distinguish it from a regular response.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
@@ -352,28 +398,6 @@ struct OperationResponse {
     error_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     errors: Option<Vec<serde_json::Value>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum OperationKind {
-    Upload,
-    Publish,
-}
-
-impl OperationKind {
-    fn phase(self) -> Phase {
-        match self {
-            OperationKind::Upload => Phase::Upload,
-            OperationKind::Publish => Phase::Publish,
-        }
-    }
-
-    fn failure_error(self, product_id: String, detail: String) -> WepubError {
-        match self {
-            OperationKind::Upload => WepubError::EdgeUploadFailed { product_id, detail },
-            OperationKind::Publish => WepubError::EdgePublishFailed { product_id, detail },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -677,11 +701,11 @@ mod tests {
         }
     }
 
-    // The publish endpoint documents an "unexpected failure" shape that
-    // lacks the `status` field entirely. Treat the absence as a failure
-    // and surface the message in WepubError::EdgePublish.
+    // The publish endpoint documents an "Unexpected" shape that lacks
+    // the `status` field entirely. Treat the absence as a failure and
+    // surface the message in WepubError::EdgePublishFailed.
     #[tokio::test]
-    async fn wait_until_published_handles_unexpected_failure_shape() {
+    async fn wait_until_published_handles_documented_unexpected_shape() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({

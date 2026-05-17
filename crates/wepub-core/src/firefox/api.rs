@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
 
@@ -346,8 +346,7 @@ impl FirefoxStore {
                         detail: "AMO reported valid=false without a validation field".to_string(),
                     });
                 };
-                let detail = serde_json::to_string_pretty(validation)
-                    .unwrap_or_else(|_| validation.to_string());
+                let detail = pretty_json(validation);
                 return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
                     detail,

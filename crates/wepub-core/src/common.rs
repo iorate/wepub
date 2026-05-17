@@ -34,6 +34,13 @@ pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     );
 }
 
+// Used to render a structured response body into the `detail` field of
+// `*Failed` variants. Falls back to `Debug` if serialization fails so we
+// never lose information.
+pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value:?}"))
+}
+
 // Decode failures are tagged `UnexpectedResponse` (server violated its
 // wire contract), not `HttpStatus` (which is reserved for non-2xx).
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(

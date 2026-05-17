@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
 
@@ -386,8 +386,7 @@ impl ChromeStore {
         let parsed: PublishResponse = decode_response(resp, Store::Chrome, Phase::Publish).await?;
         match parsed.state {
             ItemState::Rejected | ItemState::Cancelled => {
-                let detail =
-                    serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| format!("{parsed:?}"));
+                let detail = pretty_json(&parsed);
                 Err(WepubError::ChromePublishFailed {
                     item_id: parsed.item_id,
                     detail,
