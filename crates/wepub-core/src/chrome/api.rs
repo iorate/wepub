@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
+    common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
 
@@ -292,18 +292,19 @@ impl Store {
                 body.last_async_upload_state
             };
 
-            match state {
+            let reason = match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
-                Some(UploadState::InProgress) => {}
-                // FAILED, NOT_FOUND, and absent lastAsyncUploadState are all
-                // treated as upload failure: FAILED is the explicit failure
-                // signal, while NOT_FOUND / absent mean the server has no
-                // record of the upload we just performed.
-                _ => {
-                    return Err(WepubError::ChromeUploadFailed {
-                        item_id: self.item_id.clone(),
-                    });
-                }
+                Some(UploadState::InProgress) => None,
+                Some(UploadState::Failed) => Some("upload failed"),
+                // Absent `lastAsyncUploadState` is documented as "no async
+                // upload in the past 24 hours" - same as NOT_FOUND for us.
+                Some(UploadState::NotFound) | None => Some("upload not found"),
+            };
+            if let Some(reason) = reason {
+                return Err(WepubError::ChromeUploadFailed {
+                    item_id: self.item_id.clone(),
+                    reason: reason.to_string(),
+                });
             }
 
             let elapsed = started.elapsed();
@@ -344,26 +345,26 @@ impl Store {
             .await?;
 
         let parsed: PublishResponse = decode_response(resp).await?;
-        match parsed.state {
-            ItemState::Rejected | ItemState::Cancelled => {
-                let detail = pretty_json(&parsed);
-                Err(WepubError::ChromePublishFailed {
-                    item_id: parsed.item_id,
-                    detail,
-                })
-            }
+        let reason = match parsed.state {
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
-            | ItemState::PublishedToTesters => {
-                tracing::info!(
-                    item_id = %parsed.item_id,
-                    state = ?parsed.state,
-                    "Chrome Web Store publish succeeded"
-                );
-                Ok(parsed)
-            }
+            | ItemState::PublishedToTesters => None,
+            ItemState::Rejected => Some("rejected"),
+            ItemState::Cancelled => Some("cancelled"),
+        };
+        if let Some(reason) = reason {
+            return Err(WepubError::ChromePublishFailed {
+                item_id: parsed.item_id,
+                reason: reason.to_string(),
+            });
         }
+        tracing::info!(
+            item_id = %parsed.item_id,
+            state = ?parsed.state,
+            "Chrome Web Store publish succeeded"
+        );
+        Ok(parsed)
     }
 
     fn with_credentials(
@@ -652,8 +653,9 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id } => {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload failed");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -696,8 +698,9 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id } => {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload failed");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -720,7 +723,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id } => assert_eq!(item_id, "item-1"),
+            WepubError::ChromeUploadFailed { item_id, reason } => {
+                assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload not found");
+            }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
@@ -741,7 +747,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id } => assert_eq!(item_id, "item-1"),
+            WepubError::ChromeUploadFailed { item_id, reason } => {
+                assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload not found");
+            }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
@@ -871,8 +880,9 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_id, detail: _ } => {
+            WepubError::ChromePublishFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "rejected");
             }
             other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }
@@ -896,8 +906,9 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_id, detail: _ } => {
+            WepubError::ChromePublishFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "cancelled");
             }
             other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }

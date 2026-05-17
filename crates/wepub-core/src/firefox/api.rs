@@ -316,10 +316,9 @@ impl Store {
                             .to_string(),
                     });
                 };
-                let detail = pretty_json(validation);
                 return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
-                    detail,
+                    validation: pretty_json(validation),
                 });
             }
 
@@ -528,9 +527,9 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::FirefoxValidationFailed { uuid, detail } => {
+            WepubError::FirefoxValidationFailed { uuid, validation } => {
                 assert_eq!(uuid, "uuid-2");
-                assert!(detail.contains("manifest broken"));
+                assert!(validation.contains("manifest broken"));
             }
             other => panic!("expected WepubError::FirefoxValidationFailed, got {other:?}"),
         }

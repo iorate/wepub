@@ -191,7 +191,7 @@ impl Store {
                 Some(OperationStatus::Failed) => {
                     return Err(WepubError::EdgeUploadFailed {
                         product_id: self.product_id.clone(),
-                        detail: pretty_json(&body),
+                        operation: pretty_json(&body),
                     });
                 }
                 None => {
@@ -273,7 +273,7 @@ impl Store {
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgePublishFailed {
                         product_id: self.product_id.clone(),
-                        detail: pretty_json(&body),
+                        operation: pretty_json(&body),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
@@ -342,6 +342,11 @@ enum OperationStatus {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_updated_time: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     status: Option<OperationStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -474,14 +479,23 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::EdgeUploadFailed { product_id, detail } => {
+            WepubError::EdgeUploadFailed {
+                product_id,
+                operation,
+            } => {
                 assert_eq!(product_id, PRODUCT_ID);
                 assert!(
-                    detail.contains("Package validation failed"),
-                    "detail: {detail}"
+                    operation.contains("Package validation failed"),
+                    "operation: {operation}"
                 );
-                assert!(detail.contains("InvalidPackage"), "detail: {detail}");
-                assert!(detail.contains("manifest broken"), "detail: {detail}");
+                assert!(
+                    operation.contains("InvalidPackage"),
+                    "operation: {operation}"
+                );
+                assert!(
+                    operation.contains("manifest broken"),
+                    "operation: {operation}"
+                );
             }
             other => panic!("expected WepubError::EdgeUploadFailed, got {other:?}"),
         }
@@ -634,15 +648,18 @@ mod tests {
                 .await
                 .unwrap_err();
             match err {
-                WepubError::EdgePublishFailed { product_id, detail } => {
+                WepubError::EdgePublishFailed {
+                    product_id,
+                    operation,
+                } => {
                     assert_eq!(product_id, PRODUCT_ID);
                     assert!(
-                        detail.contains(message),
-                        "detail missing message for {code}: {detail}"
+                        operation.contains(message),
+                        "operation missing message for {code}: {operation}"
                     );
                     assert!(
-                        detail.contains(code),
-                        "detail missing errorCode {code}: {detail}"
+                        operation.contains(code),
+                        "operation missing errorCode {code}: {operation}"
                     );
                 }
                 other => panic!("expected WepubError::EdgePublishFailed for {code}, got {other:?}"),
@@ -667,9 +684,15 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::EdgePublishFailed { product_id, detail } => {
+            WepubError::EdgePublishFailed {
+                product_id,
+                operation,
+            } => {
                 assert_eq!(product_id, PRODUCT_ID);
-                assert!(detail.contains("contact support"), "detail: {detail}");
+                assert!(
+                    operation.contains("contact support"),
+                    "operation: {operation}"
+                );
             }
             other => panic!("expected WepubError::EdgePublishFailed, got {other:?}"),
         }

@@ -55,49 +55,50 @@ pub enum WepubError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// Chrome Web Store reported the asynchronous upload as failed. No
-    /// further detail is available from the API.
-    #[error("chrome upload failed for item {item_id}")]
+    /// Chrome Web Store reported the asynchronous upload as failed.
+    #[error("chrome upload failed for item {item_id}: {reason}")]
     ChromeUploadFailed {
         /// Chrome Web Store item id.
         item_id: String,
+        /// Short human-readable cause.
+        reason: String,
     },
 
     /// Chrome Web Store accepted the publish request but reported the
     /// item as having reached a terminal failure state.
-    #[error("chrome publish failed for item {item_id}: {detail}")]
+    #[error("chrome publish failed for item {item_id}: {reason}")]
     ChromePublishFailed {
         /// Chrome Web Store item id.
         item_id: String,
-        /// Server's failure response, as a human-readable dump.
-        detail: String,
+        /// Short human-readable cause.
+        reason: String,
     },
 
     /// Firefox Add-ons reported the upload as having failed validation.
-    #[error("firefox validation failed for upload {uuid}: {detail}")]
+    #[error("firefox validation failed for upload {uuid}: {validation}")]
     FirefoxValidationFailed {
         /// Firefox Add-ons upload UUID.
         uuid: String,
-        /// Server's validation report, as a human-readable dump.
-        detail: String,
+        /// Validation results blob, pretty-printed.
+        validation: String,
     },
 
     /// Edge Add-ons reported the upload operation as failed.
-    #[error("edge upload failed for product {product_id}: {detail}")]
+    #[error("edge upload failed for product {product_id}: {operation}")]
     EdgeUploadFailed {
         /// Edge product id.
         product_id: String,
-        /// Server's failure response, as a human-readable dump.
-        detail: String,
+        /// Operation status response, pretty-printed.
+        operation: String,
     },
 
     /// Edge Add-ons reported the publish operation as failed (including
     /// the documented "unexpected failure" response shape).
-    #[error("edge publish failed for product {product_id}: {detail}")]
+    #[error("edge publish failed for product {product_id}: {operation}")]
     EdgePublishFailed {
         /// Edge product id.
         product_id: String,
-        /// Server's failure response, as a human-readable dump.
-        detail: String,
+        /// Operation status response, pretty-printed.
+        operation: String,
     },
 }
