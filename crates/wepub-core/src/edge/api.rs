@@ -188,15 +188,10 @@ impl Store {
 
             match body.status {
                 Some(OperationStatus::Succeeded) => return Ok(()),
-                Some(OperationStatus::Failed) => {
+                Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgeUploadFailed {
                         product_id: self.product_id.clone(),
                         operation: pretty_json(&body),
-                    });
-                }
-                None => {
-                    return Err(WepubError::UnexpectedResponse {
-                        detail: "upload status response missing `status` field".to_string(),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
@@ -266,10 +261,6 @@ impl Store {
                     );
                     return Ok(());
                 }
-                // Absent `status` is a documented failure shape for the
-                // publish operation (200 OK with `{ id, message }` only,
-                // labeled "Unexpected" in the Edge API reference). Treat
-                // it as a regular Failed instead of continuing to poll.
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgePublishFailed {
                         product_id: self.product_id.clone(),
@@ -502,6 +493,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wait_until_uploaded_handles_unexpected_shape() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "up-u",
+                "message": "An error occurred while processing the request. Please contact support",
+            })))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_uploaded("up-u", &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::EdgeUploadFailed {
+                product_id,
+                operation,
+            } => {
+                assert_eq!(product_id, PRODUCT_ID);
+                assert!(
+                    operation.contains("contact support"),
+                    "operation: {operation}"
+                );
+            }
+            other => panic!("expected WepubError::EdgeUploadFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn wait_until_uploaded_times_out() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -668,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_until_published_handles_documented_unexpected_shape() {
+    async fn wait_until_published_handles_unexpected_shape() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
