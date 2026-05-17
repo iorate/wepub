@@ -38,7 +38,7 @@ pub struct PublishOptions {
 
 /// Whether a successfully reviewed version goes live immediately or waits in
 /// staging for a manual rollout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum PublishType {
     /// Publish immediately after review (the default).
     #[default]
@@ -407,7 +407,7 @@ struct FetchStatusResponse {
 }
 
 // `UPLOAD_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UploadState {
     Succeeded,
@@ -416,7 +416,7 @@ enum UploadState {
     NotFound,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -444,13 +444,13 @@ impl From<&PublishOptions> for PublishRequestBody {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeployInfo {
     deploy_percentage: u8,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishResponse {
     item_id: String,
@@ -458,7 +458,7 @@ struct PublishResponse {
 }
 
 // `ITEM_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ItemState {
     PendingReview,

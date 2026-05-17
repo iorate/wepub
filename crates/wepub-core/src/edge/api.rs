@@ -329,7 +329,7 @@ impl Store {
 // The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
 // which matches Rust's idiomatic variant casing, so no `#[serde(rename_all)]`
 // is needed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 enum OperationStatus {
     InProgress,
     Succeeded,
@@ -339,7 +339,7 @@ enum OperationStatus {
 // The "Unexpected" shape documented for the publish endpoint lacks `status`;
 // serde fills it with `None` so callers can distinguish it from a regular
 // response.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
     id: String,

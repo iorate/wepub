@@ -133,7 +133,7 @@ impl Serialize for Application {
 
 /// Explicit `min` / `max` application version pair used by
 /// [`Compatibility::Detailed`].
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
     /// manifest's `strict_min_version`.
@@ -414,7 +414,7 @@ impl Store {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct UploadResponse {
     uuid: String,
     processed: bool,
@@ -434,7 +434,7 @@ struct VersionCreateBody<'a> {
     approval_notes: Option<&'a str>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct VersionResponse {
     id: u64,
 }

@@ -29,7 +29,7 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
     .map_err(|e| WepubError::Internal(format!("failed to encode JWT: {e}")))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct Claims {
     iss: String,
     jti: String,
