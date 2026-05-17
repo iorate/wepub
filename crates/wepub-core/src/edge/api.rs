@@ -348,7 +348,11 @@ impl EdgeStore {
             })?;
         let operation_id = location
             .to_str()
-            .map_err(|e| WepubError::Internal(format!("non-ASCII Location header: {e}")))?
+            .map_err(|e| WepubError::UnexpectedResponse {
+                store: Store::Edge,
+                phase,
+                detail: format!("non-ASCII Location header: {e}"),
+            })?
             .to_string();
         if operation_id.is_empty() {
             return Err(WepubError::UnexpectedResponse {
