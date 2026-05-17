@@ -1,14 +1,88 @@
+use std::fmt;
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Convenience alias for [`std::result::Result`] specialized to [`WepubError`].
 pub type Result<T> = std::result::Result<T, WepubError>;
 
+/// Identifies which store backend a failure originated from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Store {
+    /// Firefox Add-ons (addons.mozilla.org).
+    Firefox,
+    /// Chrome Web Store.
+    Chrome,
+    /// Microsoft Edge Add-ons.
+    Edge,
+}
+
+impl Store {
+    fn as_str(self) -> &'static str {
+        match self {
+            Store::Firefox => "firefox",
+            Store::Chrome => "chrome",
+            Store::Edge => "edge",
+        }
+    }
+}
+
+impl fmt::Display for Store {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Identifies which logical phase of a publish run a failure originated
+/// from. Used by cross-cutting variants ([`WepubError::Timeout`] and
+/// [`WepubError::UnexpectedResponse`]) so callers can locate the failure
+/// without parsing string detail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Uploading the extension archive (and, for Firefox, polling the
+    /// validation result).
+    Upload,
+    /// Submitting the uploaded artefact for publish (and, for Edge,
+    /// polling the publish operation status).
+    Publish,
+    /// Exchanging a refresh token for an access token. Chrome-only.
+    TokenRefresh,
+}
+
+impl Phase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Phase::Upload => "upload",
+            Phase::Publish => "publish",
+            Phase::TokenRefresh => "token-refresh",
+        }
+    }
+}
+
+impl fmt::Display for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Error type returned by every fallible call in this crate.
 ///
-/// Variants split errors by responsibility: cross-cutting transport /
-/// protocol / credentials failures, per-store domain failures
-/// (prefixed by store name), and a catch-all
-/// [`Internal`](WepubError::Internal) for "should-never-happen" states.
+/// Variants split errors by responsibility:
+///
+/// - Transport / HTTP layer failures that can occur during normal
+///   operation ([`Network`](WepubError::Network),
+///   [`HttpStatus`](WepubError::HttpStatus)).
+/// - Cross-cutting failures tagged with [`Store`] and [`Phase`]:
+///   [`Timeout`](WepubError::Timeout) for polling that ran out of budget,
+///   and [`UnexpectedResponse`](WepubError::UnexpectedResponse) for
+///   responses that violated the documented wire shape (e.g. malformed
+///   JSON, missing required fields, missing headers). The latter
+///   "should not happen" against a conforming server.
+/// - Local I/O / configuration ([`Io`](WepubError::Io),
+///   [`InvalidUrl`](WepubError::InvalidUrl)) and the catch-all
+///   [`Internal`](WepubError::Internal) for programmer-error states.
+/// - Per-store domain failures prefixed by store name: the HTTP call
+///   succeeded but the server reported the publish request as rejected.
 #[derive(Debug, Error)]
 pub enum WepubError {
     /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
@@ -18,87 +92,42 @@ pub enum WepubError {
 
     /// The remote returned a non-2xx HTTP status. `body` carries the
     /// (possibly empty) response body verbatim.
-    #[error("API error (status {status}): {body}")]
-    Api {
+    #[error("HTTP error (status {status}): {body}")]
+    HttpStatus {
         /// HTTP status code from the failed response.
         status: u16,
         /// Response body received with the failure status.
         body: String,
     },
 
-    /// The OAuth / JWT credential exchange failed at the protocol level
-    /// (e.g. Google's token endpoint returned `invalid_grant`).
-    #[error("authentication failed: {0}")]
-    Auth(String),
-
-    /// Firefox AMO reported the upload as `valid: false`, or validation
-    /// polling exceeded its timeout. `body` is the validation result JSON
-    /// (pretty-printed) or a timeout description.
-    #[error("AMO validation failed for upload {uuid}: {body}")]
-    FirefoxValidation {
-        /// AMO upload UUID returned by `POST /addons/upload/`.
-        uuid: String,
-        /// Pretty-printed AMO validation result, or a timeout description.
-        body: String,
+    /// A polling loop exceeded its budget without reaching a terminal
+    /// state.
+    #[error("{store} {phase} polling timed out after {elapsed:?}")]
+    Timeout {
+        /// Which store the timed-out poll targeted.
+        store: Store,
+        /// Which phase the timed-out poll belonged to.
+        phase: Phase,
+        /// Total elapsed time before giving up.
+        elapsed: Duration,
     },
 
-    /// Chrome Web Store reported `uploadState = FAILED` or `NOT_FOUND`, or
-    /// upload polling exceeded its timeout.
-    #[error("CWS upload failed for item {item_id}: {body}")]
-    ChromeUpload {
-        /// CWS item id whose upload failed.
-        item_id: String,
-        /// Failure description from the official enum docs, or a timeout
-        /// description.
-        body: String,
+    /// The server returned a response that violated the documented wire
+    /// shape: malformed JSON, missing required fields, missing required
+    /// headers, or an enum value the API documents as never appearing.
+    /// Against a conforming server this should not happen; reaching this
+    /// variant points at an API change or a server-side bug. Inspect the
+    /// `debug`-level request log for the raw body.
+    #[error("unexpected response from {store} during {phase}: {detail}")]
+    UnexpectedResponse {
+        /// Store whose response was malformed.
+        store: Store,
+        /// Phase during which the malformed response was received.
+        phase: Phase,
+        /// Short description of the wire-shape violation (e.g. a
+        /// `serde_json::Error` message or "missing Location header").
+        detail: String,
     },
-
-    /// The CWS publish endpoint returned 200 OK but the item state is a
-    /// terminal failure (`REJECTED` or `CANCELLED`). The HTTP call itself
-    /// succeeded, hence this is not [`Api`](WepubError::Api).
-    #[error("publish failed for item {item_id}: {body}")]
-    ChromePublish {
-        /// CWS item id reported in the publish response.
-        item_id: String,
-        /// Short description of the terminal state.
-        body: String,
-    },
-
-    /// Microsoft Edge Add-ons upload status operation returned
-    /// `status: "Failed"`, or upload polling exceeded its timeout.
-    #[error("Edge upload failed for product {product_id}: {body}")]
-    EdgeUpload {
-        /// Edge product id whose upload failed.
-        product_id: String,
-        /// Failure description (errorCode + message + errors) or timeout
-        /// description.
-        body: String,
-    },
-
-    /// Microsoft Edge Add-ons publish status operation returned
-    /// `status: "Failed"`, or publish polling exceeded its timeout. The
-    /// publish HTTP call itself succeeded (202 Accepted), hence this is
-    /// not [`Api`](WepubError::Api).
-    #[error("Edge publish failed for product {product_id}: {body}")]
-    EdgePublish {
-        /// Edge product id reported in the publish response.
-        product_id: String,
-        /// Failure description from the operation response, including
-        /// `errorCode` when present.
-        body: String,
-    },
-
-    /// Microsoft Edge Add-ons API returned 202 Accepted without the
-    /// expected `Location` header. Should never happen in practice; the
-    /// preceding tracing log identifies whether this was upload or
-    /// publish.
-    #[error("Edge API returned 202 without a Location header")]
-    EdgeNoLocationHeader,
-
-    /// JSON deserialization of a response body failed. Indicates the wire
-    /// shape diverged from this crate's expectations.
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
 
     /// Local filesystem I/O failed (e.g. could not read the source zip).
     #[error("I/O error: {0}")]
@@ -115,4 +144,56 @@ pub enum WepubError {
     /// `wepub-core` itself.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// AMO reported the upload as `valid: false`. `detail` is the
+    /// pretty-printed `validation` JSON tree returned by AMO.
+    #[error("firefox validation failed for upload {uuid}: {detail}")]
+    FirefoxValidationFailed {
+        /// AMO upload UUID returned by `POST /addons/upload/`.
+        uuid: String,
+        /// Pretty-printed AMO `validation` field.
+        detail: String,
+    },
+
+    /// CWS reported `uploadState = FAILED` for the asynchronous upload.
+    /// The official V2 response carries no failure detail, so only the
+    /// item id is preserved.
+    #[error("chrome upload failed for item {item_id}")]
+    ChromeUploadFailed {
+        /// CWS item id whose upload failed.
+        item_id: String,
+    },
+
+    /// The CWS `:publish` endpoint returned 200 OK but the item reached a
+    /// terminal failure state (`REJECTED` or `CANCELLED`). `detail` is
+    /// the pretty-printed publish response.
+    #[error("chrome publish failed for item {item_id}: {detail}")]
+    ChromePublishFailed {
+        /// CWS item id reported in the publish response.
+        item_id: String,
+        /// Pretty-printed CWS publish response body.
+        detail: String,
+    },
+
+    /// The Edge upload operation reached `status: "Failed"`. `detail` is
+    /// the pretty-printed operation response (carrying `message`,
+    /// `errorCode`, `errors`, ...).
+    #[error("edge upload failed for product {product_id}: {detail}")]
+    EdgeUploadFailed {
+        /// Edge product id whose upload failed.
+        product_id: String,
+        /// Pretty-printed Edge upload operation response.
+        detail: String,
+    },
+
+    /// The Edge publish operation reached `status: "Failed"` (or the
+    /// documented "unexpected failure" shape where `status` is absent).
+    /// `detail` is the pretty-printed operation response.
+    #[error("edge publish failed for product {product_id}: {detail}")]
+    EdgePublishFailed {
+        /// Edge product id whose publish failed.
+        product_id: String,
+        /// Pretty-printed Edge publish operation response.
+        detail: String,
+    },
 }

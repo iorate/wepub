@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    Phase, Result, Store, WepubError,
     common::{decode_response, join_endpoint, parse_root_url},
     http::build_client,
 };
@@ -48,7 +48,7 @@ pub struct FirefoxPollConfig {
     /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
-    /// [`WepubError::FirefoxValidation`].
+    /// [`WepubError::Timeout`].
     pub timeout: Duration,
 }
 
@@ -229,9 +229,10 @@ impl FirefoxStore {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::FirefoxValidation`],
-    /// [`WepubError::Json`], [`WepubError::Io`] or [`WepubError::Internal`]
-    /// depending on which step failed.
+    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::UnexpectedResponse`],
+    /// [`WepubError::FirefoxValidationFailed`], [`WepubError::Io`] or
+    /// [`WepubError::Internal`] depending on which step failed.
     ///
     /// # Examples
     ///
@@ -299,7 +300,7 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp).await
+        decode_response(resp, Store::Firefox, Phase::Upload).await
     }
 
     pub(crate) async fn wait_until_validated(
@@ -318,7 +319,8 @@ impl FirefoxStore {
                 .header(reqwest::header::AUTHORIZATION, auth)
                 .send()
                 .await?;
-            let upload: UploadResponse = decode_response(resp).await?;
+            let upload: UploadResponse =
+                decode_response(resp, Store::Firefox, Phase::Upload).await?;
 
             tracing::info!(
                 uuid = uuid,
@@ -331,20 +333,26 @@ impl FirefoxStore {
                 if upload.valid {
                     return Ok(upload);
                 }
-                let body = upload.validation.as_ref().map_or_else(
-                    || "validation failed (no detail provided)".to_string(),
-                    |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
-                );
-                return Err(WepubError::FirefoxValidation {
+                let Some(validation) = upload.validation.as_ref() else {
+                    return Err(WepubError::UnexpectedResponse {
+                        store: Store::Firefox,
+                        phase: Phase::Upload,
+                        detail: "AMO reported valid=false without a validation field".to_string(),
+                    });
+                };
+                let detail = serde_json::to_string_pretty(validation)
+                    .unwrap_or_else(|_| validation.to_string());
+                return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
-                    body,
+                    detail,
                 });
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::FirefoxValidation {
-                    uuid: uuid.to_string(),
-                    body: format!("validation timed out after {:?}", config.timeout),
+                return Err(WepubError::Timeout {
+                    store: Store::Firefox,
+                    phase: Phase::Upload,
+                    elapsed: config.timeout,
                 });
             }
 
@@ -383,7 +391,7 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp).await
+        decode_response(resp, Store::Firefox, Phase::Publish).await
     }
 
     pub(crate) async fn patch_version_source(
@@ -418,7 +426,7 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp).await
+        decode_response(resp, Store::Firefox, Phase::Publish).await
     }
 
     fn auth_header(&self) -> Result<String> {
@@ -535,11 +543,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::FirefoxValidation { uuid, body } => {
+            WepubError::FirefoxValidationFailed { uuid, detail } => {
                 assert_eq!(uuid, "uuid-2");
-                assert!(body.contains("manifest broken"));
+                assert!(detail.contains("manifest broken"));
             }
-            other => panic!("expected WepubError::FirefoxValidation, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxValidationFailed, got {other:?}"),
         }
     }
 
@@ -561,11 +569,8 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::FirefoxValidation { uuid, body } => {
-                assert_eq!(uuid, "uuid-3");
-                assert!(body.contains("timed out"));
-            }
-            other => panic!("expected WepubError::FirefoxValidation, got {other:?}"),
+            WepubError::Timeout { .. } => {}
+            other => panic!("expected WepubError::Timeout, got {other:?}"),
         }
     }
 
@@ -714,11 +719,11 @@ mod tests {
         let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
 
         match err {
-            WepubError::Api { status, body } => {
+            WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
                 assert_eq!(body, "unauthorized");
             }
-            other => panic!("expected WepubError::Api, got {other:?}"),
+            other => panic!("expected WepubError::HttpStatus, got {other:?}"),
         }
     }
 

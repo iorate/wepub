@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::{Result, WepubError};
+use crate::{Phase, Result, Store, WepubError};
 
 /// Parse a user-supplied root URL string and normalize it for use as a
 /// base URL (i.e. ensure it ends with a trailing slash so that relative
@@ -28,24 +28,36 @@ pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
 }
 
 /// Drain `resp` into a typed body, logging the raw response at debug
-/// level and surfacing non-2xx as [`WepubError::Api`].
+/// level. Non-2xx responses become [`WepubError::HttpStatus`]; bodies
+/// that cannot be decoded as `T` become
+/// [`WepubError::UnexpectedResponse`] tagged with the supplied `store` /
+/// `phase` so callers can locate the failure without inspecting the
+/// detail string.
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
+    store: Store,
+    phase: Phase,
 ) -> Result<T> {
     let status = resp.status();
     let body = resp.text().await?;
     tracing::debug!(
+        store = %store,
+        phase = %phase,
         status = status.as_u16(),
         body = %body,
         "received store API response",
     );
     if !status.is_success() {
-        return Err(WepubError::Api {
+        return Err(WepubError::HttpStatus {
             status: status.as_u16(),
             body,
         });
     }
-    serde_json::from_str(&body).map_err(WepubError::from)
+    serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
+        store,
+        phase,
+        detail: format!("failed to decode response: {e}"),
+    })
 }
 
 #[cfg(test)]

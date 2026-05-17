@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    Phase, Result, Store, WepubError,
     common::{decode_response, join_endpoint, parse_root_url},
     http::build_client,
 };
@@ -36,8 +36,7 @@ pub struct EdgePollConfig {
     /// Delay between successive polls of an operation status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait for a single operation (upload or
-    /// publish) before giving up with [`WepubError::EdgeUpload`] or
-    /// [`WepubError::EdgePublish`].
+    /// publish) before giving up with [`WepubError::Timeout`].
     pub timeout: Duration,
 }
 
@@ -54,7 +53,7 @@ impl Default for EdgePollConfig {
 //
 // The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
 // which matches Rust's idiomatic variant casing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) enum OperationStatus {
     InProgress,
     Succeeded,
@@ -65,16 +64,16 @@ pub(crate) enum OperationStatus {
 // operation endpoint. The "unexpected failure" shape documented for the
 // publish endpoint lacks `status`; serde fills it with `None` so callers
 // can distinguish it from a regular response.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OperationResponse {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) status: Option<OperationStatus>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) message: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) error_code: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) errors: Option<Vec<serde_json::Value>>,
 }
 
@@ -151,10 +150,11 @@ impl EdgeStore {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Json`],
-    /// [`WepubError::EdgeUpload`], [`WepubError::EdgePublish`],
-    /// [`WepubError::EdgeNoLocationHeader`] or
-    /// [`WepubError::Internal`] depending on which step failed.
+    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::UnexpectedResponse`],
+    /// [`WepubError::EdgeUploadFailed`],
+    /// [`WepubError::EdgePublishFailed`] or [`WepubError::Internal`]
+    /// depending on which step failed.
     ///
     /// # Examples
     ///
@@ -205,7 +205,7 @@ impl EdgeStore {
             .send()
             .await?;
 
-        Self::extract_operation_id(resp).await
+        Self::extract_operation_id(resp, Phase::Upload).await
     }
 
     pub(crate) async fn wait_until_uploaded(
@@ -236,7 +236,7 @@ impl EdgeStore {
         }
 
         let resp = request.send().await?;
-        Self::extract_operation_id(resp).await
+        Self::extract_operation_id(resp, Phase::Publish).await
     }
 
     pub(crate) async fn wait_until_published(
@@ -262,7 +262,7 @@ impl EdgeStore {
 
         loop {
             let resp = self.auth(self.client.get(url.clone())).send().await?;
-            let body: OperationResponse = decode_response(resp).await?;
+            let body: OperationResponse = decode_response(resp, Store::Edge, kind.phase()).await?;
 
             tracing::info!(
                 product_id = %self.product_id,
@@ -293,7 +293,11 @@ impl EdgeStore {
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(kind.timeout_error(self.product_id.clone(), config.timeout));
+                return Err(WepubError::Timeout {
+                    store: Store::Edge,
+                    phase: kind.phase(),
+                    elapsed: config.timeout,
+                });
             }
 
             tokio::time::sleep(config.interval).await;
@@ -301,35 +305,15 @@ impl EdgeStore {
     }
 
     fn make_failure(&self, kind: OperationKind, body: &OperationResponse) -> WepubError {
-        let mut parts = Vec::new();
-        if let Some(message) = body.message.as_deref() {
-            parts.push(message.to_string());
-        }
-        if let Some(code) = body.error_code.as_deref()
-            && !code.is_empty()
-        {
-            parts.push(format!("errorCode={code}"));
-        }
-        if let Some(errors) = body.errors.as_ref()
-            && !errors.is_empty()
-        {
-            let rendered = serde_json::to_string(errors)
-                .unwrap_or_else(|_| format!("{} errors", errors.len()));
-            parts.push(format!("errors={rendered}"));
-        }
-        let formatted = if parts.is_empty() {
-            "Edge API reported an unexpected failure with no detail".to_string()
-        } else {
-            parts.join("; ")
-        };
-        kind.failure_error(self.product_id.clone(), formatted)
+        let detail = serde_json::to_string_pretty(body).unwrap_or_else(|_| format!("{body:?}"));
+        kind.failure_error(self.product_id.clone(), detail)
     }
 
-    async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
+    async fn extract_operation_id(resp: reqwest::Response, phase: Phase) -> Result<String> {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await?;
-            return Err(WepubError::Api {
+            return Err(WepubError::HttpStatus {
                 status: status.as_u16(),
                 body,
             });
@@ -337,13 +321,21 @@ impl EdgeStore {
         let location = resp
             .headers()
             .get(reqwest::header::LOCATION)
-            .ok_or(WepubError::EdgeNoLocationHeader)?;
+            .ok_or_else(|| WepubError::UnexpectedResponse {
+                store: Store::Edge,
+                phase,
+                detail: "202 response missing Location header".to_string(),
+            })?;
         let operation_id = location
             .to_str()
             .map_err(|e| WepubError::Internal(format!("non-ASCII Location header: {e}")))?
             .to_string();
         if operation_id.is_empty() {
-            return Err(WepubError::EdgeNoLocationHeader);
+            return Err(WepubError::UnexpectedResponse {
+                store: Store::Edge,
+                phase,
+                detail: "202 response Location header was empty".to_string(),
+            });
         }
         Ok(operation_id)
     }
@@ -372,16 +364,18 @@ impl OperationKind {
         }
     }
 
-    fn failure_error(self, product_id: String, body: String) -> WepubError {
+    fn phase(self) -> Phase {
         match self {
-            OperationKind::Upload => WepubError::EdgeUpload { product_id, body },
-            OperationKind::Publish => WepubError::EdgePublish { product_id, body },
+            OperationKind::Upload => Phase::Upload,
+            OperationKind::Publish => Phase::Publish,
         }
     }
 
-    fn timeout_error(self, product_id: String, timeout: Duration) -> WepubError {
-        let body = format!("polling timed out after {timeout:?}");
-        self.failure_error(product_id, body)
+    fn failure_error(self, product_id: String, detail: String) -> WepubError {
+        match self {
+            OperationKind::Upload => WepubError::EdgeUploadFailed { product_id, detail },
+            OperationKind::Publish => WepubError::EdgePublishFailed { product_id, detail },
+        }
     }
 }
 
@@ -444,11 +438,11 @@ mod tests {
         let store = store_for(&server);
         let err = store.upload(b"FAKE".to_vec()).await.unwrap_err();
         match err {
-            WepubError::Api { status, body } => {
+            WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
                 assert!(body.contains("Unauthorized"));
             }
-            other => panic!("expected WepubError::Api, got {other:?}"),
+            other => panic!("expected WepubError::HttpStatus, got {other:?}"),
         }
     }
 
@@ -463,7 +457,7 @@ mod tests {
         let store = store_for(&server);
         let err = store.upload(b"FAKE".to_vec()).await.unwrap_err();
         assert!(
-            matches!(err, WepubError::EdgeNoLocationHeader),
+            matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
         );
     }
@@ -521,13 +515,16 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::EdgeUpload { product_id, body } => {
+            WepubError::EdgeUploadFailed { product_id, detail } => {
                 assert_eq!(product_id, PRODUCT_ID);
-                assert!(body.contains("Package validation failed"));
-                assert!(body.contains("errorCode=InvalidPackage"));
-                assert!(body.contains("manifest broken"));
+                assert!(
+                    detail.contains("Package validation failed"),
+                    "detail: {detail}"
+                );
+                assert!(detail.contains("InvalidPackage"), "detail: {detail}");
+                assert!(detail.contains("manifest broken"), "detail: {detail}");
             }
-            other => panic!("expected WepubError::EdgeUpload, got {other:?}"),
+            other => panic!("expected WepubError::EdgeUploadFailed, got {other:?}"),
         }
     }
 
@@ -548,11 +545,8 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::EdgeUpload { product_id, body } => {
-                assert_eq!(product_id, PRODUCT_ID);
-                assert!(body.to_lowercase().contains("timed out"));
-            }
-            other => panic!("expected WepubError::EdgeUpload, got {other:?}"),
+            WepubError::Timeout { .. } => {}
+            other => panic!("expected WepubError::Timeout, got {other:?}"),
         }
     }
 
@@ -638,8 +632,8 @@ mod tests {
     }
 
     // Each known errorCode documented in the v1.1 reference must surface
-    // as WepubError::EdgePublish with the errorCode preserved in the body
-    // so CLI users can diagnose the rejection.
+    // as WepubError::EdgePublishFailed with the errorCode preserved in
+    // the detail so CLI users can diagnose the rejection.
     #[tokio::test]
     async fn wait_until_published_errors_on_each_known_error_code() {
         let cases = [
@@ -684,18 +678,18 @@ mod tests {
                 .await
                 .unwrap_err();
             match err {
-                WepubError::EdgePublish { product_id, body } => {
+                WepubError::EdgePublishFailed { product_id, detail } => {
                     assert_eq!(product_id, PRODUCT_ID);
                     assert!(
-                        body.contains(message),
-                        "body missing message for {code}: {body}"
+                        detail.contains(message),
+                        "detail missing message for {code}: {detail}"
                     );
                     assert!(
-                        body.contains(&format!("errorCode={code}")),
-                        "body missing errorCode={code}: {body}"
+                        detail.contains(code),
+                        "detail missing errorCode {code}: {detail}"
                     );
                 }
-                other => panic!("expected WepubError::EdgePublish for {code}, got {other:?}"),
+                other => panic!("expected WepubError::EdgePublishFailed for {code}, got {other:?}"),
             }
         }
     }
@@ -720,11 +714,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::EdgePublish { product_id, body } => {
+            WepubError::EdgePublishFailed { product_id, detail } => {
                 assert_eq!(product_id, PRODUCT_ID);
-                assert!(body.contains("contact support"), "body: {body}");
+                assert!(detail.contains("contact support"), "detail: {detail}");
             }
-            other => panic!("expected WepubError::EdgePublish, got {other:?}"),
+            other => panic!("expected WepubError::EdgePublishFailed, got {other:?}"),
         }
     }
 

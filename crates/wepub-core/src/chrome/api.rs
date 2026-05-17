@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    Phase, Result, Store, WepubError,
     common::{decode_response, join_endpoint, parse_root_url},
     http::build_client,
 };
@@ -59,7 +59,7 @@ pub enum PublishType {
 pub struct ChromePollConfig {
     /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
-    /// Maximum total time to wait before giving up with [`WepubError::ChromeUpload`].
+    /// Maximum total time to wait before giving up with [`WepubError::Timeout`].
     pub timeout: Duration,
 }
 
@@ -74,10 +74,10 @@ impl Default for ChromePollConfig {
 
 // Successful response from the CWS `:publish` endpoint. Internal-only:
 // terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::ChromePublish`, the non-terminal states are echoed via
-// `tracing::info!` from inside `publish`, so callers do not need the
+// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
+// via `tracing::info!` from inside `publish`, so callers do not need the
 // raw values.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PublishResponse {
     pub(crate) item_id: String,
@@ -89,7 +89,7 @@ pub(crate) struct PublishResponse {
 // Only the values documented in the official CWS v2 reference are surfaced;
 // `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
 // deserialization to fail fast on unknown wire values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub(crate) enum ItemState {
     PendingReview,
@@ -220,7 +220,7 @@ impl ChromeStore {
     /// `IN_PROGRESS`, the call polls `:fetchStatus` according to
     /// `options.poll` until the upload reaches `SUCCEEDED` or the timeout
     /// elapses. A 200 OK response from `:publish` whose state is
-    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::ChromePublish`].
+    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::ChromePublishFailed`].
     ///
     /// Progress (`uploading...`, `submitted ... state=...`) is emitted
     /// through the `tracing` crate; library consumers configure their own
@@ -229,9 +229,11 @@ impl ChromeStore {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Json`],
-    /// [`WepubError::ChromeUpload`], [`WepubError::ChromePublish`] or
-    /// [`WepubError::Internal`] depending on which step failed.
+    /// [`WepubError::HttpStatus`], [`WepubError::Timeout`],
+    /// [`WepubError::UnexpectedResponse`],
+    /// [`WepubError::ChromeUploadFailed`],
+    /// [`WepubError::ChromePublishFailed`] or [`WepubError::Internal`]
+    /// depending on which step failed.
     ///
     /// # Examples
     ///
@@ -313,7 +315,7 @@ impl ChromeStore {
             .send()
             .await?;
 
-        let body: UploadResponse = decode_response(resp).await?;
+        let body: UploadResponse = decode_response(resp, Store::Chrome, Phase::Upload).await?;
         Ok(body.upload_state)
     }
 
@@ -325,7 +327,7 @@ impl ChromeStore {
 
         let resp = self.client.get(url).bearer_auth(token).send().await?;
 
-        let body: FetchStatusResponse = decode_response(resp).await?;
+        let body: FetchStatusResponse = decode_response(resp, Store::Chrome, Phase::Upload).await?;
         Ok(body.last_async_upload_state)
     }
 
@@ -344,28 +346,31 @@ impl ChromeStore {
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::Failed) => {
-                    return Err(WepubError::ChromeUpload {
+                    return Err(WepubError::ChromeUploadFailed {
                         item_id: self.item_id.clone(),
-                        body: "The upload failed.".to_string(),
                     });
                 }
                 // None (lastAsyncUploadState absent, i.e. no async upload in
                 // the past 24h) is treated the same as the explicit NOT_FOUND
                 // value: we have just uploaded, so the server should know
-                // about it. Either response indicates something is wrong.
+                // about it. Either response indicates the server is in a
+                // shape we did not expect.
                 Some(UploadState::NotFound) | None => {
-                    return Err(WepubError::ChromeUpload {
-                        item_id: self.item_id.clone(),
-                        body: "An upload attempt was not found.".to_string(),
+                    return Err(WepubError::UnexpectedResponse {
+                        store: Store::Chrome,
+                        phase: Phase::Upload,
+                        detail: "fetchStatus reported the upload as missing (NOT_FOUND or lastAsyncUploadState absent)"
+                            .to_string(),
                     });
                 }
                 Some(UploadState::InProgress) => {}
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::ChromeUpload {
-                    item_id: self.item_id.clone(),
-                    body: format!("upload polling timed out after {:?}", config.timeout),
+                return Err(WepubError::Timeout {
+                    store: Store::Chrome,
+                    phase: Phase::Upload,
+                    elapsed: config.timeout,
                 });
             }
 
@@ -406,16 +411,16 @@ impl ChromeStore {
             .send()
             .await?;
 
-        let parsed: PublishResponse = decode_response(resp).await?;
+        let parsed: PublishResponse = decode_response(resp, Store::Chrome, Phase::Publish).await?;
         match parsed.state {
-            ItemState::Rejected => Err(WepubError::ChromePublish {
-                item_id: parsed.item_id,
-                body: "The publish was rejected.".to_string(),
-            }),
-            ItemState::Cancelled => Err(WepubError::ChromePublish {
-                item_id: parsed.item_id,
-                body: "The publish was cancelled.".to_string(),
-            }),
+            ItemState::Rejected | ItemState::Cancelled => {
+                let detail =
+                    serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| format!("{parsed:?}"));
+                Err(WepubError::ChromePublishFailed {
+                    item_id: parsed.item_id,
+                    detail,
+                })
+            }
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
@@ -648,11 +653,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Api { status, body } => {
+            WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
                 assert!(body.contains("Unauthorized"));
             }
-            other => panic!("expected Api error, got {other:?}"),
+            other => panic!("expected HttpStatus error, got {other:?}"),
         }
     }
 
@@ -733,11 +738,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUpload { item_id, body } => {
+            WepubError::ChromeUploadFailed { item_id } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 
@@ -781,11 +785,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUpload { item_id, body } => {
+            WepubError::ChromeUploadFailed { item_id } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 
@@ -898,9 +901,9 @@ mod tests {
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // Terminal failure states must surface as WepubError::ChromePublish even though
-    // the HTTP call itself returned 200. CLI users rely on the exit code to
-    // detect that the publish request was not accepted.
+    // Terminal failure states must surface as WepubError::ChromePublishFailed
+    // even though the HTTP call itself returned 200. CLI users rely on the
+    // exit code to detect that the publish request was not accepted.
     #[tokio::test]
     async fn submit_for_publish_errors_on_rejected_state() {
         let server = MockServer::start().await;
@@ -919,11 +922,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublish { item_id, body } => {
+            WepubError::ChromePublishFailed { item_id, detail: _ } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The publish was rejected.");
             }
-            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }
     }
 
@@ -945,11 +947,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublish { item_id, body } => {
+            WepubError::ChromePublishFailed { item_id, detail: _ } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The publish was cancelled.");
             }
-            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }
     }
 
