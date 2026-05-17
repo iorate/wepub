@@ -233,7 +233,6 @@ impl Store {
     async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
         tracing::info!(
             product_id = %self.product_id,
-            has_notes = notes.is_some(),
             "submitting to Edge Add-ons for publish"
         );
 
