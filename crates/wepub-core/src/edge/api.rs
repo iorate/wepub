@@ -308,11 +308,6 @@ impl Store {
                 detail: format!("Location header is not ASCII: {e}"),
             })?
             .to_string();
-        if operation_id.is_empty() {
-            return Err(WepubError::UnexpectedResponse {
-                detail: "202 response Location header was empty".to_string(),
-            });
-        }
         Ok(operation_id)
     }
 }
