@@ -272,6 +272,12 @@ impl FirefoxStore {
     }
 
     async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            channel = channel.as_str(),
+            "uploading to Firefox Add-ons"
+        );
+
         let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
         let auth = self.auth_header()?;
@@ -284,12 +290,6 @@ impl FirefoxStore {
         let form = Form::new()
             .part("upload", part)
             .text("channel", channel.as_str());
-
-        tracing::info!(
-            addon_id = %self.addon_id,
-            channel = channel.as_str(),
-            "uploading to Firefox Add-ons"
-        );
 
         log_request(&method, &url);
         let resp = self
@@ -362,6 +362,12 @@ impl FirefoxStore {
         release_notes: &HashMap<String, String>,
         approval_notes: Option<&str>,
     ) -> Result<VersionResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            uuid = upload_uuid,
+            "submitting to Firefox Add-ons for publish"
+        );
+
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
         let auth = self.auth_header()?;
@@ -372,12 +378,6 @@ impl FirefoxStore {
             release_notes,
             approval_notes,
         };
-
-        tracing::info!(
-            addon_id = %self.addon_id,
-            uuid = upload_uuid,
-            "submitting to Firefox Add-ons for publish"
-        );
 
         log_request(&method, &url);
         let resp = self
@@ -396,6 +396,12 @@ impl FirefoxStore {
         version_id: u64,
         source: Vec<u8>,
     ) -> Result<VersionResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            version_id,
+            "uploading source to Firefox Add-ons"
+        );
+
         let method = reqwest::Method::PATCH;
         let url = self.endpoint(&format!(
             "api/v5/addons/addon/{}/versions/{version_id}/",
@@ -409,12 +415,6 @@ impl FirefoxStore {
             .mime_str("application/zip")
             .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new().part("source", part);
-
-        tracing::info!(
-            addon_id = %self.addon_id,
-            version_id,
-            "uploading source to Firefox Add-ons"
-        );
 
         log_request(&method, &url);
         let resp = self

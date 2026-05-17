@@ -157,16 +157,16 @@ impl EdgeStore {
     }
 
     async fn upload(&self, zip: Vec<u8>) -> Result<String> {
+        tracing::info!(
+            product_id = %self.product_id,
+            "uploading to Microsoft Edge Add-ons"
+        );
+
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package",
             self.product_id
         ))?;
-
-        tracing::info!(
-            product_id = %self.product_id,
-            "uploading to Microsoft Edge Add-ons"
-        );
 
         log_request(&method, &url);
         let resp = self
@@ -206,14 +206,7 @@ impl EdgeStore {
             let body: OperationResponse = decode_response(resp, Store::Edge, Phase::Upload).await?;
 
             match body.status {
-                Some(OperationStatus::Succeeded) => {
-                    tracing::info!(
-                        product_id = %self.product_id,
-                        message = body.message.as_deref(),
-                        "Microsoft Edge Add-ons upload succeeded"
-                    );
-                    return Ok(());
-                }
+                Some(OperationStatus::Succeeded) => return Ok(()),
                 Some(OperationStatus::Failed) => {
                     return Err(WepubError::EdgeUploadFailed {
                         product_id: self.product_id.clone(),
@@ -243,14 +236,14 @@ impl EdgeStore {
     }
 
     async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
-
         tracing::info!(
             product_id = %self.product_id,
             has_notes = notes.is_some(),
             "submitting to Microsoft Edge Add-ons for publish"
         );
+
+        let method = reqwest::Method::POST;
+        let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
 
         log_request(&method, &url);
         let mut request = self

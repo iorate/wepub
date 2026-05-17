@@ -256,17 +256,17 @@ impl ChromeStore {
     }
 
     async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "upload/v2/publishers/{}/items/{}:upload",
-            self.publisher_id, self.item_id
-        ))?;
-
         tracing::info!(
             publisher_id = %self.publisher_id,
             item_id = %self.item_id,
             "uploading to Chrome Web Store"
         );
+
+        let method = reqwest::Method::POST;
+        let url = self.endpoint(&format!(
+            "upload/v2/publishers/{}/items/{}:upload",
+            self.publisher_id, self.item_id
+        ))?;
 
         log_request(&method, &url);
         let resp = self
@@ -360,6 +360,12 @@ impl ChromeStore {
         token: &str,
         options: &ChromePublishOptions,
     ) -> Result<PublishResponse> {
+        tracing::info!(
+            publisher_id = %self.publisher_id,
+            item_id = %self.item_id,
+            "submitting to Chrome Web Store for publish"
+        );
+
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:publish",
@@ -367,12 +373,6 @@ impl ChromeStore {
         ))?;
 
         let body = PublishRequestBody::from(options);
-
-        tracing::info!(
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id,
-            "submitting to Chrome Web Store for publish"
-        );
 
         log_request(&method, &url);
         let resp = self
