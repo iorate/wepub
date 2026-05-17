@@ -49,11 +49,11 @@ Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/
 
 ```sh
 wepub chrome ./my-extension.zip \
-  --publisher-id   "12345678-90ab-cdef-1234-567890abcdef" \
-  --item-id        "abcdefghijklmnopabcdefghijklmnop" \
-  --client-id      "...apps.googleusercontent.com" \
-  --client-secret  "..." \
-  --refresh-token  "1//0..."
+  --publisher-id  "12345678-90ab-cdef-1234-567890abcdef" \
+  --item-id       "abcdefghijklmnopabcdefghijklmnop" \
+  --client-id     "...apps.googleusercontent.com" \
+  --client-secret "..." \
+  --refresh-token "1//0..."
 ```
 
 Alternatively, supply a pre-fetched OAuth access token (e.g. from `gcloud auth print-access-token` or a Workload Identity Federation flow) via `--access-token`. The two authentication modes are mutually exclusive.
