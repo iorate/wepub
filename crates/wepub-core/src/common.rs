@@ -14,11 +14,11 @@ pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
     Ok(parsed)
 }
 
-// `path` is always a crate-internal literal, so a join failure is a
-// bug, not user input. Map it to `Internal` rather than `InvalidUrl`.
+// `path` embeds caller-supplied values (addon/product ids, upload
+// uuids), so a join failure reflects bad input rather than a bug.
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
     root.join(path)
-        .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
+        .map_err(|e| WepubError::InvalidUrl(format!("{path:?}: {e}")))
 }
 
 pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
