@@ -27,11 +27,23 @@ pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
         .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
 }
 
-/// Drain `resp` into a typed body, logging the raw response at debug
+/// Emit a `sending request` debug log. Pair this with a subsequent
+/// [`decode_response`] (or, for token endpoints that handle the body
+/// themselves, a `received response` debug log) so the two halves of
+/// the exchange appear together in time order.
+pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
+    tracing::debug!(
+        method = %method,
+        url = %url,
+        "sending request",
+    );
+}
+
+/// Drain `resp` into a typed body, logging the response at debug
 /// level. Non-2xx responses become [`WepubError::HttpStatus`]; bodies
 /// that cannot be decoded as `T` become
-/// [`WepubError::UnexpectedResponse`] tagged with the supplied `store` /
-/// `phase` so callers can locate the failure without inspecting the
+/// [`WepubError::UnexpectedResponse`] tagged with the supplied `store`
+/// / `phase` so callers can locate the failure without inspecting the
 /// detail string.
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
@@ -41,11 +53,9 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     let status = resp.status();
     let body = resp.text().await?;
     tracing::debug!(
-        store = %store,
-        phase = %phase,
         status = status.as_u16(),
         body = %body,
-        "received store API response",
+        "received response",
     );
     if !status.is_success() {
         return Err(WepubError::HttpStatus {

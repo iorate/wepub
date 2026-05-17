@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
 
@@ -142,10 +142,12 @@ impl EdgeStore {
     /// reaches `Succeeded`. The polling cadence is controlled by
     /// `options.poll`.
     ///
-    /// Progress (`uploading...`, `polling Edge upload status`,
-    /// `submitting for publish...`, `polling Edge publish status`) is
-    /// emitted through the `tracing` crate; library consumers
-    /// configure their own subscriber to render or capture it.
+    /// Progress (`uploading to Microsoft Edge Add-ons`, `polling Microsoft
+    /// Edge Add-ons upload status`, `submitting to Microsoft Edge Add-ons
+    /// for publish`, `polling Microsoft Edge Add-ons publish status`,
+    /// `Microsoft Edge Add-ons publish succeeded`) is emitted through the
+    /// `tracing` crate; library consumers configure their own subscriber
+    /// to render or capture it.
     ///
     /// # Errors
     ///
@@ -188,6 +190,7 @@ impl EdgeStore {
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>) -> Result<String> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package",
             self.product_id
@@ -195,11 +198,12 @@ impl EdgeStore {
 
         tracing::info!(
             product_id = %self.product_id,
-            "uploading extension to Microsoft Edge Add-ons"
+            "uploading to Microsoft Edge Add-ons"
         );
 
+        log_request(&method, &url);
         let resp = self
-            .auth(self.client.post(url))
+            .auth(self.client.request(method, url))
             .header(reqwest::header::CONTENT_TYPE, UPLOAD_CONTENT_TYPE)
             .body(zip)
             .send()
@@ -222,15 +226,17 @@ impl EdgeStore {
     }
 
     pub(crate) async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
 
         tracing::info!(
             product_id = %self.product_id,
             has_notes = notes.is_some(),
-            "submitting Edge Add-ons draft for publish"
+            "submitting to Microsoft Edge Add-ons for publish"
         );
 
-        let mut request = self.auth(self.client.post(url));
+        log_request(&method, &url);
+        let mut request = self.auth(self.client.request(method, url));
         if let Some(notes) = notes {
             request = request.form(&[("notes", notes)]);
         }
@@ -260,27 +266,30 @@ impl EdgeStore {
     ) -> Result<()> {
         let started = Instant::now();
 
+        let phase = kind.phase();
+
         loop {
-            let resp = self.auth(self.client.get(url.clone())).send().await?;
-            let body: OperationResponse = decode_response(resp, Store::Edge, kind.phase()).await?;
+            let method = reqwest::Method::GET;
+            log_request(&method, url);
+            let resp = self
+                .auth(self.client.request(method, url.clone()))
+                .send()
+                .await?;
+            let body: OperationResponse = decode_response(resp, Store::Edge, phase).await?;
 
             tracing::info!(
                 product_id = %self.product_id,
                 status = ?body.status,
-                kind = kind.as_str(),
-                "polling Edge operation status"
+                "polling Microsoft Edge Add-ons {phase} status"
             );
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
-                    if let Some(message) = body.message.as_deref() {
-                        tracing::info!(
-                            product_id = %self.product_id,
-                            kind = kind.as_str(),
-                            message = message,
-                            "Edge operation succeeded"
-                        );
-                    }
+                    tracing::info!(
+                        product_id = %self.product_id,
+                        message = body.message.as_deref(),
+                        "Microsoft Edge Add-ons {phase} succeeded"
+                    );
                     return Ok(());
                 }
                 // Absent `status` is the documented "unexpected failure"
@@ -357,13 +366,6 @@ enum OperationKind {
 }
 
 impl OperationKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            OperationKind::Upload => "upload",
-            OperationKind::Publish => "publish",
-        }
-    }
-
     fn phase(self) -> Phase {
         match self {
             OperationKind::Upload => Phase::Upload,

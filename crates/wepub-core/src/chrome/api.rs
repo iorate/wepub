@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
 
@@ -222,9 +222,11 @@ impl ChromeStore {
     /// elapses. A 200 OK response from `:publish` whose state is
     /// `REJECTED` or `CANCELLED` is reported as [`WepubError::ChromePublishFailed`].
     ///
-    /// Progress (`uploading...`, `submitted ... state=...`) is emitted
-    /// through the `tracing` crate; library consumers configure their own
-    /// subscriber to render or capture it.
+    /// Progress (`uploading to Chrome Web Store`, `polling Chrome Web Store
+    /// upload status`, `submitting to Chrome Web Store for publish`,
+    /// `Chrome Web Store publish succeeded`) is emitted through the
+    /// `tracing` crate; library consumers configure their own subscriber
+    /// to render or capture it.
     ///
     /// # Errors
     ///
@@ -284,7 +286,7 @@ impl ChromeStore {
             } => {
                 refresh_access_token(
                     &self.client,
-                    self.token_url.as_str(),
+                    &self.token_url,
                     client_id,
                     client_secret,
                     refresh_token,
@@ -295,6 +297,7 @@ impl ChromeStore {
     }
 
     pub(crate) async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "upload/v2/publishers/{}/items/{}:upload",
             self.publisher_id, self.item_id
@@ -303,12 +306,13 @@ impl ChromeStore {
         tracing::info!(
             publisher_id = %self.publisher_id,
             item_id = %self.item_id,
-            "uploading extension to Chrome Web Store"
+            "uploading to Chrome Web Store"
         );
 
+        log_request(&method, &url);
         let resp = self
             .client
-            .post(url)
+            .request(method, url)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
@@ -320,12 +324,19 @@ impl ChromeStore {
     }
 
     pub(crate) async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
+        let method = reqwest::Method::GET;
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
             self.publisher_id, self.item_id
         ))?;
 
-        let resp = self.client.get(url).bearer_auth(token).send().await?;
+        log_request(&method, &url);
+        let resp = self
+            .client
+            .request(method, url)
+            .bearer_auth(token)
+            .send()
+            .await?;
 
         let body: FetchStatusResponse = decode_response(resp, Store::Chrome, Phase::Upload).await?;
         Ok(body.last_async_upload_state)
@@ -380,7 +391,7 @@ impl ChromeStore {
                 publisher_id = %self.publisher_id,
                 item_id = %self.item_id,
                 state = ?state,
-                "polled Chrome Web Store upload status"
+                "polling Chrome Web Store upload status"
             );
         }
     }
@@ -390,6 +401,7 @@ impl ChromeStore {
         token: &str,
         options: &ChromePublishOptions,
     ) -> Result<PublishResponse> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:publish",
             self.publisher_id, self.item_id
@@ -400,12 +412,13 @@ impl ChromeStore {
         tracing::info!(
             publisher_id = %self.publisher_id,
             item_id = %self.item_id,
-            "submitting Chrome Web Store item for publish"
+            "submitting to Chrome Web Store for publish"
         );
 
+        log_request(&method, &url);
         let resp = self
             .client
-            .post(url)
+            .request(method, url)
             .bearer_auth(token)
             .json(&body)
             .send()
@@ -428,7 +441,7 @@ impl ChromeStore {
                 tracing::info!(
                     item_id = %parsed.item_id,
                     state = ?parsed.state,
-                    "submitted item for publish"
+                    "Chrome Web Store publish succeeded"
                 );
                 Ok(parsed)
             }

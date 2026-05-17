@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::{
     Phase, Result, Store, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url},
+    common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
 
@@ -222,9 +222,11 @@ impl FirefoxStore {
     /// `options.source` is set) attach the source archive in a follow-up
     /// PATCH. The polling cadence is controlled by `options.poll`.
     ///
-    /// Progress (`uploading...`, `polling AMO upload status`, `published
-    /// version id=...`) is emitted through the `tracing` crate; library
-    /// consumers configure their own subscriber to render or capture it.
+    /// Progress (`uploading to Firefox Add-ons`, `polling Firefox Add-ons
+    /// upload status`, `submitting to Firefox Add-ons for publish`,
+    /// `Firefox Add-ons publish succeeded`) is emitted through the
+    /// `tracing` crate; library consumers configure their own subscriber
+    /// to render or capture it.
     ///
     /// # Errors
     ///
@@ -269,7 +271,11 @@ impl FirefoxStore {
             self.patch_version_source(version.id, source).await?;
         }
 
-        tracing::info!(version_id = version.id, "published version");
+        tracing::info!(
+            addon_id = %self.addon_id,
+            version_id = version.id,
+            "Firefox Add-ons publish succeeded"
+        );
         Ok(())
     }
 
@@ -278,6 +284,7 @@ impl FirefoxStore {
     }
 
     pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
         let auth = self.auth_header()?;
 
@@ -290,11 +297,16 @@ impl FirefoxStore {
             .part("upload", part)
             .text("channel", channel.as_str());
 
-        tracing::info!(addon_id = %self.addon_id, channel = channel.as_str(), "uploading add-on to AMO");
+        tracing::info!(
+            addon_id = %self.addon_id,
+            channel = channel.as_str(),
+            "uploading to Firefox Add-ons"
+        );
 
+        log_request(&method, &url);
         let resp = self
             .client
-            .post(url)
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
             .send()
@@ -312,10 +324,12 @@ impl FirefoxStore {
         let started = Instant::now();
 
         loop {
+            let method = reqwest::Method::GET;
             let auth = self.auth_header()?;
+            log_request(&method, &url);
             let resp = self
                 .client
-                .get(url.clone())
+                .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, auth)
                 .send()
                 .await?;
@@ -326,7 +340,7 @@ impl FirefoxStore {
                 uuid = uuid,
                 processed = upload.processed,
                 valid = upload.valid,
-                "polling AMO upload status"
+                "polling Firefox Add-ons upload status"
             );
 
             if upload.processed {
@@ -367,6 +381,7 @@ impl FirefoxStore {
         release_notes: &HashMap<String, String>,
         approval_notes: Option<&str>,
     ) -> Result<VersionResponse> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
         let auth = self.auth_header()?;
 
@@ -380,12 +395,13 @@ impl FirefoxStore {
         tracing::info!(
             addon_id = %self.addon_id,
             uuid = upload_uuid,
-            "creating AMO version"
+            "submitting to Firefox Add-ons for publish"
         );
 
+        log_request(&method, &url);
         let resp = self
             .client
-            .post(url)
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .json(&body)
             .send()
@@ -399,6 +415,7 @@ impl FirefoxStore {
         version_id: u64,
         source: Vec<u8>,
     ) -> Result<VersionResponse> {
+        let method = reqwest::Method::PATCH;
         let url = self.endpoint(&format!(
             "api/v5/addons/addon/{}/versions/{version_id}/",
             self.addon_id
@@ -415,12 +432,13 @@ impl FirefoxStore {
         tracing::info!(
             addon_id = %self.addon_id,
             version_id,
-            "uploading version source to AMO"
+            "uploading source to Firefox Add-ons"
         );
 
+        log_request(&method, &url);
         let resp = self
             .client
-            .patch(url)
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
             .send()

@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use url::Url;
 
-use crate::{Phase, Result, Store, WepubError};
+use crate::{Phase, Result, Store, WepubError, common::log_request};
 
 pub(crate) const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
@@ -11,13 +12,15 @@ struct TokenResponse {
 
 pub(crate) async fn refresh_access_token(
     client: &reqwest::Client,
-    token_url: &str,
+    token_url: &Url,
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<String> {
+    let method = reqwest::Method::POST;
+    log_request(&method, token_url);
     let response = client
-        .post(token_url)
+        .request(method, token_url.clone())
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", client_id),
@@ -29,12 +32,13 @@ pub(crate) async fn refresh_access_token(
 
     let status = response.status();
     let body = response.text().await?;
+    // The success body carries the access_token, so mask it in logs.
+    // Error bodies (e.g. {"error": "invalid_grant"}) are safe and useful.
+    let logged_body: &str = if status.is_success() { "***" } else { &body };
     tracing::debug!(
-        store = %Store::Chrome,
-        phase = %Phase::TokenRefresh,
         status = status.as_u16(),
-        body = %body,
-        "received OAuth token endpoint response",
+        body = %logged_body,
+        "received response",
     );
 
     if !status.is_success() {
@@ -62,9 +66,10 @@ mod tests {
 
     async fn refresh(server: &MockServer, secret: &str) -> Result<String> {
         let client = reqwest::Client::new();
+        let token_url = Url::parse(&server.uri()).unwrap();
         refresh_access_token(
             &client,
-            &server.uri(),
+            &token_url,
             "client-id",
             secret,
             "refresh-token-value",
