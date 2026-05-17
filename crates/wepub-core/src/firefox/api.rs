@@ -312,7 +312,11 @@ impl FirefoxStore {
         let started = Instant::now();
 
         loop {
-            tracing::info!(uuid = uuid, "polling Firefox Add-ons upload status");
+            tracing::info!(
+                addon_id = %self.addon_id,
+                uuid = %uuid,
+                "polling Firefox Add-ons upload status"
+            );
             let method = reqwest::Method::GET;
             let auth = self.auth_header()?;
             log_request(&method, &url);
