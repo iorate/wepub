@@ -25,7 +25,8 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 ///   [`InvalidUrl`](WepubError::InvalidUrl)) and the catch-all
 ///   [`Internal`](WepubError::Internal) for programmer-error states.
 /// - Per-store domain failures prefixed by store name: the HTTP call
-///   succeeded but the server reported the submission as rejected.
+///   succeeded but the server reported the upload or the submission as
+///   rejected.
 #[derive(Debug, Error)]
 pub enum WepubError {
     /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,

@@ -226,7 +226,7 @@ impl Store {
     /// On failure, returns one of [`WepubError::Network`],
     /// [`WepubError::HttpStatus`], [`WepubError::PollTimeout`],
     /// [`WepubError::UnexpectedResponse`],
-    /// [`WepubError::FirefoxValidationFailed`], [`WepubError::Io`] or
+    /// [`WepubError::FirefoxValidationFailed`] or
     /// [`WepubError::Internal`] depending on which step failed.
     ///
     /// # Examples
