@@ -232,7 +232,7 @@ impl Store {
         tracing::info!(
             publisher_id = %self.publisher_id,
             item_id = %self.item_id,
-            "uploading to Chrome Web Store"
+            "uploading"
         );
 
         let method = reqwest::Method::POST;
@@ -278,7 +278,7 @@ impl Store {
                 tracing::info!(
                     publisher_id = %self.publisher_id,
                     item_id = %self.item_id,
-                    "polling Chrome Web Store upload status"
+                    "polling upload status"
                 );
                 let method = reqwest::Method::GET;
                 log_request(&method, &url);
@@ -324,7 +324,7 @@ impl Store {
         tracing::info!(
             publisher_id = %self.publisher_id,
             item_id = %self.item_id,
-            "submitting to Chrome Web Store for publish"
+            "submitting for publish"
         );
 
         let method = reqwest::Method::POST;
@@ -362,7 +362,7 @@ impl Store {
         tracing::info!(
             item_id = %parsed.item_id,
             state = ?parsed.state,
-            "Chrome Web Store publish succeeded"
+            "publish succeeded"
         );
         Ok(parsed)
     }

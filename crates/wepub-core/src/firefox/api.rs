@@ -244,7 +244,7 @@ impl Store {
         tracing::info!(
             addon_id = %self.addon_id,
             version_id = version.id,
-            "Firefox Add-ons publish succeeded"
+            "publish succeeded"
         );
         Ok(())
     }
@@ -253,7 +253,7 @@ impl Store {
         tracing::info!(
             addon_id = %self.addon_id,
             channel = channel.as_str(),
-            "uploading to Firefox Add-ons"
+            "uploading"
         );
 
         let method = reqwest::Method::POST;
@@ -293,7 +293,7 @@ impl Store {
             tracing::info!(
                 addon_id = %self.addon_id,
                 uuid = %uuid,
-                "polling Firefox Add-ons upload status"
+                "polling upload status"
             );
             let method = reqwest::Method::GET;
             let auth = self.auth_header()?;
@@ -341,7 +341,7 @@ impl Store {
         tracing::info!(
             addon_id = %self.addon_id,
             uuid = upload_uuid,
-            "submitting to Firefox Add-ons for publish"
+            "submitting for publish"
         );
 
         let method = reqwest::Method::POST;
@@ -375,7 +375,7 @@ impl Store {
         tracing::info!(
             addon_id = %self.addon_id,
             version_id,
-            "uploading source to Firefox Add-ons"
+            "uploading source"
         );
 
         let method = reqwest::Method::PATCH;

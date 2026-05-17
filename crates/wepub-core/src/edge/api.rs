@@ -140,7 +140,7 @@ impl Store {
     async fn upload(&self, zip: Vec<u8>) -> Result<String> {
         tracing::info!(
             product_id = %self.product_id,
-            "uploading to Edge Add-ons"
+            "uploading"
         );
 
         let method = reqwest::Method::POST;
@@ -173,7 +173,7 @@ impl Store {
         loop {
             tracing::info!(
                 product_id = %self.product_id,
-                "polling Edge Add-ons upload status"
+                "polling upload status"
             );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
@@ -214,7 +214,7 @@ impl Store {
     async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
         tracing::info!(
             product_id = %self.product_id,
-            "submitting to Edge Add-ons for publish"
+            "submitting for publish"
         );
 
         let method = reqwest::Method::POST;
@@ -244,7 +244,7 @@ impl Store {
         loop {
             tracing::info!(
                 product_id = %self.product_id,
-                "polling Edge Add-ons publish status"
+                "polling publish status"
             );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
@@ -262,7 +262,7 @@ impl Store {
                     tracing::info!(
                         product_id = %self.product_id,
                         message = body.message.as_deref(),
-                        "Edge Add-ons publish succeeded"
+                        "publish succeeded"
                     );
                     return Ok(());
                 }
