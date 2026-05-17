@@ -156,10 +156,6 @@ impl EdgeStore {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
-        join_endpoint(&self.root_url, path)
-    }
-
     async fn upload(&self, zip: Vec<u8>) -> Result<String> {
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
@@ -336,6 +332,14 @@ impl EdgeStore {
         }
     }
 
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        join_endpoint(&self.root_url, path)
+    }
+
+    fn auth_header(&self) -> String {
+        format!("ApiKey {}", self.api_key)
+    }
+
     async fn extract_operation_id(resp: reqwest::Response, phase: Phase) -> Result<String> {
         let status = resp.status();
         if !status.is_success() {
@@ -365,10 +369,6 @@ impl EdgeStore {
             });
         }
         Ok(operation_id)
-    }
-
-    fn auth_header(&self) -> String {
-        format!("ApiKey {}", self.api_key)
     }
 }
 

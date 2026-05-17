@@ -271,10 +271,6 @@ impl FirefoxStore {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
-        join_endpoint(&self.root_url, path)
-    }
-
     async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
         let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
@@ -436,6 +432,10 @@ impl FirefoxStore {
             .await?;
 
         decode_response(resp, Store::Firefox, Phase::Publish).await
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        join_endpoint(&self.root_url, path)
     }
 
     fn auth_header(&self) -> Result<String> {
