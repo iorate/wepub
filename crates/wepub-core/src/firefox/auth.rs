@@ -8,14 +8,6 @@ use crate::{Result, WepubError};
 
 const TOKEN_LIFETIME_SECS: u64 = 60;
 
-#[derive(Debug, Serialize)]
-struct Claims {
-    iss: String,
-    jti: String,
-    iat: u64,
-    exp: u64,
-}
-
 pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -35,6 +27,14 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
         &EncodingKey::from_secret(secret.as_bytes()),
     )
     .map_err(|e| WepubError::Internal(format!("failed to encode JWT: {e}")))
+}
+
+#[derive(Debug, Serialize)]
+struct Claims {
+    iss: String,
+    jti: String,
+    iat: u64,
+    exp: u64,
 }
 
 #[cfg(test)]

@@ -1,13 +1,13 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use tokio::io::AsyncReadExt;
 use wepub_core::firefox::{
     Application, Channel, Compatibility, FirefoxPublishOptions, FirefoxStore,
 };
 
 use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
+use crate::commands::common::read_text_input;
 
 const RELEASE_NOTES_LOCALE: &str = "en-US";
 
@@ -84,16 +84,6 @@ async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
             format!("failed to read approval notes from {}", path.display())
         })?)),
         _ => Ok(None),
-    }
-}
-
-async fn read_text_input(path: &PathBuf) -> Result<String> {
-    if path.as_os_str() == "-" {
-        let mut buf = String::new();
-        tokio::io::stdin().read_to_string(&mut buf).await?;
-        Ok(buf)
-    } else {
-        Ok(tokio::fs::read_to_string(path).await?)
     }
 }
 

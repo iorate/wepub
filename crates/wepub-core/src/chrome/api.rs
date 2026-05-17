@@ -72,47 +72,6 @@ impl Default for ChromePollConfig {
     }
 }
 
-// Successful response from the CWS `:publish` endpoint. Internal-only:
-// terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
-// via `tracing::info!` from inside `publish`, so callers do not need the
-// raw values.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PublishResponse {
-    pub(crate) item_id: String,
-    pub(crate) state: ItemState,
-}
-
-// State of a Chrome Web Store item right after a publish request.
-//
-// Only the values documented in the official CWS v2 reference are surfaced;
-// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
-// deserialization to fail fast on unknown wire values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub(crate) enum ItemState {
-    PendingReview,
-    Staged,
-    Published,
-    PublishedToTesters,
-    Rejected,
-    Cancelled,
-}
-
-// State of an asynchronous upload reported by `:fetchStatus`.
-//
-// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
-// expected never to appear on the wire; serde will refuse to decode it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub(crate) enum UploadState {
-    Succeeded,
-    InProgress,
-    Failed,
-    NotFound,
-}
-
 /// Client for the Chrome Web Store Publish API (v2).
 ///
 /// The store holds OAuth credentials and a reusable HTTP client; it is cheap
@@ -272,11 +231,11 @@ impl ChromeStore {
         Ok(())
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
     }
 
-    pub(crate) async fn get_token(&self) -> Result<String> {
+    async fn get_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::ClientCredentials {
@@ -296,7 +255,7 @@ impl ChromeStore {
         }
     }
 
-    pub(crate) async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
+    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "upload/v2/publishers/{}/items/{}:upload",
@@ -323,7 +282,7 @@ impl ChromeStore {
         Ok(body.upload_state)
     }
 
-    pub(crate) async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
+    async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
         let method = reqwest::Method::GET;
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
@@ -342,7 +301,7 @@ impl ChromeStore {
         Ok(body.last_async_upload_state)
     }
 
-    pub(crate) async fn wait_until_uploaded(
+    async fn wait_until_uploaded(
         &self,
         token: &str,
         initial_state: UploadState,
@@ -396,7 +355,7 @@ impl ChromeStore {
         }
     }
 
-    pub(crate) async fn submit_for_publish(
+    async fn submit_for_publish(
         &self,
         token: &str,
         options: &ChromePublishOptions,
@@ -472,6 +431,47 @@ enum Credentials {
         client_secret: String,
         refresh_token: String,
     },
+}
+
+// Successful response from the CWS `:publish` endpoint. Internal-only:
+// terminal states (`Rejected`, `Cancelled`) are turned into
+// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
+// via `tracing::info!` from inside `publish`, so callers do not need the
+// raw values.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishResponse {
+    item_id: String,
+    state: ItemState,
+}
+
+// State of a Chrome Web Store item right after a publish request.
+//
+// Only the values documented in the official CWS v2 reference are surfaced;
+// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
+// deserialization to fail fast on unknown wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ItemState {
+    PendingReview,
+    Staged,
+    Published,
+    PublishedToTesters,
+    Rejected,
+    Cancelled,
+}
+
+// State of an asynchronous upload reported by `:fetchStatus`.
+//
+// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
+// expected never to appear on the wire; serde will refuse to decode it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum UploadState {
+    Succeeded,
+    InProgress,
+    Failed,
+    NotFound,
 }
 
 #[derive(Debug, Deserialize)]

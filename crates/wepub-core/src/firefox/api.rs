@@ -152,14 +152,6 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-// Successful response from creating a new add-on version on AMO.
-// Internal-only: the id is echoed via `tracing::info!` from `publish` and
-// not surfaced to the caller because the only documented use was logging.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct VersionResponse {
-    pub(crate) id: u64,
-}
-
 /// Client for the AMO Add-on Versions API (v5).
 ///
 /// The store holds the JWT credential pair and a reusable HTTP client; it
@@ -279,11 +271,11 @@ impl FirefoxStore {
         Ok(())
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
     }
 
-    pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+    async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
         let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
         let auth = self.auth_header()?;
@@ -315,7 +307,7 @@ impl FirefoxStore {
         decode_response(resp, Store::Firefox, Phase::Upload).await
     }
 
-    pub(crate) async fn wait_until_validated(
+    async fn wait_until_validated(
         &self,
         uuid: &str,
         config: &FirefoxPollConfig,
@@ -374,7 +366,7 @@ impl FirefoxStore {
         }
     }
 
-    pub(crate) async fn create_version(
+    async fn create_version(
         &self,
         upload_uuid: &str,
         compatibility: Option<&Compatibility>,
@@ -410,7 +402,7 @@ impl FirefoxStore {
         decode_response(resp, Store::Firefox, Phase::Publish).await
     }
 
-    pub(crate) async fn patch_version_source(
+    async fn patch_version_source(
         &self,
         version_id: u64,
         source: Vec<u8>,
@@ -453,13 +445,21 @@ impl FirefoxStore {
     }
 }
 
+// Successful response from creating a new add-on version on AMO.
+// Internal-only: the id is echoed via `tracing::info!` from `publish` and
+// not surfaced to the caller because the only documented use was logging.
 #[derive(Debug, Clone, Deserialize)]
-pub(crate) struct UploadResponse {
-    pub uuid: String,
-    pub processed: bool,
-    pub valid: bool,
+struct VersionResponse {
+    id: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UploadResponse {
+    uuid: String,
+    processed: bool,
+    valid: bool,
     #[serde(default)]
-    pub validation: Option<serde_json::Value>,
+    validation: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]

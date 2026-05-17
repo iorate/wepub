@@ -49,34 +49,6 @@ impl Default for EdgePollConfig {
     }
 }
 
-// State of an asynchronous operation reported by the Edge Add-ons API.
-//
-// The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
-// which matches Rust's idiomatic variant casing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-pub(crate) enum OperationStatus {
-    InProgress,
-    Succeeded,
-    Failed,
-}
-
-// Body of a status response from either the upload or the publish
-// operation endpoint. The "unexpected failure" shape documented for the
-// publish endpoint lacks `status`; serde fills it with `None` so callers
-// can distinguish it from a regular response.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OperationResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) status: Option<OperationStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) error_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) errors: Option<Vec<serde_json::Value>>,
-}
-
 /// Client for the Microsoft Edge Add-ons Update REST API (v1.1).
 ///
 /// The store holds the Partner Center credentials and a reusable HTTP
@@ -185,11 +157,11 @@ impl EdgeStore {
         Ok(())
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
     }
 
-    pub(crate) async fn upload(&self, zip: Vec<u8>) -> Result<String> {
+    async fn upload(&self, zip: Vec<u8>) -> Result<String> {
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package",
@@ -212,11 +184,7 @@ impl EdgeStore {
         Self::extract_operation_id(resp, Phase::Upload).await
     }
 
-    pub(crate) async fn wait_until_uploaded(
-        &self,
-        operation_id: &str,
-        config: &EdgePollConfig,
-    ) -> Result<()> {
+    async fn wait_until_uploaded(&self, operation_id: &str, config: &EdgePollConfig) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
@@ -225,7 +193,7 @@ impl EdgeStore {
             .await
     }
 
-    pub(crate) async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
+    async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
 
@@ -245,7 +213,7 @@ impl EdgeStore {
         Self::extract_operation_id(resp, Phase::Publish).await
     }
 
-    pub(crate) async fn wait_until_published(
+    async fn wait_until_published(
         &self,
         operation_id: &str,
         config: &EdgePollConfig,
@@ -359,6 +327,34 @@ impl EdgeStore {
     }
 }
 
+// State of an asynchronous operation reported by the Edge Add-ons API.
+//
+// The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
+// which matches Rust's idiomatic variant casing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+enum OperationStatus {
+    InProgress,
+    Succeeded,
+    Failed,
+}
+
+// Body of a status response from either the upload or the publish
+// operation endpoint. The "unexpected failure" shape documented for the
+// publish endpoint lacks `status`; serde fills it with `None` so callers
+// can distinguish it from a regular response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OperationResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    status: Option<OperationStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    errors: Option<Vec<serde_json::Value>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum OperationKind {
     Upload,
@@ -391,20 +387,6 @@ mod tests {
     const PRODUCT_ID: &str = "11111111-2222-3333-4444-555555555555";
     const API_KEY: &str = "test-api-key";
     const CLIENT_ID: &str = "test-client-id";
-
-    fn store_for(server: &MockServer) -> EdgeStore {
-        EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-            .unwrap()
-            .with_root_url(&server.uri())
-            .unwrap()
-    }
-
-    fn fast_poll() -> EdgePollConfig {
-        EdgePollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        }
-    }
 
     #[tokio::test]
     async fn upload_posts_zip_with_apikey_and_clientid_headers() {
@@ -814,5 +796,19 @@ mod tests {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+    }
+
+    fn store_for(server: &MockServer) -> EdgeStore {
+        EdgeStore::from_api_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+            .unwrap()
+            .with_root_url(&server.uri())
+            .unwrap()
+    }
+
+    fn fast_poll() -> EdgePollConfig {
+        EdgePollConfig {
+            interval: Duration::from_millis(10),
+            timeout: Duration::from_millis(200),
+        }
     }
 }

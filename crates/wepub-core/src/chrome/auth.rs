@@ -5,11 +5,6 @@ use crate::{Phase, Result, Store, WepubError, common::log_request};
 
 pub(crate) const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-}
-
 pub(crate) async fn refresh_access_token(
     client: &reqwest::Client,
     token_url: &Url,
@@ -55,6 +50,11 @@ pub(crate) async fn refresh_access_token(
             detail: format!("failed to decode token response: {e}"),
         })?;
     Ok(parsed.access_token)
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
 }
 
 #[cfg(test)]

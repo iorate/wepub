@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use tokio::io::AsyncReadExt;
 use wepub_core::edge::{EdgePublishOptions, EdgeStore};
 
 use crate::cli::EdgeArgs;
+use crate::commands::common::read_text_input;
 
 pub async fn run(args: EdgeArgs) -> Result<()> {
     let zip = tokio::fs::read(&args.zip)
@@ -40,15 +40,5 @@ async fn load_notes(notes: Option<String>, notes_file: Option<PathBuf>) -> Resul
             })?))
         }
         _ => Ok(None),
-    }
-}
-
-async fn read_text_input(path: &PathBuf) -> Result<String> {
-    if path.as_os_str() == "-" {
-        let mut buf = String::new();
-        tokio::io::stdin().read_to_string(&mut buf).await?;
-        Ok(buf)
-    } else {
-        Ok(tokio::fs::read_to_string(path).await?)
     }
 }

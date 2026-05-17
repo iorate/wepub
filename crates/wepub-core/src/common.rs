@@ -4,11 +4,8 @@ use url::Url;
 
 use crate::{Phase, Result, Store, WepubError};
 
-/// Parse a user-supplied root URL string and normalize it for use as a
-/// base URL (i.e. ensure it ends with a trailing slash so that relative
-/// paths join correctly).
-///
-/// Returns [`WepubError::InvalidUrl`] if the input does not parse.
+// A trailing slash is required so `Url::join` appends relative paths
+// instead of replacing the last path segment.
 pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
     let mut parsed =
         Url::parse(root_url).map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
@@ -19,18 +16,16 @@ pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
     Ok(parsed)
 }
 
-/// Join `path` onto `root`, mapping URL join errors to
-/// [`WepubError::Internal`] (the path is constructed by `wepub-core`
-/// itself, so a failure here indicates a bug rather than user input).
+// `path` is always a crate-internal literal, so a join failure is a
+// bug, not user input. Map it to `Internal` rather than `InvalidUrl`.
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
     root.join(path)
         .map_err(|e| WepubError::Internal(format!("invalid endpoint path {path:?}: {e}")))
 }
 
-/// Emit a `sending request` debug log. Pair this with a subsequent
-/// [`decode_response`] (or, for token endpoints that handle the body
-/// themselves, a `received response` debug log) so the two halves of
-/// the exchange appear together in time order.
+// Pair with a subsequent `received response` debug log (either via
+// `decode_response` or hand-written) so the two halves of the
+// exchange appear together in time order.
 pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     tracing::debug!(
         method = %method,
@@ -39,12 +34,8 @@ pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     );
 }
 
-/// Drain `resp` into a typed body, logging the response at debug
-/// level. Non-2xx responses become [`WepubError::HttpStatus`]; bodies
-/// that cannot be decoded as `T` become
-/// [`WepubError::UnexpectedResponse`] tagged with the supplied `store`
-/// / `phase` so callers can locate the failure without inspecting the
-/// detail string.
+// Decode failures are tagged `UnexpectedResponse` (server violated its
+// wire contract), not `HttpStatus` (which is reserved for non-2xx).
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
     store: Store,
