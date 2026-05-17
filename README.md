@@ -31,7 +31,7 @@ wepub chrome ./my-extension.zip \
   --refresh-token "1//0..."
 ```
 
-Alternatively, supply a pre-fetched OAuth access token (e.g. from `gcloud auth print-access-token` or a Workload Identity Federation flow) via `--access-token`. The two authentication modes are mutually exclusive.
+Alternatively, pass a pre-fetched OAuth access token via `--access-token`. Use this for [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts); see Google's docs for how to obtain the token. The two authentication modes are mutually exclusive.
 
 Credentials and IDs can also be supplied via environment variables:
 

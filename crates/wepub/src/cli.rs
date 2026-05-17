@@ -58,7 +58,7 @@ pub struct ChromeArgs {
     #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
     pub refresh_token: Option<String>,
 
-    /// Pre-fetched OAuth access token (escape hatch for WIF / gcloud).
+    /// Pre-fetched OAuth access token (for service-account auth).
     #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
     pub access_token: Option<String>,
 

@@ -90,10 +90,8 @@ pub struct Store {
 impl Store {
     /// Build a store from a pre-fetched OAuth access token.
     ///
-    /// Useful when the caller already obtained a token via Workload Identity
-    /// Federation, `gcloud auth print-access-token`, or any other flow that
-    /// produces a Bearer token directly. The token is used verbatim; this
-    /// constructor never touches the OAuth token endpoint.
+    /// Intended for service-account authentication. The token is used
+    /// verbatim; this constructor never touches the OAuth token endpoint.
     ///
     /// # Errors
     ///
