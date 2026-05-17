@@ -312,6 +312,7 @@ impl FirefoxStore {
         let started = Instant::now();
 
         loop {
+            tracing::info!(uuid = uuid, "polling Firefox Add-ons upload status");
             let method = reqwest::Method::GET;
             let auth = self.auth_header()?;
             log_request(&method, &url);
@@ -323,13 +324,6 @@ impl FirefoxStore {
                 .await?;
             let upload: UploadResponse =
                 decode_response(resp, Store::Firefox, Phase::Upload).await?;
-
-            tracing::info!(
-                uuid = uuid,
-                processed = upload.processed,
-                valid = upload.valid,
-                "polling Firefox Add-ons upload status"
-            );
 
             if upload.processed {
                 if upload.valid {

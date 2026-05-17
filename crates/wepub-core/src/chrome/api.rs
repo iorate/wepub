@@ -282,37 +282,44 @@ impl ChromeStore {
         Ok(body.upload_state)
     }
 
-    async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
-        let method = reqwest::Method::GET;
-        let url = self.endpoint(&format!(
-            "v2/publishers/{}/items/{}:fetchStatus",
-            self.publisher_id, self.item_id
-        ))?;
-
-        log_request(&method, &url);
-        let resp = self
-            .client
-            .request(method, url)
-            .bearer_auth(token)
-            .send()
-            .await?;
-
-        let body: FetchStatusResponse = decode_response(resp, Store::Chrome, Phase::Upload).await?;
-        Ok(body.last_async_upload_state)
-    }
-
     async fn wait_until_uploaded(
         &self,
         token: &str,
         initial_state: UploadState,
         config: &ChromePollConfig,
     ) -> Result<UploadState> {
+        let url = self.endpoint(&format!(
+            "v2/publishers/{}/items/{}:fetchStatus",
+            self.publisher_id, self.item_id
+        ))?;
         let started = Instant::now();
         // First iteration uses the caller-provided state from the initial
         // upload response; subsequent iterations re-fetch from the server.
-        let mut state: Option<UploadState> = Some(initial_state);
+        let mut initial = true;
 
         loop {
+            let state: Option<UploadState> = if initial {
+                initial = false;
+                Some(initial_state)
+            } else {
+                tracing::info!(
+                    publisher_id = %self.publisher_id,
+                    item_id = %self.item_id,
+                    "polling Chrome Web Store upload status"
+                );
+                let method = reqwest::Method::GET;
+                log_request(&method, &url);
+                let resp = self
+                    .client
+                    .request(method, url.clone())
+                    .bearer_auth(token)
+                    .send()
+                    .await?;
+                let body: FetchStatusResponse =
+                    decode_response(resp, Store::Chrome, Phase::Upload).await?;
+                body.last_async_upload_state
+            };
+
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::Failed) => {
@@ -345,13 +352,6 @@ impl ChromeStore {
             }
 
             tokio::time::sleep(config.interval).await;
-            state = self.fetch_status(token).await?;
-            tracing::info!(
-                publisher_id = %self.publisher_id,
-                item_id = %self.item_id,
-                state = ?state,
-                "polling Chrome Web Store upload status"
-            );
         }
     }
 
@@ -674,46 +674,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_status_gets_correct_url_with_auth() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
-            .and(header("authorization", "Bearer test-access-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "publishers/publisher-1/items/item-1",
-                "itemId": "item-1",
-                "lastAsyncUploadState": "SUCCEEDED",
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let store = store_for(&server);
-        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
-        assert!(matches!(state, Some(UploadState::Succeeded)));
-    }
-
-    // Per official docs, lastAsyncUploadState "is only set when there has been an
-    // async upload for the item in the past 24 hours". Absent field is distinct
-    // from the NOT_FOUND enum value ("an upload attempt was not found"), so we
-    // surface absence as None instead of conflating it with NotFound.
-    #[tokio::test]
-    async fn fetch_status_returns_none_when_last_async_upload_state_missing() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "publishers/publisher-1/items/item-1",
-                "itemId": "item-1",
-            })))
-            .mount(&server)
-            .await;
-
-        let store = store_for(&server);
-        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
-        assert!(state.is_none());
-    }
-
-    #[tokio::test]
     async fn wait_until_uploaded_returns_immediately_when_initial_is_succeeded() {
         let server = MockServer::start().await;
         // Caller already knows the upload succeeded, so wait must not call
@@ -761,8 +721,11 @@ mod tests {
     async fn wait_until_uploaded_polls_until_succeeded() {
         let server = MockServer::start().await;
         // Initial state is IN_PROGRESS, so wait must sleep then call
-        // fetchStatus, which on this mock returns SUCCEEDED.
+        // fetchStatus, which on this mock returns SUCCEEDED. The matcher
+        // also pins the polling endpoint URL and Authorization header.
         Mock::given(method("GET"))
+            .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
+            .and(header("authorization", "Bearer test-access-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "lastAsyncUploadState": "SUCCEEDED",
             })))
@@ -801,6 +764,61 @@ mod tests {
                 assert_eq!(item_id, "item-1");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+        }
+    }
+
+    // Absent `lastAsyncUploadState` in the poll response means the server
+    // forgot the upload we just made; surface that as `UnexpectedResponse`
+    // rather than letting the loop spin on `None`.
+    #[tokio::test]
+    async fn wait_until_uploaded_errors_when_polling_response_omits_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "publishers/publisher-1/items/item-1",
+                "itemId": "item-1",
+            })))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::UnexpectedResponse { store, phase, .. } => {
+                assert_eq!(store, Store::Chrome);
+                assert_eq!(phase, Phase::Upload);
+            }
+            other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
+        }
+    }
+
+    // NOT_FOUND from the poll response is the explicit "no upload attempt
+    // found" enum value. We just uploaded, so a conforming server should
+    // know about it; treat the same as absent state.
+    #[tokio::test]
+    async fn wait_until_uploaded_errors_when_polling_returns_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "lastAsyncUploadState": "NOT_FOUND",
+            })))
+            .mount(&server)
+            .await;
+
+        let store = store_for(&server);
+        let err = store
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::UnexpectedResponse { store, phase, .. } => {
+                assert_eq!(store, Store::Chrome);
+                assert_eq!(phase, Phase::Upload);
+            }
+            other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
         }
     }
 

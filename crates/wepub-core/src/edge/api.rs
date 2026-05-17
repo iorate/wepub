@@ -190,6 +190,10 @@ impl EdgeStore {
         let started = Instant::now();
 
         loop {
+            tracing::info!(
+                product_id = %self.product_id,
+                "polling Microsoft Edge Add-ons upload status"
+            );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
@@ -200,12 +204,6 @@ impl EdgeStore {
                 .send()
                 .await?;
             let body: OperationResponse = decode_response(resp, Store::Edge, Phase::Upload).await?;
-
-            tracing::info!(
-                product_id = %self.product_id,
-                status = ?body.status,
-                "polling Microsoft Edge Add-ons upload status"
-            );
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
@@ -280,6 +278,10 @@ impl EdgeStore {
         let started = Instant::now();
 
         loop {
+            tracing::info!(
+                product_id = %self.product_id,
+                "polling Microsoft Edge Add-ons publish status"
+            );
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
@@ -291,12 +293,6 @@ impl EdgeStore {
                 .await?;
             let body: OperationResponse =
                 decode_response(resp, Store::Edge, Phase::Publish).await?;
-
-            tracing::info!(
-                product_id = %self.product_id,
-                status = ?body.status,
-                "polling Microsoft Edge Add-ons publish status"
-            );
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
