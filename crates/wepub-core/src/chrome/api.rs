@@ -417,32 +417,17 @@ enum Credentials {
     },
 }
 
-// Successful response from the Chrome Web Store `:publish` endpoint. Internal-only:
-// terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
-// via `tracing::info!` from inside `publish`, so callers do not need the
-// raw values.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PublishResponse {
-    item_id: String,
-    state: ItemState,
+struct UploadResponse {
+    upload_state: UploadState,
 }
 
-// State of a Chrome Web Store item right after a publish request.
-//
-// Only the values documented in the official Chrome Web Store v2 reference are surfaced;
-// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
-// deserialization to fail fast on unknown wire values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum ItemState {
-    PendingReview,
-    Staged,
-    Published,
-    PublishedToTesters,
-    Rejected,
-    Cancelled,
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchStatusResponse {
+    #[serde(default)]
+    last_async_upload_state: Option<UploadState>,
 }
 
 // State of an asynchronous upload reported by `:fetchStatus`.
@@ -456,19 +441,6 @@ enum UploadState {
     InProgress,
     Failed,
     NotFound,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UploadResponse {
-    upload_state: UploadState,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FetchStatusResponse {
-    #[serde(default)]
-    last_async_upload_state: Option<UploadState>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -503,6 +475,34 @@ impl From<&PublishOptions> for PublishRequestBody {
 #[serde(rename_all = "camelCase")]
 struct DeployInfo {
     deploy_percentage: u8,
+}
+
+// Successful response from the Chrome Web Store `:publish` endpoint. Internal-only:
+// terminal states (`Rejected`, `Cancelled`) are turned into
+// `WepubError::ChromePublishFailed`, the non-terminal states are echoed
+// via `tracing::info!` from inside `publish`, so callers do not need the
+// raw values.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishResponse {
+    item_id: String,
+    state: ItemState,
+}
+
+// State of a Chrome Web Store item right after a publish request.
+//
+// Only the values documented in the official Chrome Web Store v2 reference are surfaced;
+// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
+// deserialization to fail fast on unknown wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ItemState {
+    PendingReview,
+    Staged,
+    Published,
+    PublishedToTesters,
+    Rejected,
+    Cancelled,
 }
 
 #[cfg(test)]
