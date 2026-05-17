@@ -9,10 +9,10 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 /// Identifies which store backend a failure originated from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Store {
-    /// Firefox Add-ons (addons.mozilla.org).
-    Firefox,
     /// Chrome Web Store.
     Chrome,
+    /// Firefox Add-ons (addons.mozilla.org).
+    Firefox,
     /// Edge Add-ons.
     Edge,
 }
@@ -20,8 +20,8 @@ pub enum Store {
 impl Store {
     fn as_str(self) -> &'static str {
         match self {
-            Store::Firefox => "firefox",
             Store::Chrome => "chrome",
+            Store::Firefox => "firefox",
             Store::Edge => "edge",
         }
     }
@@ -145,16 +145,6 @@ pub enum WepubError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// Firefox Add-ons reported the upload as `valid: false`. `detail` is
-    /// the pretty-printed `validation` JSON tree returned by the API.
-    #[error("firefox validation failed for upload {uuid}: {detail}")]
-    FirefoxValidationFailed {
-        /// Firefox Add-ons upload UUID returned by `POST /addons/upload/`.
-        uuid: String,
-        /// Pretty-printed Firefox Add-ons `validation` field.
-        detail: String,
-    },
-
     /// Chrome Web Store reported `uploadState = FAILED` for the asynchronous
     /// upload. The official V2 response carries no failure detail, so only
     /// the item id is preserved.
@@ -172,6 +162,16 @@ pub enum WepubError {
         /// Chrome Web Store item id reported in the publish response.
         item_id: String,
         /// Pretty-printed Chrome Web Store publish response body.
+        detail: String,
+    },
+
+    /// Firefox Add-ons reported the upload as `valid: false`. `detail` is
+    /// the pretty-printed `validation` JSON tree returned by the API.
+    #[error("firefox validation failed for upload {uuid}: {detail}")]
+    FirefoxValidationFailed {
+        /// Firefox Add-ons upload UUID returned by `POST /addons/upload/`.
+        uuid: String,
+        /// Pretty-printed Firefox Add-ons `validation` field.
         detail: String,
     },
 

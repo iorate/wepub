@@ -1,4 +1,4 @@
-//! Internal helpers shared across store backends (firefox, chrome, edge).
+//! Internal helpers shared across store backends (chrome, firefox, edge).
 
 use url::Url;
 

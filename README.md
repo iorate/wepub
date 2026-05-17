@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Firefox Add-ons, Chrome Web Store and Edge Add-ons are supported.
+Chrome Web Store, Firefox Add-ons and Edge Add-ons are supported.
 
 ## Install
 
@@ -17,31 +17,6 @@ cargo install wepub
 Requires Rust 1.88+.
 
 ## Usage
-
-### Firefox Add-ons
-
-Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
-
-```sh
-wepub firefox ./my-addon.zip \
-  --addon-id   "myaddon@example.com" \
-  --api-key    "user:1234567:89" \
-  --api-secret "abcdef..." \
-  --channel    listed
-```
-
-Credentials can also be supplied via environment variables:
-
-| Flag              | Environment variable           |
-| ----------------- | ------------------------------ |
-| `--addon-id`      | `WEPUB_FIREFOX_ADDON_ID`       |
-| `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
-| `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
-| `--test-root-url` | `WEPUB_FIREFOX_TEST_ROOT_URL`  |
-
-Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
-
-**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the Firefox Add-ons web UI.
 
 ### Chrome Web Store
 
@@ -74,6 +49,31 @@ Credentials and IDs can also be supplied via environment variables:
 Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 
 **Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+
+### Firefox Add-ons
+
+Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
+
+```sh
+wepub firefox ./my-addon.zip \
+  --addon-id   "myaddon@example.com" \
+  --api-key    "user:1234567:89" \
+  --api-secret "abcdef..." \
+  --channel    listed
+```
+
+Credentials can also be supplied via environment variables:
+
+| Flag              | Environment variable           |
+| ----------------- | ------------------------------ |
+| `--addon-id`      | `WEPUB_FIREFOX_ADDON_ID`       |
+| `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
+| `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
+| `--test-root-url` | `WEPUB_FIREFOX_TEST_ROOT_URL`  |
+
+Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
+
+**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the Firefox Add-ons web UI.
 
 ### Edge Add-ons
 
