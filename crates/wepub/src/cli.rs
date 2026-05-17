@@ -156,7 +156,7 @@ pub enum FirefoxChannelArg {
     Unlisted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum FirefoxApplicationArg {
     Firefox,
     Android,

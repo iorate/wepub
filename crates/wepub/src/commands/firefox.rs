@@ -91,8 +91,8 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
     let unique: Vec<Application> = apps
         .iter()
         .copied()
-        .filter(|app| seen.insert(*app))
         .map(Into::into)
+        .filter(|app| seen.insert(*app))
         .collect();
     Some(Compatibility::Apps(unique))
 }
