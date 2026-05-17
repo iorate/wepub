@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::{Phase, Result, Store, WepubError};
+use crate::{Phase, Result, StoreId, WepubError};
 
 // A trailing slash is required so `Url::join` appends relative paths
 // instead of replacing the last path segment.
@@ -45,7 +45,7 @@ pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> S
 // wire contract), not `HttpStatus` (which is reserved for non-2xx).
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
-    store: Store,
+    store: StoreId,
     phase: Phase,
 ) -> Result<T> {
     let status = resp.status();

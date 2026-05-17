@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, Store, WepubError,
+    Phase, Result, StoreId, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -18,9 +18,9 @@ const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`FirefoxStore::publish`] creates the new version.
+/// Options that shape how [`Store::publish`] creates the new version.
 #[derive(Debug, Clone, Default)]
-pub struct FirefoxPublishOptions {
+pub struct PublishOptions {
     /// Distribution channel for the new version.
     pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
@@ -37,15 +37,15 @@ pub struct FirefoxPublishOptions {
     pub source: Option<Vec<u8>>,
     /// Polling cadence and overall timeout used while waiting for Firefox
     /// Add-ons to finish validating the upload.
-    pub poll: FirefoxPollConfig,
+    pub poll: PollConfig,
 }
 
-/// Polling cadence and budget for [`FirefoxStore::publish`]'s
+/// Polling cadence and budget for [`Store::publish`]'s
 /// validation-status loop.
 ///
 /// Defaults to 1 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
-pub struct FirefoxPollConfig {
+pub struct PollConfig {
     /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
@@ -53,7 +53,7 @@ pub struct FirefoxPollConfig {
     pub timeout: Duration,
 }
 
-impl Default for FirefoxPollConfig {
+impl Default for PollConfig {
     fn default() -> Self {
         Self {
             interval: DEFAULT_POLL_INTERVAL,
@@ -159,7 +159,7 @@ pub struct VersionRange {
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
 // Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
-pub struct FirefoxStore {
+pub struct Store {
     addon_id: String,
     issuer: String,
     secret: String,
@@ -167,7 +167,7 @@ pub struct FirefoxStore {
     client: reqwest::Client,
 }
 
-impl FirefoxStore {
+impl Store {
     /// Build a store bound to `addon_id`, signing requests with the supplied
     /// HS256 JWT credential pair (issuer + secret).
     ///
@@ -233,19 +233,19 @@ impl FirefoxStore {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{FirefoxStore, FirefoxPublishOptions};
+    /// use wepub_core::firefox::{Store, PublishOptions};
     ///
-    /// let store = FirefoxStore::from_credentials(
+    /// let store = Store::from_credentials(
     ///     "myaddon@example.com".into(),
     ///     "user:12345:6789".into(),
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// store.publish(zip, FirefoxPublishOptions::default()).await?;
+    /// store.publish(zip, PublishOptions::default()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: FirefoxPublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
@@ -301,13 +301,13 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp, Store::Firefox, Phase::Upload).await
+        decode_response(resp, StoreId::Firefox, Phase::Upload).await
     }
 
     async fn wait_until_validated(
         &self,
         uuid: &str,
-        config: &FirefoxPollConfig,
+        config: &PollConfig,
     ) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
@@ -328,7 +328,7 @@ impl FirefoxStore {
                 .send()
                 .await?;
             let upload: UploadResponse =
-                decode_response(resp, Store::Firefox, Phase::Upload).await?;
+                decode_response(resp, StoreId::Firefox, Phase::Upload).await?;
 
             if upload.processed {
                 if upload.valid {
@@ -336,7 +336,7 @@ impl FirefoxStore {
                 }
                 let Some(validation) = upload.validation.as_ref() else {
                     return Err(WepubError::UnexpectedResponse {
-                        store: Store::Firefox,
+                        store: StoreId::Firefox,
                         phase: Phase::Upload,
                         detail: "Firefox Add-ons reported valid=false without a validation field"
                             .to_string(),
@@ -351,7 +351,7 @@ impl FirefoxStore {
 
             if started.elapsed() >= config.timeout {
                 return Err(WepubError::Timeout {
-                    store: Store::Firefox,
+                    store: StoreId::Firefox,
                     phase: Phase::Upload,
                     elapsed: config.timeout,
                 });
@@ -394,7 +394,7 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp, Store::Firefox, Phase::Publish).await
+        decode_response(resp, StoreId::Firefox, Phase::Publish).await
     }
 
     async fn patch_version_source(
@@ -431,7 +431,7 @@ impl FirefoxStore {
             .send()
             .await?;
 
-        decode_response(resp, Store::Firefox, Phase::Publish).await
+        decode_response(resp, StoreId::Firefox, Phase::Publish).await
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -667,10 +667,10 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::default()
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -711,9 +711,9 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let options = PublishOptions {
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::default()
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -729,9 +729,9 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let options = PublishOptions {
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::default()
         };
         let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
 
@@ -819,8 +819,7 @@ mod tests {
     #[test]
     fn endpoint_joins_relative_path() {
         let store =
-            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
-                .unwrap();
+            Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
         let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
@@ -830,11 +829,10 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store =
-            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
-                .unwrap()
-                .with_root_url("http://127.0.0.1:8000/")
-                .unwrap();
+        let store = Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+            .unwrap()
+            .with_root_url("http://127.0.0.1:8000/")
+            .unwrap();
         let url = store.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
@@ -842,23 +840,22 @@ mod tests {
     #[test]
     fn with_root_url_rejects_garbage() {
         let store =
-            FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
-                .unwrap();
+            Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
         let Err(err) = store.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> FirefoxStore {
-        FirefoxStore::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+    fn store_for(server: &MockServer) -> Store {
+        Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()
     }
 
-    fn fast_poll() -> FirefoxPollConfig {
-        FirefoxPollConfig {
+    fn fast_poll() -> PollConfig {
+        PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }

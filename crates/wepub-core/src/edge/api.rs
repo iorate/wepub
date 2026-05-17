@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, Store, WepubError,
+    Phase, Result, StoreId, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -13,9 +13,9 @@ const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/"
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`EdgeStore::publish`] submits the new version.
+/// Options that shape how [`Store::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
-pub struct EdgePublishOptions {
+pub struct PublishOptions {
     /// Optional notes for the Edge Add-ons certification team
     /// (reviewer-facing). Sent as the `notes` field in the publish
     /// request body. `None` sends no body.
@@ -23,15 +23,15 @@ pub struct EdgePublishOptions {
 
     /// Polling cadence and overall timeout used while waiting for the
     /// asynchronous upload and publish operations to finish.
-    pub poll: EdgePollConfig,
+    pub poll: PollConfig,
 }
 
-/// Polling cadence and budget for [`EdgeStore::publish`]'s upload-status
+/// Polling cadence and budget for [`Store::publish`]'s upload-status
 /// and publish-status loops.
 ///
 /// Defaults to 5 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
-pub struct EdgePollConfig {
+pub struct PollConfig {
     /// Delay between successive polls of an operation status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait for a single operation (upload or
@@ -39,7 +39,7 @@ pub struct EdgePollConfig {
     pub timeout: Duration,
 }
 
-impl Default for EdgePollConfig {
+impl Default for PollConfig {
     fn default() -> Self {
         Self {
             interval: DEFAULT_POLL_INTERVAL,
@@ -54,7 +54,7 @@ impl Default for EdgePollConfig {
 /// client; it is cheap to construct and intended to live for the
 /// duration of a single publish run.
 // Debug intentionally omitted: holds the Partner Center API key.
-pub struct EdgeStore {
+pub struct Store {
     product_id: String,
     client_id: String,
     api_key: String,
@@ -62,7 +62,7 @@ pub struct EdgeStore {
     client: reqwest::Client,
 }
 
-impl EdgeStore {
+impl Store {
     /// Build a store bound to `product_id`, signing requests with the
     /// API credentials issued from Partner Center (Client ID + API
     /// key).
@@ -132,19 +132,19 @@ impl EdgeStore {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::edge::{EdgePublishOptions, EdgeStore};
+    /// use wepub_core::edge::{PublishOptions, Store};
     ///
-    /// let store = EdgeStore::from_credentials(
+    /// let store = Store::from_credentials(
     ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
     ///     "client-id".into(),
     ///     "api-key".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// store.publish(zip, EdgePublishOptions::default()).await?;
+    /// store.publish(zip, PublishOptions::default()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: EdgePublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload_op = self.upload(zip).await?;
         self.wait_until_uploaded(&upload_op, &options.poll).await?;
 
@@ -181,7 +181,7 @@ impl EdgeStore {
         Self::extract_operation_id(resp, Phase::Upload).await
     }
 
-    async fn wait_until_uploaded(&self, operation_id: &str, config: &EdgePollConfig) -> Result<()> {
+    async fn wait_until_uploaded(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
@@ -202,7 +202,8 @@ impl EdgeStore {
                 .header("X-ClientID", &self.client_id)
                 .send()
                 .await?;
-            let body: OperationResponse = decode_response(resp, Store::Edge, Phase::Upload).await?;
+            let body: OperationResponse =
+                decode_response(resp, StoreId::Edge, Phase::Upload).await?;
 
             match body.status {
                 Some(OperationStatus::Succeeded) => return Ok(()),
@@ -214,7 +215,7 @@ impl EdgeStore {
                 }
                 None => {
                     return Err(WepubError::UnexpectedResponse {
-                        store: Store::Edge,
+                        store: StoreId::Edge,
                         phase: Phase::Upload,
                         detail: "upload status response missing `status` field".to_string(),
                     });
@@ -224,7 +225,7 @@ impl EdgeStore {
 
             if started.elapsed() >= config.timeout {
                 return Err(WepubError::Timeout {
-                    store: Store::Edge,
+                    store: StoreId::Edge,
                     phase: Phase::Upload,
                     elapsed: config.timeout,
                 });
@@ -258,11 +259,7 @@ impl EdgeStore {
         Self::extract_operation_id(resp, Phase::Publish).await
     }
 
-    async fn wait_until_published(
-        &self,
-        operation_id: &str,
-        config: &EdgePollConfig,
-    ) -> Result<()> {
+    async fn wait_until_published(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/operations/{operation_id}",
             self.product_id
@@ -284,7 +281,7 @@ impl EdgeStore {
                 .send()
                 .await?;
             let body: OperationResponse =
-                decode_response(resp, Store::Edge, Phase::Publish).await?;
+                decode_response(resp, StoreId::Edge, Phase::Publish).await?;
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
@@ -310,7 +307,7 @@ impl EdgeStore {
 
             if started.elapsed() >= config.timeout {
                 return Err(WepubError::Timeout {
-                    store: Store::Edge,
+                    store: StoreId::Edge,
                     phase: Phase::Publish,
                     elapsed: config.timeout,
                 });
@@ -341,21 +338,21 @@ impl EdgeStore {
             .headers()
             .get(reqwest::header::LOCATION)
             .ok_or_else(|| WepubError::UnexpectedResponse {
-                store: Store::Edge,
+                store: StoreId::Edge,
                 phase,
                 detail: "202 response missing Location header".to_string(),
             })?;
         let operation_id = location
             .to_str()
             .map_err(|e| WepubError::UnexpectedResponse {
-                store: Store::Edge,
+                store: StoreId::Edge,
                 phase,
                 detail: format!("non-ASCII Location header: {e}"),
             })?
             .to_string();
         if operation_id.is_empty() {
             return Err(WepubError::UnexpectedResponse {
-                store: Store::Edge,
+                store: StoreId::Edge,
                 phase,
                 detail: "202 response Location header was empty".to_string(),
             });
@@ -769,7 +766,7 @@ mod tests {
             .await;
 
         let store = store_for(&server);
-        let options = EdgePublishOptions {
+        let options = PublishOptions {
             notes: Some("ship it".into()),
             poll: fast_poll(),
         };
@@ -779,8 +776,7 @@ mod tests {
     #[test]
     fn endpoint_joins_relative_path() {
         let store =
-            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-                .unwrap();
+            Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
         let url = store.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -790,11 +786,10 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store =
-            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-                .unwrap()
-                .with_root_url("http://127.0.0.1:8000/")
-                .unwrap();
+        let store = Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+            .unwrap()
+            .with_root_url("http://127.0.0.1:8000/")
+            .unwrap();
         let url = store.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -805,23 +800,22 @@ mod tests {
     #[test]
     fn with_root_url_rejects_garbage() {
         let store =
-            EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-                .unwrap();
+            Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
         let Err(err) = store.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> EdgeStore {
-        EdgeStore::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+    fn store_for(server: &MockServer) -> Store {
+        Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()
     }
 
-    fn fast_poll() -> EdgePollConfig {
-        EdgePollConfig {
+    fn fast_poll() -> PollConfig {
+        PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }

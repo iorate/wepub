@@ -63,8 +63,8 @@ pub struct ChromeArgs {
     pub access_token: Option<String>,
 
     /// Publish type.
-    #[arg(long, value_enum, default_value_t = PublishTypeArg::Default)]
-    pub publish_type: PublishTypeArg,
+    #[arg(long, value_enum, default_value_t = ChromePublishTypeArg::Default)]
+    pub publish_type: ChromePublishTypeArg,
 
     /// Bypass the standard review queue (only honoured for changes Google deems eligible).
     #[arg(long)]
@@ -84,7 +84,7 @@ pub struct ChromeArgs {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum PublishTypeArg {
+pub enum ChromePublishTypeArg {
     Default,
     Staged,
 }
@@ -110,8 +110,8 @@ pub struct FirefoxArgs {
     pub addon_id: String,
 
     /// Distribution channel.
-    #[arg(long, value_enum, default_value_t = ChannelArg::Listed)]
-    pub channel: ChannelArg,
+    #[arg(long, value_enum, default_value_t = FirefoxChannelArg::Listed)]
+    pub channel: FirefoxChannelArg,
 
     /// Firefox Add-ons API key (JWT issuer).
     #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
@@ -127,7 +127,7 @@ pub struct FirefoxArgs {
 
     /// Compatible applications, comma-separated (e.g. "firefox,android").
     #[arg(long, value_delimiter = ',')]
-    pub compatibility: Vec<ApplicationArg>,
+    pub compatibility: Vec<FirefoxApplicationArg>,
 
     /// Release notes (en-US). Mutually exclusive with --release-notes-file.
     #[arg(long)]
@@ -151,13 +151,13 @@ pub struct FirefoxArgs {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ChannelArg {
+pub enum FirefoxChannelArg {
     Listed,
     Unlisted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
-pub enum ApplicationArg {
+pub enum FirefoxApplicationArg {
     Firefox,
     Android,
 }

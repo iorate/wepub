@@ -2,11 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use wepub_core::firefox::{
-    Application, Channel, Compatibility, FirefoxPublishOptions, FirefoxStore,
-};
+use wepub_core::firefox::{Application, Channel, Compatibility, PublishOptions, Store};
 
-use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
+use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
 
 const RELEASE_NOTES_LOCALE: &str = "en-US";
@@ -36,19 +34,18 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         None => None,
     };
 
-    let mut store = FirefoxStore::from_credentials(args.addon_id, args.api_key, args.api_secret)
-        .context("failed to construct FirefoxStore")?;
+    let mut store = Store::from_credentials(args.addon_id, args.api_key, args.api_secret)?;
     if let Some(root_url) = args.test_root_url {
         store = store.with_root_url(root_url.as_str())?;
     }
 
-    let options = FirefoxPublishOptions {
+    let options = PublishOptions {
         channel: args.channel.into(),
         compatibility: build_compatibility(&args.compatibility),
         release_notes,
         approval_notes,
         source,
-        ..FirefoxPublishOptions::default()
+        ..PublishOptions::default()
     };
 
     store
@@ -86,7 +83,7 @@ async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
     }
 }
 
-fn build_compatibility(apps: &[ApplicationArg]) -> Option<Compatibility> {
+fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
     if apps.is_empty() {
         return None;
     }
@@ -100,20 +97,20 @@ fn build_compatibility(apps: &[ApplicationArg]) -> Option<Compatibility> {
     Some(Compatibility::Apps(unique))
 }
 
-impl From<ChannelArg> for Channel {
-    fn from(value: ChannelArg) -> Self {
+impl From<FirefoxChannelArg> for Channel {
+    fn from(value: FirefoxChannelArg) -> Self {
         match value {
-            ChannelArg::Listed => Channel::Listed,
-            ChannelArg::Unlisted => Channel::Unlisted,
+            FirefoxChannelArg::Listed => Channel::Listed,
+            FirefoxChannelArg::Unlisted => Channel::Unlisted,
         }
     }
 }
 
-impl From<ApplicationArg> for Application {
-    fn from(value: ApplicationArg) -> Self {
+impl From<FirefoxApplicationArg> for Application {
+    fn from(value: FirefoxApplicationArg) -> Self {
         match value {
-            ApplicationArg::Firefox => Application::Firefox,
-            ApplicationArg::Android => Application::Android,
+            FirefoxApplicationArg::Firefox => Application::Firefox,
+            FirefoxApplicationArg::Android => Application::Android,
         }
     }
 }

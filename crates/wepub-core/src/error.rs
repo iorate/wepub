@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 
 /// Identifies which store backend a failure originated from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Store {
+pub enum StoreId {
     /// Chrome Web Store.
     Chrome,
     /// Firefox Add-ons (addons.mozilla.org).
@@ -17,17 +17,17 @@ pub enum Store {
     Edge,
 }
 
-impl Store {
+impl StoreId {
     fn as_str(self) -> &'static str {
         match self {
-            Store::Chrome => "chrome",
-            Store::Firefox => "firefox",
-            Store::Edge => "edge",
+            StoreId::Chrome => "chrome",
+            StoreId::Firefox => "firefox",
+            StoreId::Edge => "edge",
         }
     }
 }
 
-impl fmt::Display for Store {
+impl fmt::Display for StoreId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -72,7 +72,7 @@ impl fmt::Display for Phase {
 /// - Transport / HTTP layer failures that can occur during normal
 ///   operation ([`Network`](WepubError::Network),
 ///   [`HttpStatus`](WepubError::HttpStatus)).
-/// - Cross-cutting failures tagged with [`Store`] and [`Phase`]:
+/// - Cross-cutting failures tagged with [`StoreId`] and [`Phase`]:
 ///   [`Timeout`](WepubError::Timeout) for polling that ran out of budget,
 ///   and [`UnexpectedResponse`](WepubError::UnexpectedResponse) for
 ///   responses that violated the documented wire shape (e.g. malformed
@@ -105,7 +105,7 @@ pub enum WepubError {
     #[error("{store} {phase} polling timed out after {elapsed:?}")]
     Timeout {
         /// Which store the timed-out poll targeted.
-        store: Store,
+        store: StoreId,
         /// Which phase the timed-out poll belonged to.
         phase: Phase,
         /// Total elapsed time before giving up.
@@ -121,7 +121,7 @@ pub enum WepubError {
     #[error("unexpected response from {store} during {phase}: {detail}")]
     UnexpectedResponse {
         /// Store whose response was malformed.
-        store: Store,
+        store: StoreId,
         /// Phase during which the malformed response was received.
         phase: Phase,
         /// Short description of the wire-shape violation (e.g. a

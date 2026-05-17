@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Phase, Result, Store, WepubError,
+    Phase, Result, StoreId, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -15,9 +15,9 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`ChromeStore::publish`] submits the new version.
+/// Options that shape how [`Store::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
-pub struct ChromePublishOptions {
+pub struct PublishOptions {
     /// Whether the version goes live immediately after review or stays in
     /// staging for a manual rollout from the Developer Dashboard.
     pub publish_type: PublishType,
@@ -33,7 +33,7 @@ pub struct ChromePublishOptions {
 
     /// Polling cadence and overall timeout used while waiting for the
     /// asynchronous upload to finish processing.
-    pub poll: ChromePollConfig,
+    pub poll: PollConfig,
 }
 
 /// Whether a successfully reviewed version goes live immediately or waits in
@@ -51,19 +51,19 @@ pub enum PublishType {
     Staged,
 }
 
-/// Polling cadence and budget for [`ChromeStore::publish`]'s upload-status
+/// Polling cadence and budget for [`Store::publish`]'s upload-status
 /// loop.
 ///
 /// Defaults to 2 second interval and 5 minute timeout.
 #[derive(Debug, Clone)]
-pub struct ChromePollConfig {
+pub struct PollConfig {
     /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with [`WepubError::Timeout`].
     pub timeout: Duration,
 }
 
-impl Default for ChromePollConfig {
+impl Default for PollConfig {
     fn default() -> Self {
         Self {
             interval: DEFAULT_POLL_INTERVAL,
@@ -78,7 +78,7 @@ impl Default for ChromePollConfig {
 /// to construct and intended to live for the duration of a single publish
 /// run.
 // Debug intentionally omitted: holds OAuth credentials.
-pub struct ChromeStore {
+pub struct Store {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
@@ -87,7 +87,7 @@ pub struct ChromeStore {
     client: reqwest::Client,
 }
 
-impl ChromeStore {
+impl Store {
     /// Build a store from a pre-fetched OAuth access token.
     ///
     /// Useful when the caller already obtained a token via Workload Identity
@@ -114,7 +114,7 @@ impl ChromeStore {
     /// Build a store from a long-lived OAuth refresh token.
     ///
     /// `wepub-core` exchanges the refresh token for an access token once at
-    /// the start of [`publish`](ChromeStore::publish) and reuses it for the
+    /// the start of [`publish`](Store::publish) and reuses it for the
     /// remaining requests of that call.
     ///
     /// # Errors
@@ -160,7 +160,7 @@ impl ChromeStore {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
     /// tests; only consulted when the store was built with
-    /// [`from_credentials`](ChromeStore::from_credentials).
+    /// [`from_credentials`](Store::from_credentials).
     ///
     /// # Errors
     ///
@@ -200,9 +200,9 @@ impl ChromeStore {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{ChromeStore, ChromePublishOptions, PublishType};
+    /// use wepub_core::chrome::{Store, PublishOptions, PublishType};
     ///
-    /// let store = ChromeStore::from_credentials(
+    /// let store = Store::from_credentials(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
     ///     "client-id".into(),
@@ -213,16 +213,16 @@ impl ChromeStore {
     /// store
     ///     .publish(
     ///         zip,
-    ///         ChromePublishOptions {
+    ///         PublishOptions {
     ///             publish_type: PublishType::Staged,
-    ///             ..ChromePublishOptions::default()
+    ///             ..PublishOptions::default()
     ///         },
     ///     )
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: ChromePublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let token = self.get_token().await?;
         let initial = self.upload(&token, zip).await?;
         self.wait_until_uploaded(&token, initial, &options.poll)
@@ -278,7 +278,7 @@ impl ChromeStore {
             .send()
             .await?;
 
-        let body: UploadResponse = decode_response(resp, Store::Chrome, Phase::Upload).await?;
+        let body: UploadResponse = decode_response(resp, StoreId::Chrome, Phase::Upload).await?;
         Ok(body.upload_state)
     }
 
@@ -286,7 +286,7 @@ impl ChromeStore {
         &self,
         token: &str,
         initial_state: UploadState,
-        config: &ChromePollConfig,
+        config: &PollConfig,
     ) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
@@ -316,7 +316,7 @@ impl ChromeStore {
                     .send()
                     .await?;
                 let body: FetchStatusResponse =
-                    decode_response(resp, Store::Chrome, Phase::Upload).await?;
+                    decode_response(resp, StoreId::Chrome, Phase::Upload).await?;
                 body.last_async_upload_state
             };
 
@@ -334,7 +334,7 @@ impl ChromeStore {
                 // shape we did not expect.
                 Some(UploadState::NotFound) | None => {
                     return Err(WepubError::UnexpectedResponse {
-                        store: Store::Chrome,
+                        store: StoreId::Chrome,
                         phase: Phase::Upload,
                         detail: "fetchStatus reported the upload as missing (NOT_FOUND or lastAsyncUploadState absent)"
                             .to_string(),
@@ -345,7 +345,7 @@ impl ChromeStore {
 
             if started.elapsed() >= config.timeout {
                 return Err(WepubError::Timeout {
-                    store: Store::Chrome,
+                    store: StoreId::Chrome,
                     phase: Phase::Upload,
                     elapsed: config.timeout,
                 });
@@ -358,7 +358,7 @@ impl ChromeStore {
     async fn submit_for_publish(
         &self,
         token: &str,
-        options: &ChromePublishOptions,
+        options: &PublishOptions,
     ) -> Result<PublishResponse> {
         tracing::info!(
             publisher_id = %self.publisher_id,
@@ -383,7 +383,8 @@ impl ChromeStore {
             .send()
             .await?;
 
-        let parsed: PublishResponse = decode_response(resp, Store::Chrome, Phase::Publish).await?;
+        let parsed: PublishResponse =
+            decode_response(resp, StoreId::Chrome, Phase::Publish).await?;
         match parsed.state {
             ItemState::Rejected | ItemState::Cancelled => {
                 let detail = pretty_json(&parsed);
@@ -497,8 +498,8 @@ struct PublishRequestBody {
     deploy_infos: Option<Vec<DeployInfo>>,
 }
 
-impl From<&ChromePublishOptions> for PublishRequestBody {
-    fn from(opts: &ChromePublishOptions) -> Self {
+impl From<&PublishOptions> for PublishRequestBody {
+    fn from(opts: &PublishOptions) -> Self {
         Self {
             publish_type: match opts.publish_type {
                 PublishType::Default => None,
@@ -560,7 +561,7 @@ mod tests {
             .await;
 
         let base = Url::parse(&server.uri()).unwrap();
-        let store = ChromeStore::from_credentials(
+        let store = Store::from_credentials(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "client-id".to_string(),
@@ -788,7 +789,7 @@ mod tests {
             .unwrap_err();
         match err {
             WepubError::UnexpectedResponse { store, phase, .. } => {
-                assert_eq!(store, Store::Chrome);
+                assert_eq!(store, StoreId::Chrome);
                 assert_eq!(phase, Phase::Upload);
             }
             other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
@@ -815,7 +816,7 @@ mod tests {
             .unwrap_err();
         match err {
             WepubError::UnexpectedResponse { store, phase, .. } => {
-                assert_eq!(store, Store::Chrome);
+                assert_eq!(store, StoreId::Chrome);
                 assert_eq!(phase, Phase::Upload);
             }
             other => panic!("expected WepubError::UnexpectedResponse, got {other:?}"),
@@ -1103,7 +1104,7 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store = ChromeStore::from_access_token(
+        let store = Store::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
@@ -1117,7 +1118,7 @@ mod tests {
 
     #[test]
     fn with_token_url_rejects_garbage() {
-        let store = ChromeStore::from_access_token(
+        let store = Store::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
@@ -1129,9 +1130,9 @@ mod tests {
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> ChromeStore {
+    fn store_for(server: &MockServer) -> Store {
         let base = server.uri();
-        ChromeStore::from_access_token(
+        Store::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "test-access-token".to_string(),
@@ -1143,15 +1144,15 @@ mod tests {
         .unwrap()
     }
 
-    fn fast_poll() -> ChromePollConfig {
-        ChromePollConfig {
+    fn fast_poll() -> PollConfig {
+        PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }
     }
 
-    fn default_options() -> ChromePublishOptions {
-        ChromePublishOptions {
+    fn default_options() -> PublishOptions {
+        PublishOptions {
             publish_type: PublishType::Default,
             skip_review: false,
             deploy_percentage: None,

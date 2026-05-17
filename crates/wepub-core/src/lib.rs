@@ -7,11 +7,11 @@
 //!
 //! Currently supported stores:
 //!
-//! - **Chrome Web Store** via [`chrome::ChromeStore`]. Uses an OAuth refresh
+//! - **Chrome Web Store** via [`chrome::Store`]. Uses an OAuth refresh
 //!   token (or a pre-fetched access token).
-//! - **Firefox Add-ons** via [`firefox::FirefoxStore`]. Uses an HS256 JWT
+//! - **Firefox Add-ons** via [`firefox::Store`]. Uses an HS256 JWT
 //!   credential pair.
-//! - **Edge Add-ons** via [`edge::EdgeStore`]. Uses the Partner Center API
+//! - **Edge Add-ons** via [`edge::Store`]. Uses the Partner Center API
 //!   key + Client ID credential pair (v1.1).
 //!
 //! All stores share the [`WepubError`] error type and the [`Result`] alias.
@@ -20,21 +20,21 @@
 //!
 //! ```no_run
 //! # async fn run() -> wepub_core::Result<()> {
-//! use wepub_core::firefox::{FirefoxPublishOptions, FirefoxStore};
+//! use wepub_core::firefox::{PublishOptions, Store};
 //!
-//! let store = FirefoxStore::from_credentials(
+//! let store = Store::from_credentials(
 //!     "myaddon@example.com".into(),
 //!     "user:12345:6789".into(),
 //!     "jwt-secret".into(),
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! store.publish(zip, FirefoxPublishOptions::default()).await?;
+//! store.publish(zip, PublishOptions::default()).await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! [wepub-bin]: https://crates.io/crates/wepub
-//! [publish-fn]: firefox::FirefoxStore::publish
+//! [publish-fn]: firefox::Store::publish
 
 #![warn(missing_docs)]
 
@@ -46,4 +46,4 @@ pub mod chrome;
 pub mod edge;
 pub mod firefox;
 
-pub use error::{Phase, Result, Store, WepubError};
+pub use error::{Phase, Result, StoreId, WepubError};

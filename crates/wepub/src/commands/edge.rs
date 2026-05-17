@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use wepub_core::edge::{EdgePublishOptions, EdgeStore};
+use wepub_core::edge::{PublishOptions, Store};
 
 use crate::cli::EdgeArgs;
 use crate::commands::common::read_text_input;
@@ -13,15 +13,14 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
 
     let notes = load_notes(args.notes, args.notes_file).await?;
 
-    let mut store = EdgeStore::from_credentials(args.product_id, args.client_id, args.api_key)
-        .context("failed to construct EdgeStore")?;
+    let mut store = Store::from_credentials(args.product_id, args.client_id, args.api_key)?;
     if let Some(url) = args.test_root_url {
         store = store.with_root_url(url.as_str())?;
     }
 
-    let options = EdgePublishOptions {
+    let options = PublishOptions {
         notes,
-        ..EdgePublishOptions::default()
+        ..PublishOptions::default()
     };
 
     store

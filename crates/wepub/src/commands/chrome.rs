@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{ChromePublishOptions, ChromeStore, PublishType};
+use wepub_core::chrome::{PublishOptions, PublishType, Store};
 
-use crate::cli::{ChromeArgs, PublishTypeArg};
+use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
 pub async fn run(args: ChromeArgs) -> Result<()> {
     let mut store = build_store(&args)?;
@@ -16,11 +16,11 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
 
-    let options = ChromePublishOptions {
+    let options = PublishOptions {
         publish_type: args.publish_type.into(),
         skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
-        ..ChromePublishOptions::default()
+        ..PublishOptions::default()
     };
 
     store
@@ -30,7 +30,7 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
     Ok(())
 }
 
-fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
+fn build_store(args: &ChromeArgs) -> Result<Store> {
     let client_set = (
         args.client_id.as_deref(),
         args.client_secret.as_deref(),
@@ -54,7 +54,7 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
                     "--client-id, --client-secret and --refresh-token must all be provided together"
                 );
             };
-            Ok(ChromeStore::from_credentials(
+            Ok(Store::from_credentials(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
                 client_id.to_string(),
@@ -62,7 +62,7 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
                 refresh_token.to_string(),
             )?)
         }
-        (false, Some(access_token)) => Ok(ChromeStore::from_access_token(
+        (false, Some(access_token)) => Ok(Store::from_access_token(
             args.publisher_id.clone(),
             args.item_id.clone(),
             access_token.to_string(),
@@ -70,11 +70,11 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
     }
 }
 
-impl From<PublishTypeArg> for PublishType {
-    fn from(value: PublishTypeArg) -> Self {
+impl From<ChromePublishTypeArg> for PublishType {
+    fn from(value: ChromePublishTypeArg) -> Self {
         match value {
-            PublishTypeArg::Default => PublishType::Default,
-            PublishTypeArg::Staged => PublishType::Staged,
+            ChromePublishTypeArg::Default => PublishType::Default,
+            ChromePublishTypeArg::Staged => PublishType::Staged,
         }
     }
 }
