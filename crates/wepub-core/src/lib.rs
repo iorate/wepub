@@ -11,8 +11,10 @@
 //!   credential pair.
 //! - **Chrome Web Store** via [`chrome::ChromeStore`]. Uses an OAuth refresh
 //!   token (or a pre-fetched access token).
+//! - **Microsoft Edge Add-ons** via [`edge::EdgeStore`]. Uses the Partner
+//!   Center API key + Client ID credential pair (v1.1).
 //!
-//! Both stores share the [`WepubError`] error type and the [`Result`] alias.
+//! All stores share the [`WepubError`] error type and the [`Result`] alias.
 //!
 //! # Example
 //!
@@ -41,6 +43,7 @@ mod error;
 mod http;
 
 pub mod chrome;
+pub mod edge;
 pub mod firefox;
 
 pub use error::{Result, WepubError};

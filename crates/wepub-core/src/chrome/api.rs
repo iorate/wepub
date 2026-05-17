@@ -59,7 +59,7 @@ pub enum PublishType {
 pub struct ChromePollConfig {
     /// Delay between successive `fetchStatus` calls.
     pub interval: Duration,
-    /// Maximum total time to wait before giving up with [`WepubError::Upload`].
+    /// Maximum total time to wait before giving up with [`WepubError::ChromeUpload`].
     pub timeout: Duration,
 }
 
@@ -74,7 +74,7 @@ impl Default for ChromePollConfig {
 
 // Successful response from the CWS `:publish` endpoint. Internal-only:
 // terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::Publish`, the non-terminal states are echoed via
+// `WepubError::ChromePublish`, the non-terminal states are echoed via
 // `tracing::info!` from inside `publish`, so callers do not need the
 // raw values.
 #[derive(Debug, Clone, Deserialize)]
@@ -220,7 +220,7 @@ impl ChromeStore {
     /// `IN_PROGRESS`, the call polls `:fetchStatus` according to
     /// `options.poll` until the upload reaches `SUCCEEDED` or the timeout
     /// elapses. A 200 OK response from `:publish` whose state is
-    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::Publish`].
+    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::ChromePublish`].
     ///
     /// Progress (`uploading...`, `submitted ... state=...`) is emitted
     /// through the `tracing` crate; library consumers configure their own
@@ -230,7 +230,7 @@ impl ChromeStore {
     ///
     /// On failure, returns one of [`WepubError::Network`],
     /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Json`],
-    /// [`WepubError::Upload`], [`WepubError::Publish`] or
+    /// [`WepubError::ChromeUpload`], [`WepubError::ChromePublish`] or
     /// [`WepubError::Internal`] depending on which step failed.
     ///
     /// # Examples
@@ -344,7 +344,7 @@ impl ChromeStore {
             match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::Failed) => {
-                    return Err(WepubError::Upload {
+                    return Err(WepubError::ChromeUpload {
                         item_id: self.item_id.clone(),
                         body: "The upload failed.".to_string(),
                     });
@@ -354,7 +354,7 @@ impl ChromeStore {
                 // value: we have just uploaded, so the server should know
                 // about it. Either response indicates something is wrong.
                 Some(UploadState::NotFound) | None => {
-                    return Err(WepubError::Upload {
+                    return Err(WepubError::ChromeUpload {
                         item_id: self.item_id.clone(),
                         body: "An upload attempt was not found.".to_string(),
                     });
@@ -363,7 +363,7 @@ impl ChromeStore {
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Upload {
+                return Err(WepubError::ChromeUpload {
                     item_id: self.item_id.clone(),
                     body: format!("upload polling timed out after {:?}", config.timeout),
                 });
@@ -408,11 +408,11 @@ impl ChromeStore {
 
         let parsed: PublishResponse = decode_response(resp).await?;
         match parsed.state {
-            ItemState::Rejected => Err(WepubError::Publish {
+            ItemState::Rejected => Err(WepubError::ChromePublish {
                 item_id: parsed.item_id,
                 body: "The publish was rejected.".to_string(),
             }),
-            ItemState::Cancelled => Err(WepubError::Publish {
+            ItemState::Cancelled => Err(WepubError::ChromePublish {
                 item_id: parsed.item_id,
                 body: "The publish was cancelled.".to_string(),
             }),
@@ -733,11 +733,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Upload { item_id, body } => {
+            WepubError::ChromeUpload { item_id, body } => {
                 assert_eq!(item_id, "item-1");
                 assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected WepubError::Upload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -781,11 +781,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Upload { item_id, body } => {
+            WepubError::ChromeUpload { item_id, body } => {
                 assert_eq!(item_id, "item-1");
                 assert_eq!(body, "The upload failed.");
             }
-            other => panic!("expected WepubError::Upload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -898,7 +898,7 @@ mod tests {
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // Terminal failure states must surface as WepubError::Publish even though
+    // Terminal failure states must surface as WepubError::ChromePublish even though
     // the HTTP call itself returned 200. CLI users rely on the exit code to
     // detect that the publish request was not accepted.
     #[tokio::test]
@@ -919,11 +919,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Publish { item_id, body } => {
+            WepubError::ChromePublish { item_id, body } => {
                 assert_eq!(item_id, "item-1");
                 assert_eq!(body, "The publish was rejected.");
             }
-            other => panic!("expected WepubError::Publish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 
@@ -945,11 +945,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::Publish { item_id, body } => {
+            WepubError::ChromePublish { item_id, body } => {
                 assert_eq!(item_id, "item-1");
                 assert_eq!(body, "The publish was cancelled.");
             }
-            other => panic!("expected WepubError::Publish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 

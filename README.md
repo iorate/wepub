@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
+Firefox (AMO), Chrome Web Store and Microsoft Edge Add-ons are supported.
 
 ## Install
 
@@ -74,6 +74,32 @@ Credentials and IDs can also be supplied via environment variables:
 Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 
 **Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+
+### Microsoft Edge Add-ons
+
+Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key, then:
+
+```sh
+wepub edge ./my-extension.zip \
+  --product-id "12345678-90ab-cdef-1234-567890abcdef" \
+  --client-id  "..." \
+  --api-key    "..."
+```
+
+The product ID is the GUID shown on the **Extension overview** page in Partner Center.
+
+Credentials and IDs can also be supplied via environment variables:
+
+| Flag              | Environment variable        |
+| ----------------- | --------------------------- |
+| `--product-id`    | `WEPUB_EDGE_PRODUCT_ID`     |
+| `--client-id`     | `WEPUB_EDGE_CLIENT_ID`      |
+| `--api-key`       | `WEPUB_EDGE_API_KEY`        |
+| `--test-root-url` | `WEPUB_EDGE_TEST_ROOT_URL`  |
+
+Run `wepub edge --help` for the full list of flags (notes for the certification team, etc.).
+
+**Note:** Only existing add-ons can be updated. The very first version of a product must still be created and published through Partner Center.
 
 ### `.env` file
 

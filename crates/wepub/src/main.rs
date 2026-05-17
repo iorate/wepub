@@ -29,6 +29,7 @@ async fn dispatch(command: Commands) -> Result<()> {
     match command {
         Commands::Firefox(args) => commands::firefox::run(args).await,
         Commands::Chrome(args) => commands::chrome::run(args).await,
+        Commands::Edge(args) => commands::edge::run(args).await,
     }
 }
 

@@ -48,7 +48,7 @@ pub struct FirefoxPollConfig {
     /// Delay between successive polls of the upload status endpoint.
     pub interval: Duration,
     /// Maximum total time to wait before giving up with
-    /// [`WepubError::Validation`].
+    /// [`WepubError::FirefoxValidation`].
     pub timeout: Duration,
 }
 
@@ -229,7 +229,7 @@ impl FirefoxStore {
     /// # Errors
     ///
     /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Validation`],
+    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::FirefoxValidation`],
     /// [`WepubError::Json`], [`WepubError::Io`] or [`WepubError::Internal`]
     /// depending on which step failed.
     ///
@@ -335,14 +335,14 @@ impl FirefoxStore {
                     || "validation failed (no detail provided)".to_string(),
                     |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
                 );
-                return Err(WepubError::Validation {
+                return Err(WepubError::FirefoxValidation {
                     uuid: uuid.to_string(),
                     body,
                 });
             }
 
             if started.elapsed() >= config.timeout {
-                return Err(WepubError::Validation {
+                return Err(WepubError::FirefoxValidation {
                     uuid: uuid.to_string(),
                     body: format!("validation timed out after {:?}", config.timeout),
                 });
@@ -535,11 +535,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
+            WepubError::FirefoxValidation { uuid, body } => {
                 assert_eq!(uuid, "uuid-2");
                 assert!(body.contains("manifest broken"));
             }
-            other => panic!("expected WepubError::Validation, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxValidation, got {other:?}"),
         }
     }
 
@@ -561,11 +561,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
+            WepubError::FirefoxValidation { uuid, body } => {
                 assert_eq!(uuid, "uuid-3");
                 assert!(body.contains("timed out"));
             }
-            other => panic!("expected WepubError::Validation, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxValidation, got {other:?}"),
         }
     }
 

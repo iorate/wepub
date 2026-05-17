@@ -28,6 +28,8 @@ pub enum Commands {
     Firefox(FirefoxArgs),
     /// Upload a zip and submit a new version to the Chrome Web Store.
     Chrome(ChromeArgs),
+    /// Upload a zip and submit a new version to Microsoft Edge Add-ons.
+    Edge(EdgeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -158,4 +160,40 @@ pub struct ChromeArgs {
 pub enum PublishTypeArg {
     Default,
     Staged,
+}
+
+#[derive(Debug, Args)]
+#[command(group(
+    clap::ArgGroup::new("edge_notes_input")
+        .multiple(false)
+        .args(["notes", "notes_file"]),
+))]
+pub struct EdgeArgs {
+    /// Path to the extension archive (zip).
+    #[arg(value_name = "ZIP")]
+    pub zip: PathBuf,
+
+    /// Edge Add-ons product ID (GUID).
+    #[arg(long, env = "WEPUB_EDGE_PRODUCT_ID")]
+    pub product_id: String,
+
+    /// Partner Center Client ID.
+    #[arg(long, env = "WEPUB_EDGE_CLIENT_ID")]
+    pub client_id: String,
+
+    /// Partner Center API key.
+    #[arg(long, env = "WEPUB_EDGE_API_KEY")]
+    pub api_key: String,
+
+    /// Notes for the Edge Add-ons certification team. Mutually exclusive with --notes-file.
+    #[arg(long)]
+    pub notes: Option<String>,
+
+    /// Path to a file containing certification notes. Use "-" for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub notes_file: Option<PathBuf>,
+
+    /// Override the Edge Add-ons API root URL (for testing).
+    #[arg(long, env = "WEPUB_EDGE_TEST_ROOT_URL")]
+    pub test_root_url: Option<Url>,
 }

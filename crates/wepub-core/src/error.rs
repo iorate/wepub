@@ -5,10 +5,10 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 
 /// Error type returned by every fallible call in this crate.
 ///
-/// Variants split errors by responsibility: the network layer, the wire
-/// protocol, the credentials, the per-store domain (validation / upload /
-/// publish), and a catch-all [`Internal`](WepubError::Internal) for
-/// "should-never-happen" states.
+/// Variants split errors by responsibility: cross-cutting transport /
+/// protocol / credentials failures, per-store domain failures
+/// (prefixed by store name), and a catch-all
+/// [`Internal`](WepubError::Internal) for "should-never-happen" states.
 #[derive(Debug, Error)]
 pub enum WepubError {
     /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
@@ -35,7 +35,7 @@ pub enum WepubError {
     /// polling exceeded its timeout. `body` is the validation result JSON
     /// (pretty-printed) or a timeout description.
     #[error("AMO validation failed for upload {uuid}: {body}")]
-    Validation {
+    FirefoxValidation {
         /// AMO upload UUID returned by `POST /addons/upload/`.
         uuid: String,
         /// Pretty-printed AMO validation result, or a timeout description.
@@ -45,7 +45,7 @@ pub enum WepubError {
     /// Chrome Web Store reported `uploadState = FAILED` or `NOT_FOUND`, or
     /// upload polling exceeded its timeout.
     #[error("CWS upload failed for item {item_id}: {body}")]
-    Upload {
+    ChromeUpload {
         /// CWS item id whose upload failed.
         item_id: String,
         /// Failure description from the official enum docs, or a timeout
@@ -57,12 +57,43 @@ pub enum WepubError {
     /// terminal failure (`REJECTED` or `CANCELLED`). The HTTP call itself
     /// succeeded, hence this is not [`Api`](WepubError::Api).
     #[error("publish failed for item {item_id}: {body}")]
-    Publish {
+    ChromePublish {
         /// CWS item id reported in the publish response.
         item_id: String,
         /// Short description of the terminal state.
         body: String,
     },
+
+    /// Microsoft Edge Add-ons upload status operation returned
+    /// `status: "Failed"`, or upload polling exceeded its timeout.
+    #[error("Edge upload failed for product {product_id}: {body}")]
+    EdgeUpload {
+        /// Edge product id whose upload failed.
+        product_id: String,
+        /// Failure description (errorCode + message + errors) or timeout
+        /// description.
+        body: String,
+    },
+
+    /// Microsoft Edge Add-ons publish status operation returned
+    /// `status: "Failed"`, or publish polling exceeded its timeout. The
+    /// publish HTTP call itself succeeded (202 Accepted), hence this is
+    /// not [`Api`](WepubError::Api).
+    #[error("Edge publish failed for product {product_id}: {body}")]
+    EdgePublish {
+        /// Edge product id reported in the publish response.
+        product_id: String,
+        /// Failure description from the operation response, including
+        /// `errorCode` when present.
+        body: String,
+    },
+
+    /// Microsoft Edge Add-ons API returned 202 Accepted without the
+    /// expected `Location` header. Should never happen in practice; the
+    /// preceding tracing log identifies whether this was upload or
+    /// publish.
+    #[error("Edge API returned 202 without a Location header")]
+    EdgeNoLocationHeader,
 
     /// JSON deserialization of a response body failed. Indicates the wire
     /// shape diverged from this crate's expectations.
