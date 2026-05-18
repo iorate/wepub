@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    PollConfig, Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
@@ -16,7 +16,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Store::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Whether the version goes live immediately after review or stays in
     /// staging for a manual rollout from the Developer Dashboard.
@@ -36,6 +36,29 @@ pub struct PublishOptions {
     pub poll: PollConfig,
 }
 
+impl PublishOptions {
+    /// Build a `PublishOptions` with the recommended defaults
+    /// (2 second poll interval, 5 minute timeout).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            publish_type: PublishType::Default,
+            skip_review: false,
+            deploy_percentage: None,
+            poll: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
+        }
+    }
+}
+
+impl Default for PublishOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Whether a successfully reviewed version goes live immediately or waits in
 /// staging for a manual rollout.
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,27 +69,6 @@ pub enum PublishType {
     /// Hold the reviewed version in staging until a Developer Dashboard
     /// operator triggers the rollout.
     Staged,
-}
-
-/// Polling cadence and budget for [`Store::publish`]'s upload-status
-/// loop.
-///
-/// Defaults to 2 second interval and 5 minute timeout.
-#[derive(Debug, Clone)]
-pub struct PollConfig {
-    /// Delay between successive polls.
-    pub interval: Duration,
-    /// Maximum total time to wait before giving up with [`WepubError::PollTimeout`].
-    pub timeout: Duration,
-}
-
-impl Default for PollConfig {
-    fn default() -> Self {
-        Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
-        }
-    }
 }
 
 /// Client for the Chrome Web Store Publish API (v2).
@@ -173,7 +175,7 @@ impl Store {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{Store, PublishOptions, PublishType};
+    /// use wepub_core::chrome::{PublishOptions, PublishType, Store};
     ///
     /// let store = Store::from_credentials(
     ///     "publisher-1".into(),
@@ -188,7 +190,7 @@ impl Store {
     ///         zip,
     ///         PublishOptions {
     ///             publish_type: PublishType::Staged,
-    ///             ..PublishOptions::default()
+    ///             ..PublishOptions::new()
     ///         },
     ///     )
     ///     .await?;

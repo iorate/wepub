@@ -40,12 +40,11 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
     }
 
     let options = PublishOptions {
-        channel: args.channel.into(),
         compatibility: build_compatibility(&args.compatibility),
         release_notes,
         approval_notes,
         source,
-        ..PublishOptions::default()
+        ..PublishOptions::new(args.channel.into())
     };
 
     store

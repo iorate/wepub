@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    PollConfig, Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -14,7 +14,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Store::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Optional notes for the Edge Add-ons certification team
     /// (reviewer-facing).
@@ -25,25 +25,24 @@ pub struct PublishOptions {
     pub poll: PollConfig,
 }
 
-/// Polling cadence and budget for [`Store::publish`]'s upload-status
-/// and publish-status loops.
-///
-/// Defaults to 5 second interval and 5 minute timeout.
-#[derive(Debug, Clone)]
-pub struct PollConfig {
-    /// Delay between successive polls.
-    pub interval: Duration,
-    /// Maximum total time to wait for a single operation (upload or
-    /// publish) before giving up with [`WepubError::PollTimeout`].
-    pub timeout: Duration,
+impl PublishOptions {
+    /// Build a `PublishOptions` with the recommended defaults
+    /// (5 second poll interval, 5 minute timeout).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            notes: None,
+            poll: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
+        }
+    }
 }
 
-impl Default for PollConfig {
+impl Default for PublishOptions {
     fn default() -> Self {
-        Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
-        }
+        Self::new()
     }
 }
 
@@ -122,7 +121,7 @@ impl Store {
     ///     "api-key".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// store.publish(zip, PublishOptions::default()).await?;
+    /// store.publish(zip, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```

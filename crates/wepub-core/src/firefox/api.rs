@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
+    PollConfig, Result, WepubError,
     common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
@@ -19,7 +19,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Store::publish`] creates the new version.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Distribution channel for the new version.
     pub channel: Channel,
@@ -40,34 +40,30 @@ pub struct PublishOptions {
     pub poll: PollConfig,
 }
 
-/// Polling cadence and budget for [`Store::publish`]'s
-/// validation-status loop.
-///
-/// Defaults to 1 second interval and 5 minute timeout.
-#[derive(Debug, Clone)]
-pub struct PollConfig {
-    /// Delay between successive polls.
-    pub interval: Duration,
-    /// Maximum total time to wait before giving up with
-    /// [`WepubError::PollTimeout`].
-    pub timeout: Duration,
-}
-
-impl Default for PollConfig {
-    fn default() -> Self {
+impl PublishOptions {
+    /// Build a `PublishOptions` for the given channel, with all other
+    /// fields at their defaults (1 second poll interval, 5 minute
+    /// timeout).
+    #[must_use]
+    pub fn new(channel: Channel) -> Self {
         Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
+            channel,
+            compatibility: None,
+            release_notes: HashMap::new(),
+            approval_notes: None,
+            source: None,
+            poll: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
         }
     }
 }
 
 /// Distribution channel for a Firefox Add-ons version.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub enum Channel {
-    /// Listed on addons.mozilla.org. Goes through public review (the
-    /// default).
-    #[default]
+    /// Listed on addons.mozilla.org. Goes through public review.
     Listed,
     /// Self-distributed signed build. Reviewed but not listed.
     Unlisted,
@@ -210,7 +206,7 @@ impl Store {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{Store, PublishOptions};
+    /// use wepub_core::firefox::{Channel, PublishOptions, Store};
     ///
     /// let store = Store::from_credentials(
     ///     "myaddon@example.com".into(),
@@ -218,7 +214,7 @@ impl Store {
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// store.publish(zip, PublishOptions::default()).await?;
+    /// store.publish(zip, PublishOptions::new(Channel::Listed)).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -637,7 +633,7 @@ mod tests {
         let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -680,7 +676,7 @@ mod tests {
         let store = store_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
         store.publish(b"zip".to_vec(), options).await.unwrap();
     }
@@ -698,7 +694,7 @@ mod tests {
         let store = store_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
         let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
 

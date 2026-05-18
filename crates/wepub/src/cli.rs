@@ -110,7 +110,7 @@ pub struct FirefoxArgs {
     pub addon_id: String,
 
     /// Distribution channel.
-    #[arg(long, value_enum, default_value_t = FirefoxChannelArg::Listed)]
+    #[arg(long, value_enum)]
     pub channel: FirefoxChannelArg,
 
     /// Firefox Add-ons API key (JWT issuer).

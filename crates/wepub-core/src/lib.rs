@@ -20,7 +20,7 @@
 //!
 //! ```no_run
 //! # async fn run() -> wepub_core::Result<()> {
-//! use wepub_core::firefox::{PublishOptions, Store};
+//! use wepub_core::firefox::{Channel, PublishOptions, Store};
 //!
 //! let store = Store::from_credentials(
 //!     "myaddon@example.com".into(),
@@ -28,7 +28,7 @@
 //!     "jwt-secret".into(),
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! store.publish(zip, PublishOptions::default()).await?;
+//! store.publish(zip, PublishOptions::new(Channel::Listed)).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -46,4 +46,5 @@ pub mod chrome;
 pub mod edge;
 pub mod firefox;
 
+pub use common::PollConfig;
 pub use error::{Result, WepubError};

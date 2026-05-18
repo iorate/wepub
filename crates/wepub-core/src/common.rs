@@ -1,6 +1,18 @@
+use std::time::Duration;
+
 use url::Url;
 
 use crate::{Result, WepubError};
+
+/// Polling cadence and timeout budget.
+#[derive(Debug, Clone)]
+pub struct PollConfig {
+    /// Delay between successive polls.
+    pub interval: Duration,
+    /// Maximum total time to wait before giving up with
+    /// [`WepubError::PollTimeout`].
+    pub timeout: Duration,
+}
 
 // A trailing slash is required so `Url::join` appends relative paths
 // instead of replacing the last path segment.

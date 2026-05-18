@@ -7,4 +7,4 @@
 
 mod api;
 
-pub use api::{PollConfig, PublishOptions, Store};
+pub use api::{PublishOptions, Store};

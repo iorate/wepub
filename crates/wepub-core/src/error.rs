@@ -22,8 +22,8 @@ pub enum WepubError {
         body: String,
     },
 
-    /// A polling loop exceeded its per-store `PollConfig::timeout` budget
-    /// without reaching a terminal state.
+    /// A polling loop exceeded the `PollConfig::timeout` budget without
+    /// reaching a terminal state.
     #[error("polling timed out after {elapsed:?}")]
     PollTimeout {
         /// Total elapsed time before giving up.

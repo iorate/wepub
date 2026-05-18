@@ -9,4 +9,4 @@
 mod api;
 mod auth;
 
-pub use api::{PollConfig, PublishOptions, PublishType, Store};
+pub use api::{PublishOptions, PublishType, Store};

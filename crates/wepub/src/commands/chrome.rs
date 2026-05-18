@@ -20,7 +20,7 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         publish_type: args.publish_type.into(),
         skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
-        ..PublishOptions::default()
+        ..PublishOptions::new()
     };
 
     store

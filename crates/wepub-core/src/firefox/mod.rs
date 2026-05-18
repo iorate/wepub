@@ -11,6 +11,4 @@
 mod api;
 mod auth;
 
-pub use api::{
-    Application, Channel, Compatibility, PollConfig, PublishOptions, Store, VersionRange,
-};
+pub use api::{Application, Channel, Compatibility, PublishOptions, Store, VersionRange};
