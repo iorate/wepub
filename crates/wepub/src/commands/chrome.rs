@@ -73,8 +73,8 @@ fn build_store(args: &ChromeArgs) -> Result<Store> {
 impl From<ChromePublishTypeArg> for PublishType {
     fn from(value: ChromePublishTypeArg) -> Self {
         match value {
-            ChromePublishTypeArg::Default => PublishType::Default,
-            ChromePublishTypeArg::Staged => PublishType::Staged,
+            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
+            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
         }
     }
 }

@@ -59,14 +59,14 @@ impl Default for PublishOptions {
 
 /// Whether a successfully reviewed version goes live immediately or waits in
 /// staging for a manual rollout.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PublishType {
-    /// Publish immediately after review (the default).
-    #[default]
-    Default,
+    /// Publish immediately after review.
+    DefaultPublish,
     /// Hold the reviewed version in staging until a Developer Dashboard
     /// operator triggers the rollout.
-    Staged,
+    StagedPublish,
 }
 
 /// Client for the Chrome Web Store Publish API (v2).
@@ -187,7 +187,7 @@ impl Store {
     ///     .publish(
     ///         zip,
     ///         PublishOptions {
-    ///             publish_type: Some(PublishType::Staged),
+    ///             publish_type: Some(PublishType::StagedPublish),
     ///             ..PublishOptions::new()
     ///         },
     ///     )
@@ -333,7 +333,15 @@ impl Store {
             self.publisher_id, self.item_id
         ))?;
 
-        let body = PublishRequestBody::from(options);
+        let body = PublishRequestBody {
+            publish_type: options.publish_type,
+            skip_review: options.skip_review,
+            deploy_infos: options.deploy_percentage.map(|p| {
+                vec![DeployInfo {
+                    deploy_percentage: p,
+                }]
+            }),
+        };
 
         log_request(&method, &url);
         let resp = self
@@ -420,29 +428,11 @@ enum UploadState {
 #[serde(rename_all = "camelCase")]
 struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
-    publish_type: Option<&'static str>,
+    publish_type: Option<PublishType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     skip_review: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_infos: Option<Vec<DeployInfo>>,
-}
-
-impl From<&PublishOptions> for PublishRequestBody {
-    fn from(opts: &PublishOptions) -> Self {
-        Self {
-            publish_type: match opts.publish_type {
-                Some(PublishType::Default) => Some("DEFAULT_PUBLISH"),
-                Some(PublishType::Staged) => Some("STAGED_PUBLISH"),
-                None => None,
-            },
-            skip_review: opts.skip_review,
-            deploy_infos: opts.deploy_percentage.map(|p| {
-                vec![DeployInfo {
-                    deploy_percentage: p,
-                }]
-            }),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -832,7 +822,7 @@ mod tests {
             .await;
 
         let mut opts = default_options();
-        opts.publish_type = Some(PublishType::Staged);
+        opts.publish_type = Some(PublishType::StagedPublish);
 
         let store = store_for(&server);
         let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
