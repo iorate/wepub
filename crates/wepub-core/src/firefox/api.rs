@@ -61,7 +61,7 @@ impl PublishOptions {
 }
 
 /// Distribution channel for a Firefox Add-ons version.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
     /// Listed on addons.mozilla.org. Goes through public review.
     Listed,
@@ -129,7 +129,7 @@ impl Serialize for Application {
 
 /// Explicit `min` / `max` application version pair used by
 /// [`Compatibility::Detailed`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
     /// manifest's `strict_min_version`.

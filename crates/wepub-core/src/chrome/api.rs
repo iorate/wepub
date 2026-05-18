@@ -59,7 +59,7 @@ impl Default for PublishOptions {
 
 /// Whether a successfully reviewed version goes live immediately or waits in
 /// staging for a manual rollout.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PublishType {
     /// Publish immediately after review.

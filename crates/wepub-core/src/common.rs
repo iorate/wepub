@@ -5,7 +5,7 @@ use url::Url;
 use crate::{Result, WepubError};
 
 /// Polling cadence and timeout budget.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PollConfig {
     /// Delay between successive polls.
     pub interval: Duration,
