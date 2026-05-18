@@ -17,7 +17,7 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
 
     let options = PublishOptions {
-        publish_type: args.publish_type.into(),
+        publish_type: args.publish_type.map(Into::into),
         skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
         ..PublishOptions::new()

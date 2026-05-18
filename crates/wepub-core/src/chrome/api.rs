@@ -20,12 +20,10 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct PublishOptions {
     /// Whether the version goes live immediately after review or stays in
     /// staging for a manual rollout from the Developer Dashboard.
-    pub publish_type: PublishType,
+    pub publish_type: Option<PublishType>,
 
-    /// Bypass the standard review queue. Only honoured for changes Google
-    /// considers eligible (e.g. declarativeNetRequest rule edits); otherwise
-    /// the request is routed through normal review regardless.
-    pub skip_review: bool,
+    /// Bypass the standard review queue.
+    pub skip_review: Option<bool>,
 
     /// Initial percentage of users to roll the new version out to.
     /// `None` means "use the value configured in the Developer Dashboard".
@@ -42,8 +40,8 @@ impl PublishOptions {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            publish_type: PublishType::Default,
-            skip_review: false,
+            publish_type: None,
+            skip_review: None,
             deploy_percentage: None,
             poll: PollConfig {
                 interval: DEFAULT_POLL_INTERVAL,
@@ -189,7 +187,7 @@ impl Store {
     ///     .publish(
     ///         zip,
     ///         PublishOptions {
-    ///             publish_type: PublishType::Staged,
+    ///             publish_type: Some(PublishType::Staged),
     ///             ..PublishOptions::new()
     ///         },
     ///     )
@@ -433,10 +431,11 @@ impl From<&PublishOptions> for PublishRequestBody {
     fn from(opts: &PublishOptions) -> Self {
         Self {
             publish_type: match opts.publish_type {
-                PublishType::Default => None,
-                PublishType::Staged => Some("STAGED_PUBLISH"),
+                Some(PublishType::Default) => Some("DEFAULT_PUBLISH"),
+                Some(PublishType::Staged) => Some("STAGED_PUBLISH"),
+                None => None,
             },
-            skip_review: if opts.skip_review { Some(true) } else { None },
+            skip_review: opts.skip_review,
             deploy_infos: opts.deploy_percentage.map(|p| {
                 vec![DeployInfo {
                     deploy_percentage: p,
@@ -833,7 +832,7 @@ mod tests {
             .await;
 
         let mut opts = default_options();
-        opts.publish_type = PublishType::Staged;
+        opts.publish_type = Some(PublishType::Staged);
 
         let store = store_for(&server);
         let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
@@ -856,7 +855,7 @@ mod tests {
             .await;
 
         let mut opts = default_options();
-        opts.skip_review = true;
+        opts.skip_review = Some(true);
         opts.deploy_percentage = Some(50);
 
         let store = store_for(&server);
@@ -1079,8 +1078,8 @@ mod tests {
 
     fn default_options() -> PublishOptions {
         PublishOptions {
-            publish_type: PublishType::Default,
-            skip_review: false,
+            publish_type: None,
+            skip_review: None,
             deploy_percentage: None,
             poll: fast_poll(),
         }

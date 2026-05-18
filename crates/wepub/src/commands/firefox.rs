@@ -58,7 +58,7 @@ fn is_stdin_path(path: Option<&Path>) -> bool {
     path.is_some_and(|p| p.as_os_str() == "-")
 }
 
-async fn load_release_notes(args: &FirefoxArgs) -> Result<HashMap<String, String>> {
+async fn load_release_notes(args: &FirefoxArgs) -> Result<Option<HashMap<String, String>>> {
     let text =
         match (&args.release_notes, &args.release_notes_file) {
             (Some(text), _) => Some(text.clone()),
@@ -67,9 +67,7 @@ async fn load_release_notes(args: &FirefoxArgs) -> Result<HashMap<String, String
             })?),
             _ => None,
         };
-    Ok(text.map_or_else(HashMap::new, |t| {
-        HashMap::from([(RELEASE_NOTES_LOCALE.to_string(), t)])
-    }))
+    Ok(text.map(|t| HashMap::from([(RELEASE_NOTES_LOCALE.to_string(), t)])))
 }
 
 async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {

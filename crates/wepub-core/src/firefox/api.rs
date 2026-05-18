@@ -27,7 +27,7 @@ pub struct PublishOptions {
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
     /// Release notes keyed by Firefox Add-ons locale code (e.g. `"en-US"`).
-    pub release_notes: HashMap<String, String>,
+    pub release_notes: Option<HashMap<String, String>>,
     /// Optional message to Firefox Add-ons reviewers, typically containing
     /// build reproduction steps.
     pub approval_notes: Option<String>,
@@ -49,7 +49,7 @@ impl PublishOptions {
         Self {
             channel,
             compatibility: None,
-            release_notes: HashMap::new(),
+            release_notes: None,
             approval_notes: None,
             source: None,
             poll: PollConfig {
@@ -228,7 +228,7 @@ impl Store {
             .create_version(
                 &validated.uuid,
                 options.compatibility.as_ref(),
-                &options.release_notes,
+                options.release_notes.as_ref(),
                 options.approval_notes.as_deref(),
             )
             .await?;
@@ -331,7 +331,7 @@ impl Store {
         &self,
         upload_uuid: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: &HashMap<String, String>,
+        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
     ) -> Result<VersionResponse> {
         tracing::info!(
@@ -424,8 +424,8 @@ struct VersionCreateBody<'a> {
     upload: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     compatibility: Option<&'a Compatibility>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    release_notes: &'a HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_notes: Option<&'a HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
 }
@@ -567,7 +567,7 @@ mod tests {
 
         let store = store_for(&server);
         let resp = store
-            .create_version("uuid-x", None, &HashMap::new(), None)
+            .create_version("uuid-x", None, None, None)
             .await
             .unwrap();
 
@@ -715,14 +715,14 @@ mod tests {
 
     #[test]
     fn version_create_body_minimal_only_has_upload() {
-        let json = body_to_json("uuid-123", None, &HashMap::new(), None);
+        let json = body_to_json("uuid-123", None, None, None);
         assert_eq!(json, serde_json::json!({ "upload": "uuid-123" }));
     }
 
     #[test]
     fn version_create_body_with_apps_shorthand() {
         let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+        let json = body_to_json("uuid-123", Some(&compat), None, None);
         assert_eq!(
             json,
             serde_json::json!({
@@ -750,7 +750,7 @@ mod tests {
             },
         );
         let compat = Compatibility::Detailed(map);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+        let json = body_to_json("uuid-123", Some(&compat), None, None);
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(
@@ -769,7 +769,7 @@ mod tests {
         notes.insert("en-US".into(), "Hello".into());
         notes.insert("ja".into(), "こんにちは".into());
 
-        let json = body_to_json("uuid-123", None, &notes, Some("for reviewers"));
+        let json = body_to_json("uuid-123", None, Some(&notes), Some("for reviewers"));
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(json["release_notes"]["en-US"], "Hello");
@@ -838,7 +838,7 @@ mod tests {
     fn body_to_json(
         upload: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: &HashMap<String, String>,
+        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
     ) -> serde_json::Value {
         serde_json::to_value(VersionCreateBody {
