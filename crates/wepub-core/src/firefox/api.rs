@@ -14,7 +14,6 @@ use crate::{
 use super::auth::generate_jwt;
 
 const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
-const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -254,7 +253,7 @@ impl Client {
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
-            .file_name(UPLOAD_FILE_NAME)
+            .file_name("addon.zip")
             .mime_str("application/zip")
             .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new()
