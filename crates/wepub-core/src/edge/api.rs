@@ -218,6 +218,11 @@ impl Client {
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id);
         if let Some(notes) = notes {
+            // `notes` encoding is a best guess: Microsoft's docs and samples
+            // disagree between JSON, form, and plain text, and we haven't
+            // verified against the live Edge Add-ons API. Form-urlencoded
+            // matches the on-the-wire shape of the official PowerShell sample
+            // and lets `reqwest::form()` handle escaping.
             request = request.form(&[("notes", notes)]);
         }
 
