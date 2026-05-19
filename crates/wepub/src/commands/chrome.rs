@@ -4,13 +4,7 @@ use wepub_core::chrome::{Client, PublishOptions, PublishType};
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
 pub async fn run(args: ChromeArgs) -> Result<()> {
-    let mut client = build_client(&args)?;
-    if let Some(url) = args.test_root_url {
-        client = client.with_root_url(url.as_str())?;
-    }
-    if let Some(url) = args.test_token_url {
-        client = client.with_token_url(url.as_str())?;
-    }
+    let client = build_client(&args)?;
 
     let zip = tokio::fs::read(&args.zip)
         .await

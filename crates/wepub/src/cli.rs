@@ -73,14 +73,6 @@ pub struct ChromeArgs {
     /// Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
     pub deploy_percentage: Option<u8>,
-
-    /// Override the Chrome Web Store API root URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_TEST_ROOT_URL")]
-    pub test_root_url: Option<Url>,
-
-    /// Override the OAuth token endpoint URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_TEST_TOKEN_URL")]
-    pub test_token_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -121,9 +113,8 @@ pub struct FirefoxArgs {
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
-    /// Override the Firefox Add-ons API root URL (for local addons-server etc.).
-    #[arg(long, env = "WEPUB_FIREFOX_TEST_ROOT_URL")]
-    pub test_root_url: Option<Url>,
+    #[arg(long, hide = true)]
+    pub internal_root_url: Option<Url>,
 
     /// Compatible applications, comma-separated (e.g. "firefox,android").
     #[arg(long, value_delimiter = ',')]
@@ -192,8 +183,4 @@ pub struct EdgeArgs {
     /// Path to a file containing certification notes. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
     pub notes_file: Option<PathBuf>,
-
-    /// Override the Edge Add-ons API root URL (for testing).
-    #[arg(long, env = "WEPUB_EDGE_TEST_ROOT_URL")]
-    pub test_root_url: Option<Url>,
 }

@@ -13,10 +13,7 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
 
     let notes = load_notes(args.notes, args.notes_file).await?;
 
-    let mut client = Client::new(args.product_id, args.client_id, args.api_key)?;
-    if let Some(url) = args.test_root_url {
-        client = client.with_root_url(url.as_str())?;
-    }
+    let client = Client::new(args.product_id, args.client_id, args.api_key)?;
 
     let options = PublishOptions {
         notes,

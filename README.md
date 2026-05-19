@@ -43,8 +43,6 @@ Credentials and IDs can also be supplied via environment variables:
 | `--client-secret`  | `WEPUB_CHROME_CLIENT_SECRET`   |
 | `--refresh-token`  | `WEPUB_CHROME_REFRESH_TOKEN`   |
 | `--access-token`   | `WEPUB_CHROME_ACCESS_TOKEN`    |
-| `--test-root-url`  | `WEPUB_CHROME_TEST_ROOT_URL`   |
-| `--test-token-url` | `WEPUB_CHROME_TEST_TOKEN_URL`  |
 
 Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
 
@@ -69,7 +67,6 @@ Credentials can also be supplied via environment variables:
 | `--addon-id`      | `WEPUB_FIREFOX_ADDON_ID`       |
 | `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
 | `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
-| `--test-root-url` | `WEPUB_FIREFOX_TEST_ROOT_URL`  |
 
 Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
@@ -95,7 +92,6 @@ Credentials and IDs can also be supplied via environment variables:
 | `--product-id`    | `WEPUB_EDGE_PRODUCT_ID`     |
 | `--client-id`     | `WEPUB_EDGE_CLIENT_ID`      |
 | `--api-key`       | `WEPUB_EDGE_API_KEY`        |
-| `--test-root-url` | `WEPUB_EDGE_TEST_ROOT_URL`  |
 
 Run `wepub edge --help` for the full list of flags (notes for the certification team, etc.).
 

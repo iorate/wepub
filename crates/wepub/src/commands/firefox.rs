@@ -35,7 +35,7 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
     };
 
     let mut client = Client::new(args.addon_id, args.api_key, args.api_secret)?;
-    if let Some(root_url) = args.test_root_url {
+    if let Some(root_url) = args.internal_root_url {
         client = client.with_root_url(root_url.as_str())?;
     }
 
