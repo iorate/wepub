@@ -24,83 +24,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Upload a zip and create a new version on AMO.
-    Firefox(FirefoxArgs),
-    /// Upload a zip and submit a new version to the Chrome Web Store.
+    /// Upload a zip and submit a new version to Chrome Web Store.
     Chrome(ChromeArgs),
-}
-
-#[derive(Debug, Args)]
-#[command(group(
-    clap::ArgGroup::new("release_notes_input")
-        .multiple(false)
-        .args(["release_notes", "release_notes_file"]),
-))]
-#[command(group(
-    clap::ArgGroup::new("approval_notes_input")
-        .multiple(false)
-        .args(["approval_notes", "approval_notes_file"]),
-))]
-pub struct FirefoxArgs {
-    /// Path to the extension archive (zip).
-    #[arg(value_name = "ZIP")]
-    pub zip: PathBuf,
-
-    /// Add-on ID (e.g. "myaddon@example.com").
-    #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
-    pub addon_id: String,
-
-    /// Distribution channel.
-    #[arg(long, value_enum, default_value_t = ChannelArg::Listed)]
-    pub channel: ChannelArg,
-
-    /// AMO API key (JWT issuer).
-    #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
-    pub api_key: String,
-
-    /// AMO API secret (JWT secret).
-    #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
-    pub api_secret: String,
-
-    /// Override the AMO API root URL (for local addons-server etc.).
-    #[arg(long, env = "WEPUB_FIREFOX_TEST_ROOT_URL")]
-    pub test_root_url: Option<Url>,
-
-    /// Compatible applications, comma-separated (e.g. "firefox,android").
-    #[arg(long, value_delimiter = ',')]
-    pub compatibility: Vec<ApplicationArg>,
-
-    /// Release notes (en-US). Mutually exclusive with --release-notes-file.
-    #[arg(long)]
-    pub release_notes: Option<String>,
-
-    /// Path to a file containing en-US release notes. Use "-" for stdin.
-    #[arg(long, value_name = "PATH")]
-    pub release_notes_file: Option<PathBuf>,
-
-    /// Approval notes for AMO reviewers. Mutually exclusive with --approval-notes-file.
-    #[arg(long)]
-    pub approval_notes: Option<String>,
-
-    /// Path to a file containing approval notes. Use "-" for stdin.
-    #[arg(long, value_name = "PATH")]
-    pub approval_notes_file: Option<PathBuf>,
-
-    /// Path to a source archive to attach to the version.
-    #[arg(long, value_name = "PATH")]
-    pub source: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ChannelArg {
-    Listed,
-    Unlisted,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum)]
-pub enum ApplicationArg {
-    Firefox,
-    Android,
+    /// Upload a zip and submit a new version to Firefox Add-ons.
+    Firefox(FirefoxArgs),
+    /// Upload a zip and submit a new version to Edge Add-ons.
+    Edge(EdgeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -129,33 +58,129 @@ pub struct ChromeArgs {
     #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
     pub refresh_token: Option<String>,
 
-    /// Pre-fetched OAuth access token (escape hatch for WIF / gcloud).
+    /// Pre-fetched OAuth access token (for service-account auth).
     #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
     pub access_token: Option<String>,
 
     /// Publish type.
-    #[arg(long, value_enum, default_value_t = PublishTypeArg::Default)]
-    pub publish_type: PublishTypeArg,
+    #[arg(long, value_enum)]
+    pub publish_type: Option<ChromePublishTypeArg>,
 
     /// Bypass the standard review queue (only honoured for changes Google deems eligible).
     #[arg(long)]
-    pub skip_review: bool,
+    pub skip_review: Option<bool>,
 
     /// Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
     pub deploy_percentage: Option<u8>,
-
-    /// Override the CWS API root URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_TEST_ROOT_URL")]
-    pub test_root_url: Option<Url>,
-
-    /// Override the OAuth token endpoint URL (for testing).
-    #[arg(long, env = "WEPUB_CHROME_TEST_TOKEN_URL")]
-    pub test_token_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum PublishTypeArg {
+pub enum ChromePublishTypeArg {
     Default,
     Staged,
+}
+
+#[derive(Debug, Args)]
+#[command(group(
+    clap::ArgGroup::new("release_notes_input")
+        .multiple(false)
+        .args(["release_notes", "release_notes_file"]),
+))]
+#[command(group(
+    clap::ArgGroup::new("approval_notes_input")
+        .multiple(false)
+        .args(["approval_notes", "approval_notes_file"]),
+))]
+pub struct FirefoxArgs {
+    /// Path to the extension archive (zip).
+    #[arg(value_name = "ZIP")]
+    pub zip: PathBuf,
+
+    /// Add-on ID (e.g. "myaddon@example.com").
+    #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
+    pub addon_id: String,
+
+    /// Distribution channel.
+    #[arg(long, value_enum)]
+    pub channel: FirefoxChannelArg,
+
+    /// Firefox Add-ons API key (JWT issuer).
+    #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
+    pub api_key: String,
+
+    /// Firefox Add-ons API secret (JWT secret).
+    #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
+    pub api_secret: String,
+
+    #[arg(long, hide = true)]
+    pub internal_root_url: Option<Url>,
+
+    /// Compatible applications, comma-separated (e.g. "firefox,android").
+    #[arg(long, value_delimiter = ',')]
+    pub compatibility: Vec<FirefoxApplicationArg>,
+
+    /// Release notes (en-US). Mutually exclusive with --release-notes-file.
+    #[arg(long)]
+    pub release_notes: Option<String>,
+
+    /// Path to a file containing en-US release notes. Use "-" for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub release_notes_file: Option<PathBuf>,
+
+    /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
+    #[arg(long)]
+    pub approval_notes: Option<String>,
+
+    /// Path to a file containing approval notes. Use "-" for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub approval_notes_file: Option<PathBuf>,
+
+    /// Path to a source archive to attach to the version.
+    #[arg(long, value_name = "PATH")]
+    pub source: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum FirefoxChannelArg {
+    Listed,
+    Unlisted,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum FirefoxApplicationArg {
+    Firefox,
+    Android,
+}
+
+#[derive(Debug, Args)]
+#[command(group(
+    clap::ArgGroup::new("edge_notes_input")
+        .multiple(false)
+        .args(["notes", "notes_file"]),
+))]
+pub struct EdgeArgs {
+    /// Path to the extension archive (zip).
+    #[arg(value_name = "ZIP")]
+    pub zip: PathBuf,
+
+    /// Edge Add-ons product ID (GUID).
+    #[arg(long, env = "WEPUB_EDGE_PRODUCT_ID")]
+    pub product_id: String,
+
+    /// Partner Center Client ID.
+    #[arg(long, env = "WEPUB_EDGE_CLIENT_ID")]
+    pub client_id: String,
+
+    /// Partner Center API key.
+    #[arg(long, env = "WEPUB_EDGE_API_KEY")]
+    pub api_key: String,
+
+    /// Notes for the Edge Add-ons certification team. Mutually exclusive with --notes-file.
+    #[arg(long)]
+    pub notes: Option<String>,
+
+    /// Path to a file containing certification notes. Use "-" for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub notes_file: Option<PathBuf>,
 }

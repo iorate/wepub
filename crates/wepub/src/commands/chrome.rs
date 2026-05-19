@@ -1,36 +1,30 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{ChromePublishOptions, ChromeStore, PublishType};
+use wepub_core::chrome::{Client, PublishOptions, PublishType};
 
-use crate::cli::{ChromeArgs, PublishTypeArg};
+use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
 pub async fn run(args: ChromeArgs) -> Result<()> {
-    let mut store = build_store(&args)?;
-    if let Some(url) = args.test_root_url {
-        store = store.with_root_url(url.as_str())?;
-    }
-    if let Some(url) = args.test_token_url {
-        store = store.with_token_url(url.as_str())?;
-    }
+    let client = build_client(&args)?;
 
     let zip = tokio::fs::read(&args.zip)
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
 
-    let options = ChromePublishOptions {
-        publish_type: args.publish_type.into(),
+    let options = PublishOptions {
+        publish_type: args.publish_type.map(Into::into),
         skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
-        ..ChromePublishOptions::default()
+        ..PublishOptions::new()
     };
 
-    store
+    client
         .publish(zip, options)
         .await
         .context("Chrome Web Store publish failed")?;
     Ok(())
 }
 
-fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
+fn build_client(args: &ChromeArgs) -> Result<Client> {
     let client_set = (
         args.client_id.as_deref(),
         args.client_secret.as_deref(),
@@ -54,7 +48,7 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
                     "--client-id, --client-secret and --refresh-token must all be provided together"
                 );
             };
-            Ok(ChromeStore::from_client_credentials(
+            Ok(Client::new(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
                 client_id.to_string(),
@@ -62,7 +56,7 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
                 refresh_token.to_string(),
             )?)
         }
-        (false, Some(access_token)) => Ok(ChromeStore::from_access_token(
+        (false, Some(access_token)) => Ok(Client::from_access_token(
             args.publisher_id.clone(),
             args.item_id.clone(),
             access_token.to_string(),
@@ -70,11 +64,11 @@ fn build_store(args: &ChromeArgs) -> Result<ChromeStore> {
     }
 }
 
-impl From<PublishTypeArg> for PublishType {
-    fn from(value: PublishTypeArg) -> Self {
+impl From<ChromePublishTypeArg> for PublishType {
+    fn from(value: ChromePublishTypeArg) -> Self {
         match value {
-            PublishTypeArg::Default => PublishType::Default,
-            PublishTypeArg::Staged => PublishType::Staged,
+            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
+            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
         }
     }
 }

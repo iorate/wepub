@@ -1,9 +1,9 @@
 [package]
 name = "wepub"
 version = "0.3.0"
-description = "CLI to publish browser extensions to Chrome Web Store and Firefox AMO"
+description = "CLI to publish browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons"
 readme = "../../README.md"
-keywords = ["browser-extension", "chrome", "firefox", "publish", "cli"]
+keywords = ["browser-extension", "chrome", "firefox", "edge", "cli"]
 categories = ["command-line-utilities", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true

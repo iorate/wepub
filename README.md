@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Firefox (AMO) and Chrome Web Store are supported; Edge Add-ons is planned.
+Chrome Web Store, Firefox Add-ons and Edge Add-ons are supported.
 
 ## Install
 
@@ -18,7 +18,37 @@ Requires Rust 1.88+.
 
 ## Usage
 
-### Firefox (AMO)
+### Chrome Web Store
+
+Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token, then:
+
+```sh
+wepub chrome ./my-extension.zip \
+  --publisher-id  "12345678-90ab-cdef-1234-567890abcdef" \
+  --item-id       "abcdefghijklmnopabcdefghijklmnop" \
+  --client-id     "...apps.googleusercontent.com" \
+  --client-secret "..." \
+  --refresh-token "1//0..."
+```
+
+Alternatively, pass a pre-fetched OAuth access token via `--access-token`. Use this for [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts); see Google's docs for how to obtain the token. The two authentication modes are mutually exclusive.
+
+Credentials and IDs can also be supplied via environment variables:
+
+| Flag               | Environment variable           |
+| ------------------ | ------------------------------ |
+| `--publisher-id`   | `WEPUB_CHROME_PUBLISHER_ID`    |
+| `--item-id`        | `WEPUB_CHROME_ITEM_ID`         |
+| `--client-id`      | `WEPUB_CHROME_CLIENT_ID`       |
+| `--client-secret`  | `WEPUB_CHROME_CLIENT_SECRET`   |
+| `--refresh-token`  | `WEPUB_CHROME_REFRESH_TOKEN`   |
+| `--access-token`   | `WEPUB_CHROME_ACCESS_TOKEN`    |
+
+Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
+
+**Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+
+### Firefox Add-ons
 
 Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
 
@@ -37,43 +67,35 @@ Credentials can also be supplied via environment variables:
 | `--addon-id`      | `WEPUB_FIREFOX_ADDON_ID`       |
 | `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
 | `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
-| `--test-root-url` | `WEPUB_FIREFOX_TEST_ROOT_URL`  |
 
 Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
 
-**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the AMO web UI.
+**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the Firefox Add-ons web UI.
 
-### Chrome Web Store
+### Edge Add-ons
 
-Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token, then:
+Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key, then:
 
 ```sh
-wepub chrome ./my-extension.zip \
-  --publisher-id   "12345678-90ab-cdef-1234-567890abcdef" \
-  --item-id        "abcdefghijklmnopabcdefghijklmnop" \
-  --client-id      "...apps.googleusercontent.com" \
-  --client-secret  "..." \
-  --refresh-token  "1//0..."
+wepub edge ./my-extension.zip \
+  --product-id "12345678-90ab-cdef-1234-567890abcdef" \
+  --client-id  "..." \
+  --api-key    "..."
 ```
 
-Alternatively, supply a pre-fetched OAuth access token (e.g. from `gcloud auth print-access-token` or a Workload Identity Federation flow) via `--access-token`. The two authentication modes are mutually exclusive.
+The product ID is the GUID shown on the **Extension overview** page in Partner Center.
 
 Credentials and IDs can also be supplied via environment variables:
 
-| Flag               | Environment variable           |
-| ------------------ | ------------------------------ |
-| `--publisher-id`   | `WEPUB_CHROME_PUBLISHER_ID`    |
-| `--item-id`        | `WEPUB_CHROME_ITEM_ID`         |
-| `--client-id`      | `WEPUB_CHROME_CLIENT_ID`       |
-| `--client-secret`  | `WEPUB_CHROME_CLIENT_SECRET`   |
-| `--refresh-token`  | `WEPUB_CHROME_REFRESH_TOKEN`   |
-| `--access-token`   | `WEPUB_CHROME_ACCESS_TOKEN`    |
-| `--test-root-url`  | `WEPUB_CHROME_TEST_ROOT_URL`   |
-| `--test-token-url` | `WEPUB_CHROME_TEST_TOKEN_URL`  |
+| Flag              | Environment variable        |
+| ----------------- | --------------------------- |
+| `--product-id`    | `WEPUB_EDGE_PRODUCT_ID`     |
+| `--client-id`     | `WEPUB_EDGE_CLIENT_ID`      |
+| `--api-key`       | `WEPUB_EDGE_API_KEY`        |
 
-Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
+Run `wepub edge --help` for the full list of flags (notes for the certification team, etc.).
 
-**Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+**Note:** Only existing products can be updated. The very first version of a product must still be created and published through Partner Center.
 
 ### `.env` file
 

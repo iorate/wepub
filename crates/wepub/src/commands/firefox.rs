@@ -1,13 +1,11 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use tokio::io::AsyncReadExt;
-use wepub_core::firefox::{
-    Application, Channel, Compatibility, FirefoxPublishOptions, FirefoxStore,
-};
+use wepub_core::firefox::{Application, Channel, Client, Compatibility, PublishOptions};
 
-use crate::cli::{ApplicationArg, ChannelArg, FirefoxArgs};
+use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
+use crate::commands::common::read_text_input;
 
 const RELEASE_NOTES_LOCALE: &str = "en-US";
 
@@ -36,26 +34,23 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         None => None,
     };
 
-    let mut store =
-        FirefoxStore::from_jwt_credentials(args.addon_id, args.api_key, args.api_secret)
-            .context("failed to construct FirefoxStore")?;
-    if let Some(root_url) = args.test_root_url {
-        store = store.with_root_url(root_url.as_str())?;
+    let mut client = Client::new(args.addon_id, args.api_key, args.api_secret)?;
+    if let Some(root_url) = args.internal_root_url {
+        client = client.with_root_url(root_url.as_str())?;
     }
 
-    let options = FirefoxPublishOptions {
-        channel: args.channel.into(),
+    let options = PublishOptions {
         compatibility: build_compatibility(&args.compatibility),
         release_notes,
         approval_notes,
         source,
-        ..FirefoxPublishOptions::default()
+        ..PublishOptions::new(args.channel.into())
     };
 
-    store
+    client
         .publish(zip, options)
         .await
-        .context("AMO publish failed")?;
+        .context("Firefox Add-ons publish failed")?;
     Ok(())
 }
 
@@ -63,7 +58,7 @@ fn is_stdin_path(path: Option<&Path>) -> bool {
     path.is_some_and(|p| p.as_os_str() == "-")
 }
 
-async fn load_release_notes(args: &FirefoxArgs) -> Result<HashMap<String, String>> {
+async fn load_release_notes(args: &FirefoxArgs) -> Result<Option<HashMap<String, String>>> {
     let text =
         match (&args.release_notes, &args.release_notes_file) {
             (Some(text), _) => Some(text.clone()),
@@ -72,9 +67,7 @@ async fn load_release_notes(args: &FirefoxArgs) -> Result<HashMap<String, String
             })?),
             _ => None,
         };
-    Ok(text.map_or_else(HashMap::new, |t| {
-        HashMap::from([(RELEASE_NOTES_LOCALE.to_string(), t)])
-    }))
+    Ok(text.map(|t| HashMap::from([(RELEASE_NOTES_LOCALE.to_string(), t)])))
 }
 
 async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
@@ -87,17 +80,7 @@ async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
     }
 }
 
-async fn read_text_input(path: &PathBuf) -> Result<String> {
-    if path.as_os_str() == "-" {
-        let mut buf = String::new();
-        tokio::io::stdin().read_to_string(&mut buf).await?;
-        Ok(buf)
-    } else {
-        Ok(tokio::fs::read_to_string(path).await?)
-    }
-}
-
-fn build_compatibility(apps: &[ApplicationArg]) -> Option<Compatibility> {
+fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
     if apps.is_empty() {
         return None;
     }
@@ -105,26 +88,26 @@ fn build_compatibility(apps: &[ApplicationArg]) -> Option<Compatibility> {
     let unique: Vec<Application> = apps
         .iter()
         .copied()
-        .filter(|app| seen.insert(*app))
         .map(Into::into)
+        .filter(|app| seen.insert(*app))
         .collect();
     Some(Compatibility::Apps(unique))
 }
 
-impl From<ChannelArg> for Channel {
-    fn from(value: ChannelArg) -> Self {
+impl From<FirefoxChannelArg> for Channel {
+    fn from(value: FirefoxChannelArg) -> Self {
         match value {
-            ChannelArg::Listed => Channel::Listed,
-            ChannelArg::Unlisted => Channel::Unlisted,
+            FirefoxChannelArg::Listed => Channel::Listed,
+            FirefoxChannelArg::Unlisted => Channel::Unlisted,
         }
     }
 }
 
-impl From<ApplicationArg> for Application {
-    fn from(value: ApplicationArg) -> Self {
+impl From<FirefoxApplicationArg> for Application {
+    fn from(value: FirefoxApplicationArg) -> Self {
         match value {
-            ApplicationArg::Firefox => Application::Firefox,
-            ApplicationArg::Android => Application::Android,
+            FirefoxApplicationArg::Firefox => Application::Firefox,
+            FirefoxApplicationArg::Android => Application::Android,
         }
     }
 }

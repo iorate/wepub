@@ -1,29 +1,21 @@
 use serde::Deserialize;
+use url::Url;
 
-use crate::{Result, WepubError};
+use crate::{Result, WepubError, common::log_request};
 
-pub(crate) const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-
-#[derive(Deserialize)]
-struct TokenResponse {
-    access_token: String,
-}
-
-#[derive(Deserialize)]
-struct TokenErrorResponse {
-    error: String,
-    error_description: Option<String>,
-}
+pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
 pub(crate) async fn refresh_access_token(
     client: &reqwest::Client,
-    token_url: &str,
+    token_url: &Url,
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<String> {
+    let method = reqwest::Method::POST;
+    log_request(&method, token_url);
     let response = client
-        .post(token_url)
+        .request(method, token_url.clone())
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", client_id),
@@ -35,25 +27,32 @@ pub(crate) async fn refresh_access_token(
 
     let status = response.status();
     let body = response.text().await?;
+    // The success body carries the access_token, so mask it in logs.
+    // Error bodies (e.g. {"error": "invalid_grant"}) are safe and useful.
+    let logged_body: &str = if status.is_success() { "***" } else { &body };
+    tracing::debug!(
+        status = status.as_u16(),
+        body = %logged_body,
+        "received response",
+    );
 
-    if status.is_success() {
-        let parsed: TokenResponse = serde_json::from_str(&body)?;
-        Ok(parsed.access_token)
-    } else {
-        Err(parse_token_error(&body))
+    if !status.is_success() {
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
     }
+
+    let parsed: TokenResponse =
+        serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
+            detail: format!("failed to decode token response: {e}"),
+        })?;
+    Ok(parsed.access_token)
 }
 
-fn parse_token_error(body: &str) -> WepubError {
-    let Ok(err) = serde_json::from_str::<TokenErrorResponse>(body) else {
-        return WepubError::Auth(format!("token endpoint returned non-JSON error: {body}"));
-    };
-
-    let message = match err.error_description {
-        Some(desc) => format!("{}: {desc}", err.error),
-        None => err.error,
-    };
-    WepubError::Auth(message)
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
 }
 
 #[cfg(test)]
@@ -65,9 +64,10 @@ mod tests {
 
     async fn refresh(server: &MockServer, secret: &str) -> Result<String> {
         let client = reqwest::Client::new();
+        let token_url = Url::parse(&server.uri()).unwrap();
         refresh_access_token(
             &client,
-            &server.uri(),
+            &token_url,
             "client-id",
             secret,
             "refresh-token-value",
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn error_with_description_formats_as_pair() {
+    async fn http_error_preserves_response_body_verbatim() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400).set_body_json(json!({
@@ -127,32 +127,20 @@ mod tests {
 
         let err = refresh(&server, "client-secret").await.unwrap_err();
         match err {
-            WepubError::Auth(msg) => {
-                assert_eq!(msg, "invalid_grant: Token has been expired or revoked.");
+            WepubError::HttpStatus { status, body } => {
+                assert_eq!(status, 400);
+                assert!(body.contains("invalid_grant"), "body: {body}");
+                assert!(
+                    body.contains("Token has been expired or revoked."),
+                    "body: {body}",
+                );
             }
-            other => panic!("expected Auth, got {other:?}"),
+            other => panic!("expected HttpStatus, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn error_without_description_uses_code_only() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(json!({ "error": "invalid_request" })),
-            )
-            .mount(&server)
-            .await;
-
-        let err = refresh(&server, "client-secret").await.unwrap_err();
-        match err {
-            WepubError::Auth(msg) => assert_eq!(msg, "invalid_request"),
-            other => panic!("expected Auth, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn non_json_error_body_falls_back_to_raw_text() {
+    async fn non_json_error_body_is_passed_through() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -163,13 +151,34 @@ mod tests {
 
         let err = refresh(&server, "client-secret").await.unwrap_err();
         match err {
-            WepubError::Auth(msg) => {
+            WepubError::HttpStatus { status, body } => {
+                assert_eq!(status, 503);
                 assert!(
-                    msg.contains("<html>Service Unavailable</html>"),
-                    "raw body should be preserved, got: {msg}"
+                    body.contains("<html>Service Unavailable</html>"),
+                    "raw body should be preserved, got: {body}",
                 );
             }
-            other => panic!("expected Auth, got {other:?}"),
+            other => panic!("expected HttpStatus, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn success_without_access_token_field_becomes_unexpected_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "expires_in": 3599 })))
+            .mount(&server)
+            .await;
+
+        let err = refresh(&server, "client-secret").await.unwrap_err();
+        match err {
+            WepubError::UnexpectedResponse { detail } => {
+                assert!(
+                    detail.contains("access_token"),
+                    "expected detail to mention the missing field, got: {detail}",
+                );
+            }
+            other => panic!("expected UnexpectedResponse, got {other:?}"),
         }
     }
 }

@@ -6,67 +6,63 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url},
+    PollConfig, Result, WepubError,
+    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
     http::build_client,
 };
 
 use super::auth::generate_jwt;
 
 const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
-const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`FirefoxStore::publish`] creates the new version.
-#[derive(Debug, Clone, Default)]
-pub struct FirefoxPublishOptions {
+/// Options that shape how [`Client::publish`] creates the new version.
+#[derive(Debug, Clone)]
+pub struct PublishOptions {
     /// Distribution channel for the new version.
     pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
-    /// Release notes keyed by AMO locale code (e.g. `"en-US"`).
-    pub release_notes: HashMap<String, String>,
-    /// Optional message to AMO reviewers, typically containing build
-    /// reproduction steps.
+    /// Release notes keyed by Firefox Add-ons locale code (e.g. `"en-US"`).
+    pub release_notes: Option<HashMap<String, String>>,
+    /// Optional message to Firefox Add-ons reviewers, typically containing
+    /// build reproduction steps.
     pub approval_notes: Option<String>,
-    /// Optional source archive to attach to the version. AMO requires this
-    /// when reviewers cannot reproduce the bundled artefact from the listing.
+    /// Optional source archive to attach to the version. Firefox Add-ons
+    /// requires this when reviewers cannot reproduce the bundled artefact
+    /// from the listing.
     pub source: Option<Vec<u8>>,
-    /// Polling cadence and overall timeout used while waiting for AMO to
-    /// finish validating the upload.
-    pub poll: FirefoxPollConfig,
+    /// Polling cadence and overall timeout used while waiting for Firefox
+    /// Add-ons to finish validating the upload.
+    pub poll: PollConfig,
 }
 
-/// Polling cadence and budget for [`FirefoxStore::publish`]'s
-/// validation-status loop.
-///
-/// Defaults to 1 second interval and 5 minute timeout.
-#[derive(Debug, Clone)]
-pub struct FirefoxPollConfig {
-    /// Delay between successive polls of the upload status endpoint.
-    pub interval: Duration,
-    /// Maximum total time to wait before giving up with
-    /// [`WepubError::Validation`].
-    pub timeout: Duration,
-}
-
-impl Default for FirefoxPollConfig {
-    fn default() -> Self {
+impl PublishOptions {
+    /// Build a `PublishOptions` for the given channel, with all other
+    /// fields at their defaults (1 second poll interval, 5 minute
+    /// timeout).
+    #[must_use]
+    pub fn new(channel: Channel) -> Self {
         Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
+            channel,
+            compatibility: None,
+            release_notes: None,
+            approval_notes: None,
+            source: None,
+            poll: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
         }
     }
 }
 
-/// Distribution channel for an AMO version.
-#[derive(Debug, Clone, Copy, Default)]
+/// Distribution channel for a Firefox Add-ons version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
-    /// Listed on addons.mozilla.org. Goes through public review (the
-    /// default).
-    #[default]
+    /// Listed on addons.mozilla.org. Goes through public review.
     Listed,
     /// Self-distributed signed build. Reviewed but not listed.
     Unlisted,
@@ -81,12 +77,7 @@ impl Channel {
     }
 }
 
-/// Compatibility declaration sent to AMO when creating the version.
-///
-/// AMO's wire format accepts either a flat list of compatible apps (with
-/// versions inferred from the manifest) or an object mapping each app to an
-/// explicit version range. `wepub-core` exposes both shapes through this
-/// enum.
+/// Compatibility declaration sent to Firefox Add-ons when creating the version.
 #[derive(Debug, Clone)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
@@ -108,7 +99,7 @@ impl Serialize for Compatibility {
     }
 }
 
-/// AMO application identifier used in compatibility declarations.
+/// Firefox Add-ons application identifier used in compatibility declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Application {
     /// Desktop Firefox.
@@ -137,10 +128,7 @@ impl Serialize for Application {
 
 /// Explicit `min` / `max` application version pair used by
 /// [`Compatibility::Detailed`].
-///
-/// Either bound can be `None`, in which case the corresponding manifest
-/// value is used.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
     /// manifest's `strict_min_version`.
@@ -152,30 +140,22 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-// Successful response from creating a new add-on version on AMO.
-// Internal-only: the id is echoed via `tracing::info!` from `publish` and
-// not surfaced to the caller because the only documented use was logging.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct VersionResponse {
-    pub(crate) id: u64,
-}
-
-/// Client for the AMO Add-on Versions API (v5).
+/// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
-/// The store holds the JWT credential pair and a reusable HTTP client; it
+/// The client holds the JWT credential pair and a reusable HTTP client; it
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
-// Debug intentionally omitted: holds the AMO JWT secret.
-pub struct FirefoxStore {
+// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
+pub struct Client {
     addon_id: String,
     issuer: String,
     secret: String,
     root_url: Url,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
-impl FirefoxStore {
-    /// Build a store bound to `addon_id`, signing requests with the supplied
+impl Client {
+    /// Build a client bound to `addon_id`, signing requests with the supplied
     /// HS256 JWT credential pair (issuer + secret).
     ///
     /// Get the credentials from
@@ -185,21 +165,17 @@ impl FirefoxStore {
     ///
     /// Fails if the underlying HTTP client cannot be built (e.g. rustls
     /// platform-verifier initialization fails).
-    pub fn from_jwt_credentials(
-        addon_id: String,
-        jwt_issuer: String,
-        jwt_secret: String,
-    ) -> Result<Self> {
+    pub fn new(addon_id: String, jwt_issuer: String, jwt_secret: String) -> Result<Self> {
         Ok(Self {
             addon_id,
             issuer: jwt_issuer,
             secret: jwt_secret,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            client: build_client()?,
+            http: build_client()?,
         })
     }
 
-    /// Override the AMO API root URL.
+    /// Override the Firefox Add-ons API root URL.
     ///
     /// Defaults to `https://addons.mozilla.org/`. Intended for tests
     /// or when pointing at a local `mozilla/addons-server` instance. A
@@ -217,39 +193,27 @@ impl FirefoxStore {
 
     /// Upload `zip` and create a new version on the bound add-on.
     ///
-    /// The call performs four steps internally: upload the archive, poll
-    /// AMO until validation finishes, create the version, and (if
-    /// `options.source` is set) attach the source archive in a follow-up
-    /// PATCH. The polling cadence is controlled by `options.poll`.
-    ///
-    /// Progress (`uploading...`, `polling AMO upload status`, `published
-    /// version id=...`) is emitted through the `tracing` crate; library
-    /// consumers configure their own subscriber to render or capture it.
-    ///
-    /// # Errors
-    ///
-    /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Validation`],
-    /// [`WepubError::Json`], [`WepubError::Io`] or [`WepubError::Internal`]
-    /// depending on which step failed.
+    /// Waits for Firefox Add-ons validation to finish, creates the new
+    /// version, and (when `options.source` is set) attaches the source
+    /// archive. The polling cadence is controlled by `options.poll`.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{FirefoxStore, FirefoxPublishOptions};
+    /// use wepub_core::firefox::{Channel, Client, PublishOptions};
     ///
-    /// let store = FirefoxStore::from_jwt_credentials(
+    /// let client = Client::new(
     ///     "myaddon@example.com".into(),
     ///     "user:12345:6789".into(),
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// store.publish(zip, FirefoxPublishOptions::default()).await?;
+    /// client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: FirefoxPublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload = self.upload(zip, options.channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
@@ -259,7 +223,7 @@ impl FirefoxStore {
             .create_version(
                 &validated.uuid,
                 options.compatibility.as_ref(),
-                &options.release_notes,
+                options.release_notes.as_ref(),
                 options.approval_notes.as_deref(),
             )
             .await?;
@@ -268,32 +232,38 @@ impl FirefoxStore {
             self.patch_version_source(version.id, source).await?;
         }
 
-        tracing::info!(version_id = version.id, "published version");
+        tracing::info!(
+            addon_id = %self.addon_id,
+            version_id = version.id,
+            "publish succeeded"
+        );
         Ok(())
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
-        join_endpoint(&self.root_url, path)
-    }
+    async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            channel = channel.as_str(),
+            "uploading"
+        );
 
-    pub(crate) async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
+        let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
         let auth = self.auth_header()?;
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
-            .file_name(UPLOAD_FILE_NAME)
+            .file_name("addon.zip")
             .mime_str("application/zip")
             .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new()
             .part("upload", part)
             .text("channel", channel.as_str());
 
-        tracing::info!(addon_id = %self.addon_id, channel = channel.as_str(), "uploading add-on to AMO");
-
+        log_request(&method, &url);
         let resp = self
-            .client
-            .post(url)
+            .http
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
             .send()
@@ -302,63 +272,70 @@ impl FirefoxStore {
         decode_response(resp).await
     }
 
-    pub(crate) async fn wait_until_validated(
+    async fn wait_until_validated(
         &self,
         uuid: &str,
-        config: &FirefoxPollConfig,
+        config: &PollConfig,
     ) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
         loop {
+            tracing::info!(
+                addon_id = %self.addon_id,
+                uuid = %uuid,
+                "polling upload status"
+            );
+            let method = reqwest::Method::GET;
             let auth = self.auth_header()?;
+            log_request(&method, &url);
             let resp = self
-                .client
-                .get(url.clone())
+                .http
+                .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, auth)
                 .send()
                 .await?;
             let upload: UploadResponse = decode_response(resp).await?;
 
-            tracing::info!(
-                uuid = uuid,
-                processed = upload.processed,
-                valid = upload.valid,
-                "polling AMO upload status"
-            );
-
             if upload.processed {
                 if upload.valid {
                     return Ok(upload);
                 }
-                let body = upload.validation.as_ref().map_or_else(
-                    || "validation failed (no detail provided)".to_string(),
-                    |v| serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string()),
-                );
-                return Err(WepubError::Validation {
+                let Some(validation) = upload.validation.as_ref() else {
+                    return Err(WepubError::UnexpectedResponse {
+                        detail: "upload reported valid=false without a validation field"
+                            .to_string(),
+                    });
+                };
+                return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
-                    body,
+                    validation: pretty_json(validation),
                 });
             }
 
-            if started.elapsed() >= config.timeout {
-                return Err(WepubError::Validation {
-                    uuid: uuid.to_string(),
-                    body: format!("validation timed out after {:?}", config.timeout),
-                });
+            let elapsed = started.elapsed();
+            if elapsed >= config.timeout {
+                return Err(WepubError::PollTimeout { elapsed });
             }
 
             tokio::time::sleep(config.interval).await;
         }
     }
 
-    pub(crate) async fn create_version(
+    async fn create_version(
         &self,
         upload_uuid: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: &HashMap<String, String>,
+        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
     ) -> Result<VersionResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            uuid = upload_uuid,
+            "submitting for publish"
+        );
+
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
         let auth = self.auth_header()?;
 
@@ -369,15 +346,10 @@ impl FirefoxStore {
             approval_notes,
         };
 
-        tracing::info!(
-            addon_id = %self.addon_id,
-            uuid = upload_uuid,
-            "creating AMO version"
-        );
-
+        log_request(&method, &url);
         let resp = self
-            .client
-            .post(url)
+            .http
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .json(&body)
             .send()
@@ -386,11 +358,18 @@ impl FirefoxStore {
         decode_response(resp).await
     }
 
-    pub(crate) async fn patch_version_source(
+    async fn patch_version_source(
         &self,
         version_id: u64,
         source: Vec<u8>,
     ) -> Result<VersionResponse> {
+        tracing::info!(
+            addon_id = %self.addon_id,
+            version_id,
+            "uploading source"
+        );
+
+        let method = reqwest::Method::PATCH;
         let url = self.endpoint(&format!(
             "api/v5/addons/addon/{}/versions/{version_id}/",
             self.addon_id
@@ -404,15 +383,10 @@ impl FirefoxStore {
             .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
         let form = Form::new().part("source", part);
 
-        tracing::info!(
-            addon_id = %self.addon_id,
-            version_id,
-            "uploading version source to AMO"
-        );
-
+        log_request(&method, &url);
         let resp = self
-            .client
-            .patch(url)
+            .http
+            .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
             .send()
@@ -421,19 +395,23 @@ impl FirefoxStore {
         decode_response(resp).await
     }
 
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        join_endpoint(&self.root_url, path)
+    }
+
     fn auth_header(&self) -> Result<String> {
         let token = generate_jwt(&self.issuer, &self.secret)?;
         Ok(format!("JWT {token}"))
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct UploadResponse {
-    pub uuid: String,
-    pub processed: bool,
-    pub valid: bool,
+#[derive(Debug, Deserialize)]
+struct UploadResponse {
+    uuid: String,
+    processed: bool,
+    valid: bool,
     #[serde(default)]
-    pub validation: Option<serde_json::Value>,
+    validation: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -441,10 +419,15 @@ struct VersionCreateBody<'a> {
     upload: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     compatibility: Option<&'a Compatibility>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    release_notes: &'a HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_notes: Option<&'a HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionResponse {
+    id: u64,
 }
 
 #[cfg(test)]
@@ -467,8 +450,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .upload(b"fake-zip".to_vec(), Channel::Listed)
             .await
             .unwrap();
@@ -498,8 +481,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .wait_until_validated("uuid-1", &fast_poll())
             .await
             .unwrap();
@@ -528,18 +511,18 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_validated("uuid-2", &fast_poll())
             .await
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
+            WepubError::FirefoxValidationFailed { uuid, validation } => {
                 assert_eq!(uuid, "uuid-2");
-                assert!(body.contains("manifest broken"));
+                assert!(validation.contains("manifest broken"));
             }
-            other => panic!("expected WepubError::Validation, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxValidationFailed, got {other:?}"),
         }
     }
 
@@ -554,18 +537,15 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_validated("uuid-3", &fast_poll())
             .await
             .unwrap_err();
 
         match err {
-            WepubError::Validation { uuid, body } => {
-                assert_eq!(uuid, "uuid-3");
-                assert!(body.contains("timed out"));
-            }
-            other => panic!("expected WepubError::Validation, got {other:?}"),
+            WepubError::PollTimeout { .. } => {}
+            other => panic!("expected WepubError::PollTimeout, got {other:?}"),
         }
     }
 
@@ -580,9 +560,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
-            .create_version("uuid-x", None, &HashMap::new(), None)
+        let client = client_for(&server);
+        let resp = client
+            .create_version("uuid-x", None, None, None)
             .await
             .unwrap();
 
@@ -600,8 +580,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .patch_version_source(4242, b"source-zip".to_vec())
             .await
             .unwrap();
@@ -644,13 +624,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let client = client_for(&server);
+        let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
-        store.publish(b"zip".to_vec(), options).await.unwrap();
+        client.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]
@@ -688,12 +668,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let client = client_for(&server);
+        let options = PublishOptions {
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
-        store.publish(b"zip".to_vec(), options).await.unwrap();
+        client.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]
@@ -706,23 +686,21 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let options = FirefoxPublishOptions {
+        let client = client_for(&server);
+        let options = PublishOptions {
             poll: fast_poll(),
-            ..FirefoxPublishOptions::default()
+            ..PublishOptions::new(Channel::Listed)
         };
-        let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
+        let err = client.publish(b"zip".to_vec(), options).await.unwrap_err();
 
         match err {
-            WepubError::Api { status, body } => {
+            WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
                 assert_eq!(body, "unauthorized");
             }
-            other => panic!("expected WepubError::Api, got {other:?}"),
+            other => panic!("expected WepubError::HttpStatus, got {other:?}"),
         }
     }
-
-    // ---- Unit tests for serialization and URL helpers ----
 
     #[test]
     fn channel_serialises_as_amo_expects() {
@@ -732,14 +710,14 @@ mod tests {
 
     #[test]
     fn version_create_body_minimal_only_has_upload() {
-        let json = body_to_json("uuid-123", None, &HashMap::new(), None);
+        let json = body_to_json("uuid-123", None, None, None);
         assert_eq!(json, serde_json::json!({ "upload": "uuid-123" }));
     }
 
     #[test]
     fn version_create_body_with_apps_shorthand() {
         let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+        let json = body_to_json("uuid-123", Some(&compat), None, None);
         assert_eq!(
             json,
             serde_json::json!({
@@ -767,7 +745,7 @@ mod tests {
             },
         );
         let compat = Compatibility::Detailed(map);
-        let json = body_to_json("uuid-123", Some(&compat), &HashMap::new(), None);
+        let json = body_to_json("uuid-123", Some(&compat), None, None);
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(
@@ -786,7 +764,7 @@ mod tests {
         notes.insert("en-US".into(), "Hello".into());
         notes.insert("ja".into(), "こんにちは".into());
 
-        let json = body_to_json("uuid-123", None, &notes, Some("for reviewers"));
+        let json = body_to_json("uuid-123", None, Some(&notes), Some("for reviewers"));
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(json["release_notes"]["en-US"], "Hello");
@@ -796,13 +774,8 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap();
-        let url = store.endpoint("api/v5/addons/upload/").unwrap();
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
             "https://addons.mozilla.org/api/v5/addons/upload/"
@@ -811,41 +784,32 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap()
-        .with_root_url("http://127.0.0.1:8000/")
-        .unwrap();
-        let url = store.endpoint("api/v5/addons/upload/").unwrap();
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into())
+            .unwrap()
+            .with_root_url("http://127.0.0.1:8000/")
+            .unwrap();
+        let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store = FirefoxStore::from_jwt_credentials(
-            "test-addon".into(),
-            "issuer".into(),
-            "secret".into(),
-        )
-        .unwrap();
-        let Err(err) = store.with_root_url("not a url") else {
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> FirefoxStore {
-        FirefoxStore::from_jwt_credentials("test-addon".into(), "issuer".into(), "secret".into())
+    fn client_for(server: &MockServer) -> Client {
+        Client::new("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()
     }
 
-    fn fast_poll() -> FirefoxPollConfig {
-        FirefoxPollConfig {
+    fn fast_poll() -> PollConfig {
+        PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }
@@ -867,7 +831,7 @@ mod tests {
     fn body_to_json(
         upload: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: &HashMap<String, String>,
+        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
     ) -> serde_json::Value {
         serde_json::to_value(VersionCreateBody {

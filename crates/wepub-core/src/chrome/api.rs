@@ -4,28 +4,26 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
-    Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url},
+    PollConfig, Result, WepubError,
+    common::{decode_response, join_endpoint, log_request, parse_root_url},
     http::build_client,
 };
 
-use super::auth::{TOKEN_URL, refresh_access_token};
+use super::auth::{DEFAULT_TOKEN_URL, refresh_access_token};
 
 const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`ChromeStore::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
-pub struct ChromePublishOptions {
+/// Options that shape how [`Client::publish`] submits the new version.
+#[derive(Debug, Clone)]
+pub struct PublishOptions {
     /// Whether the version goes live immediately after review or stays in
     /// staging for a manual rollout from the Developer Dashboard.
-    pub publish_type: PublishType,
+    pub publish_type: Option<PublishType>,
 
-    /// Bypass the standard review queue. Only honoured for changes Google
-    /// considers eligible (e.g. declarativeNetRequest rule edits); otherwise
-    /// the request is routed through normal review regardless.
-    pub skip_review: bool,
+    /// Bypass the standard review queue.
+    pub skip_review: Option<bool>,
 
     /// Initial percentage of users to roll the new version out to.
     /// `None` means "use the value configured in the Developer Dashboard".
@@ -33,145 +31,95 @@ pub struct ChromePublishOptions {
 
     /// Polling cadence and overall timeout used while waiting for the
     /// asynchronous upload to finish processing.
-    pub poll: ChromePollConfig,
+    pub poll: PollConfig,
 }
 
-/// Whether a successfully reviewed version goes live immediately or waits in
-/// staging for a manual rollout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PublishType {
-    /// Publish immediately after review (the default). Maps to the wire
-    /// value `DEFAULT_PUBLISH`, but `wepub-core` simply omits the field so
-    /// the server falls back to its own default.
-    #[default]
-    Default,
-    /// Hold the reviewed version in staging until a Developer Dashboard
-    /// operator triggers the rollout. Maps to the wire value
-    /// `STAGED_PUBLISH`.
-    Staged,
-}
-
-/// Polling cadence and budget for [`ChromeStore::publish`]'s upload-status
-/// loop.
-///
-/// Defaults to 2 second interval and 5 minute timeout.
-#[derive(Debug, Clone)]
-pub struct ChromePollConfig {
-    /// Delay between successive `fetchStatus` calls.
-    pub interval: Duration,
-    /// Maximum total time to wait before giving up with [`WepubError::Upload`].
-    pub timeout: Duration,
-}
-
-impl Default for ChromePollConfig {
-    fn default() -> Self {
+impl PublishOptions {
+    /// Build a `PublishOptions` with the recommended defaults
+    /// (2 second poll interval, 5 minute timeout).
+    #[must_use]
+    pub fn new() -> Self {
         Self {
-            interval: DEFAULT_POLL_INTERVAL,
-            timeout: DEFAULT_POLL_TIMEOUT,
+            publish_type: None,
+            skip_review: None,
+            deploy_percentage: None,
+            poll: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
         }
     }
 }
 
-// Successful response from the CWS `:publish` endpoint. Internal-only:
-// terminal states (`Rejected`, `Cancelled`) are turned into
-// `WepubError::Publish`, the non-terminal states are echoed via
-// `tracing::info!` from inside `publish`, so callers do not need the
-// raw values.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PublishResponse {
-    pub(crate) item_id: String,
-    pub(crate) state: ItemState,
+impl Default for PublishOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-// State of a Chrome Web Store item right after a publish request.
-//
-// Only the values documented in the official CWS v2 reference are surfaced;
-// `ITEM_STATE_UNSPECIFIED` is documented as "unused" and is rejected at
-// deserialization to fail fast on unknown wire values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// Whether a successfully reviewed version goes live immediately or waits in
+/// staging for a manual rollout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub(crate) enum ItemState {
-    PendingReview,
-    Staged,
-    Published,
-    PublishedToTesters,
-    Rejected,
-    Cancelled,
-}
-
-// State of an asynchronous upload reported by `:fetchStatus`.
-//
-// `UPLOAD_STATE_UNSPECIFIED` is the documented "default value" and is
-// expected never to appear on the wire; serde will refuse to decode it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub(crate) enum UploadState {
-    Succeeded,
-    InProgress,
-    Failed,
-    NotFound,
+pub enum PublishType {
+    /// Publish immediately after review.
+    DefaultPublish,
+    /// Hold the reviewed version in staging until a Developer Dashboard
+    /// operator triggers the rollout.
+    StagedPublish,
 }
 
 /// Client for the Chrome Web Store Publish API (v2).
 ///
-/// The store holds OAuth credentials and a reusable HTTP client; it is cheap
+/// The client holds OAuth credentials and a reusable HTTP client; it is cheap
 /// to construct and intended to live for the duration of a single publish
 /// run.
 // Debug intentionally omitted: holds OAuth credentials.
-pub struct ChromeStore {
+pub struct Client {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
     root_url: Url,
     token_url: Url,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
-impl ChromeStore {
-    /// Build a store from a pre-fetched OAuth access token.
+impl Client {
+    /// Build a client from a pre-fetched OAuth access token.
     ///
-    /// Useful when the caller already obtained a token via Workload Identity
-    /// Federation, `gcloud auth print-access-token`, or any other flow that
-    /// produces a Bearer token directly. The token is used verbatim; this
-    /// constructor never touches the OAuth token endpoint.
+    /// Intended for service-account authentication. The token is used
+    /// verbatim; this constructor never touches the OAuth token endpoint.
     ///
     /// # Errors
     ///
-    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
-    /// platform-verifier initialization fails).
+    /// Fails if the underlying HTTP client cannot be built.
     pub fn from_access_token(
         publisher_id: String,
         item_id: String,
         access_token: String,
     ) -> Result<Self> {
-        Self::with_credentials(
+        Self::from_credentials(
             publisher_id,
             item_id,
             Credentials::AccessToken(access_token),
         )
     }
 
-    /// Build a store from a long-lived OAuth refresh token.
+    /// Build a client from a long-lived OAuth refresh token.
     ///
-    /// `wepub-core` exchanges the refresh token for an access token once at
-    /// the start of [`publish`](ChromeStore::publish) and reuses it for the
-    /// remaining requests of that call.
+    /// An access token is fetched lazily during [`publish`](Client::publish).
     ///
     /// # Errors
     ///
-    /// Fails if the underlying HTTP client cannot be built. The token
-    /// exchange itself happens lazily inside `publish`, so credential
-    /// problems surface there as one of the [`WepubError`] variants
-    /// described on `publish`.
-    pub fn from_client_credentials(
+    /// Fails if the underlying HTTP client cannot be built.
+    pub fn new(
         publisher_id: String,
         item_id: String,
         client_id: String,
         client_secret: String,
         refresh_token: String,
     ) -> Result<Self> {
-        Self::with_credentials(
+        Self::from_credentials(
             publisher_id,
             item_id,
             Credentials::ClientCredentials {
@@ -199,9 +147,8 @@ impl ChromeStore {
 
     /// Override the Google OAuth token endpoint URL.
     ///
-    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
-    /// tests; only consulted when the store was built with
-    /// [`from_client_credentials`](ChromeStore::from_client_credentials).
+    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for tests;
+    /// only consulted when the client was built with [`Client::new`].
     ///
     /// # Errors
     ///
@@ -215,31 +162,19 @@ impl ChromeStore {
 
     /// Upload `zip` and submit the resulting item version for publish.
     ///
-    /// Internally this performs three steps: token exchange (refresh-token
-    /// flow only), upload, and `:publish`. If the upload returns
-    /// `IN_PROGRESS`, the call polls `:fetchStatus` according to
-    /// `options.poll` until the upload reaches `SUCCEEDED` or the timeout
-    /// elapses. A 200 OK response from `:publish` whose state is
-    /// `REJECTED` or `CANCELLED` is reported as [`WepubError::Publish`].
-    ///
-    /// Progress (`uploading...`, `submitted ... state=...`) is emitted
-    /// through the `tracing` crate; library consumers configure their own
-    /// subscriber to render or capture it.
-    ///
-    /// # Errors
-    ///
-    /// On failure, returns one of [`WepubError::Network`],
-    /// [`WepubError::Api`], [`WepubError::Auth`], [`WepubError::Json`],
-    /// [`WepubError::Upload`], [`WepubError::Publish`] or
-    /// [`WepubError::Internal`] depending on which step failed.
+    /// If the upload is still in progress when it is accepted, the call
+    /// polls for completion according to `options.poll` until the upload
+    /// succeeds or the timeout elapses. A publish request that reaches a
+    /// terminal failure state is reported as
+    /// [`WepubError::ChromePublishFailed`].
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{ChromeStore, ChromePublishOptions, PublishType};
+    /// use wepub_core::chrome::{Client, PublishOptions, PublishType};
     ///
-    /// let store = ChromeStore::from_client_credentials(
+    /// let client = Client::new(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
     ///     "client-id".into(),
@@ -247,19 +182,19 @@ impl ChromeStore {
     ///     "refresh-token".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// store
+    /// client
     ///     .publish(
     ///         zip,
-    ///         ChromePublishOptions {
-    ///             publish_type: PublishType::Staged,
-    ///             ..ChromePublishOptions::default()
+    ///         PublishOptions {
+    ///             publish_type: Some(PublishType::StagedPublish),
+    ///             ..PublishOptions::new()
     ///         },
     ///     )
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: ChromePublishOptions) -> Result<()> {
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let token = self.get_token().await?;
         let initial = self.upload(&token, zip).await?;
         self.wait_until_uploaded(&token, initial, &options.poll)
@@ -268,11 +203,11 @@ impl ChromeStore {
         Ok(())
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
     }
 
-    pub(crate) async fn get_token(&self) -> Result<String> {
+    async fn get_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::ClientCredentials {
@@ -281,8 +216,8 @@ impl ChromeStore {
                 refresh_token,
             } => {
                 refresh_access_token(
-                    &self.client,
-                    self.token_url.as_str(),
+                    &self.http,
+                    &self.token_url,
                     client_id,
                     client_secret,
                     refresh_token,
@@ -292,21 +227,23 @@ impl ChromeStore {
         }
     }
 
-    pub(crate) async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
+    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
+        tracing::info!(
+            publisher_id = %self.publisher_id,
+            item_id = %self.item_id,
+            "uploading"
+        );
+
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "upload/v2/publishers/{}/items/{}:upload",
             self.publisher_id, self.item_id
         ))?;
 
-        tracing::info!(
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id,
-            "uploading extension to Chrome Web Store"
-        );
-
+        log_request(&method, &url);
         let resp = self
-            .client
-            .post(url)
+            .http
+            .request(method, url)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
@@ -317,120 +254,127 @@ impl ChromeStore {
         Ok(body.upload_state)
     }
 
-    pub(crate) async fn fetch_status(&self, token: &str) -> Result<Option<UploadState>> {
+    async fn wait_until_uploaded(
+        &self,
+        token: &str,
+        initial_state: UploadState,
+        config: &PollConfig,
+    ) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
             self.publisher_id, self.item_id
         ))?;
-
-        let resp = self.client.get(url).bearer_auth(token).send().await?;
-
-        let body: FetchStatusResponse = decode_response(resp).await?;
-        Ok(body.last_async_upload_state)
-    }
-
-    pub(crate) async fn wait_until_uploaded(
-        &self,
-        token: &str,
-        initial_state: UploadState,
-        config: &ChromePollConfig,
-    ) -> Result<UploadState> {
         let started = Instant::now();
         // First iteration uses the caller-provided state from the initial
         // upload response; subsequent iterations re-fetch from the server.
-        let mut state: Option<UploadState> = Some(initial_state);
+        let mut initial = true;
 
         loop {
-            match state {
-                Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
-                Some(UploadState::Failed) => {
-                    return Err(WepubError::Upload {
-                        item_id: self.item_id.clone(),
-                        body: "The upload failed.".to_string(),
-                    });
-                }
-                // None (lastAsyncUploadState absent, i.e. no async upload in
-                // the past 24h) is treated the same as the explicit NOT_FOUND
-                // value: we have just uploaded, so the server should know
-                // about it. Either response indicates something is wrong.
-                Some(UploadState::NotFound) | None => {
-                    return Err(WepubError::Upload {
-                        item_id: self.item_id.clone(),
-                        body: "An upload attempt was not found.".to_string(),
-                    });
-                }
-                Some(UploadState::InProgress) => {}
-            }
+            let state: Option<UploadState> = if initial {
+                initial = false;
+                Some(initial_state)
+            } else {
+                tracing::info!(
+                    publisher_id = %self.publisher_id,
+                    item_id = %self.item_id,
+                    "polling upload status"
+                );
+                let method = reqwest::Method::GET;
+                log_request(&method, &url);
+                let resp = self
+                    .http
+                    .request(method, url.clone())
+                    .bearer_auth(token)
+                    .send()
+                    .await?;
+                let body: FetchStatusResponse = decode_response(resp).await?;
+                body.last_async_upload_state
+            };
 
-            if started.elapsed() >= config.timeout {
-                return Err(WepubError::Upload {
+            let reason = match state {
+                Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
+                Some(UploadState::InProgress) => None,
+                Some(UploadState::Failed) => Some("upload failed"),
+                // Absent `lastAsyncUploadState` is documented as "no async
+                // upload in the past 24 hours" - same as NOT_FOUND for us.
+                Some(UploadState::NotFound) | None => Some("upload not found"),
+            };
+            if let Some(reason) = reason {
+                return Err(WepubError::ChromeUploadFailed {
                     item_id: self.item_id.clone(),
-                    body: format!("upload polling timed out after {:?}", config.timeout),
+                    reason: reason.to_string(),
                 });
             }
 
+            let elapsed = started.elapsed();
+            if elapsed >= config.timeout {
+                return Err(WepubError::PollTimeout { elapsed });
+            }
+
             tokio::time::sleep(config.interval).await;
-            state = self.fetch_status(token).await?;
-            tracing::info!(
-                publisher_id = %self.publisher_id,
-                item_id = %self.item_id,
-                state = ?state,
-                "polled Chrome Web Store upload status"
-            );
         }
     }
 
-    pub(crate) async fn submit_for_publish(
+    async fn submit_for_publish(
         &self,
         token: &str,
-        options: &ChromePublishOptions,
+        options: &PublishOptions,
     ) -> Result<PublishResponse> {
+        tracing::info!(
+            publisher_id = %self.publisher_id,
+            item_id = %self.item_id,
+            "submitting for publish"
+        );
+
+        let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:publish",
             self.publisher_id, self.item_id
         ))?;
 
-        let body = PublishRequestBody::from(options);
+        let body = PublishRequestBody {
+            publish_type: options.publish_type,
+            skip_review: options.skip_review,
+            deploy_infos: options.deploy_percentage.map(|p| {
+                vec![DeployInfo {
+                    deploy_percentage: p,
+                }]
+            }),
+        };
 
-        tracing::info!(
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id,
-            "submitting Chrome Web Store item for publish"
-        );
-
+        log_request(&method, &url);
         let resp = self
-            .client
-            .post(url)
+            .http
+            .request(method, url)
             .bearer_auth(token)
             .json(&body)
             .send()
             .await?;
 
         let parsed: PublishResponse = decode_response(resp).await?;
-        match parsed.state {
-            ItemState::Rejected => Err(WepubError::Publish {
-                item_id: parsed.item_id,
-                body: "The publish was rejected.".to_string(),
-            }),
-            ItemState::Cancelled => Err(WepubError::Publish {
-                item_id: parsed.item_id,
-                body: "The publish was cancelled.".to_string(),
-            }),
+        let reason = match parsed.state {
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
-            | ItemState::PublishedToTesters => {
-                tracing::info!(
-                    item_id = %parsed.item_id,
-                    state = ?parsed.state,
-                    "submitted item for publish"
-                );
-                Ok(parsed)
-            }
+            | ItemState::PublishedToTesters => None,
+            ItemState::Rejected => Some("rejected"),
+            ItemState::Cancelled => Some("cancelled"),
+        };
+        if let Some(reason) = reason {
+            return Err(WepubError::ChromePublishFailed {
+                item_id: parsed.item_id,
+                reason: reason.to_string(),
+            });
         }
+        tracing::info!(
+            item_id = %parsed.item_id,
+            state = ?parsed.state,
+            "publish succeeded"
+        );
+        Ok(parsed)
     }
 
-    fn with_credentials(
+    fn from_credentials(
         publisher_id: String,
         item_id: String,
         credentials: Credentials,
@@ -440,8 +384,8 @@ impl ChromeStore {
             item_id,
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(TOKEN_URL).expect("TOKEN_URL is a valid URL"),
-            client: build_client()?,
+            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
+            http: build_client()?,
         })
     }
 }
@@ -469,38 +413,50 @@ struct FetchStatusResponse {
     last_async_upload_state: Option<UploadState>,
 }
 
-#[derive(Debug, Default, Serialize)]
+// `UPLOAD_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum UploadState {
+    Succeeded,
+    InProgress,
+    Failed,
+    NotFound,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
-    publish_type: Option<&'static str>,
+    publish_type: Option<PublishType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     skip_review: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_infos: Option<Vec<DeployInfo>>,
 }
 
-impl From<&ChromePublishOptions> for PublishRequestBody {
-    fn from(opts: &ChromePublishOptions) -> Self {
-        Self {
-            publish_type: match opts.publish_type {
-                PublishType::Default => None,
-                PublishType::Staged => Some("STAGED_PUBLISH"),
-            },
-            skip_review: if opts.skip_review { Some(true) } else { None },
-            deploy_infos: opts.deploy_percentage.map(|p| {
-                vec![DeployInfo {
-                    deploy_percentage: p,
-                }]
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeployInfo {
     deploy_percentage: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishResponse {
+    item_id: String,
+    state: ItemState,
+}
+
+// `ITEM_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ItemState {
+    PendingReview,
+    Staged,
+    Published,
+    PublishedToTesters,
+    Rejected,
+    Cancelled,
 }
 
 #[cfg(test)]
@@ -513,11 +469,8 @@ mod tests {
 
     const TEST_TOKEN: &str = "test-access-token";
 
-    // End-to-end check that from_client_credentials's get_token triggers a
-    // token exchange and the resulting access token can be used as a Bearer
-    // credential on subsequent API calls.
     #[tokio::test]
-    async fn from_client_credentials_refreshes_token_before_calling_api() {
+    async fn new_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
@@ -543,7 +496,7 @@ mod tests {
             .await;
 
         let base = Url::parse(&server.uri()).unwrap();
-        let store = ChromeStore::from_client_credentials(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "client-id".to_string(),
@@ -556,9 +509,9 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = store.get_token().await.unwrap();
+        let token = client.get_token().await.unwrap();
         assert_eq!(token, "fresh-token");
-        store.upload(&token, b"FAKE".to_vec()).await.unwrap();
+        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
@@ -579,8 +532,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
@@ -601,8 +554,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
@@ -629,8 +582,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
         assert!(matches!(resp, UploadState::InProgress));
     }
 
@@ -642,65 +595,23 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
-            WepubError::Api { status, body } => {
+            WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
                 assert!(body.contains("Unauthorized"));
             }
-            other => panic!("expected Api error, got {other:?}"),
+            other => panic!("expected HttpStatus error, got {other:?}"),
         }
-    }
-
-    #[tokio::test]
-    async fn fetch_status_gets_correct_url_with_auth() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
-            .and(header("authorization", "Bearer test-access-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "publishers/publisher-1/items/item-1",
-                "itemId": "item-1",
-                "lastAsyncUploadState": "SUCCEEDED",
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let store = store_for(&server);
-        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
-        assert!(matches!(state, Some(UploadState::Succeeded)));
-    }
-
-    // Per official docs, lastAsyncUploadState "is only set when there has been an
-    // async upload for the item in the past 24 hours". Absent field is distinct
-    // from the NOT_FOUND enum value ("an upload attempt was not found"), so we
-    // surface absence as None instead of conflating it with NotFound.
-    #[tokio::test]
-    async fn fetch_status_returns_none_when_last_async_upload_state_missing() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": "publishers/publisher-1/items/item-1",
-                "itemId": "item-1",
-            })))
-            .mount(&server)
-            .await;
-
-        let store = store_for(&server);
-        let state = store.fetch_status(TEST_TOKEN).await.unwrap();
-        assert!(state.is_none());
     }
 
     #[tokio::test]
     async fn wait_until_uploaded_returns_immediately_when_initial_is_succeeded() {
         let server = MockServer::start().await;
-        // Caller already knows the upload succeeded, so wait must not call
-        // fetchStatus at all.
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "lastAsyncUploadState": "SUCCEEDED",
@@ -709,8 +620,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let state = store
+        let client = client_for(&server);
+        let state = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &fast_poll())
             .await
             .unwrap();
@@ -720,33 +631,32 @@ mod tests {
     #[tokio::test]
     async fn wait_until_uploaded_errors_immediately_when_initial_is_failed() {
         let server = MockServer::start().await;
-        // FAILED is terminal, so no fetchStatus call should be made.
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &fast_poll())
             .await
             .unwrap_err();
         match err {
-            WepubError::Upload { item_id, body } => {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The upload failed.");
+                assert_eq!(reason, "upload failed");
             }
-            other => panic!("expected WepubError::Upload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn wait_until_uploaded_polls_until_succeeded() {
         let server = MockServer::start().await;
-        // Initial state is IN_PROGRESS, so wait must sleep then call
-        // fetchStatus, which on this mock returns SUCCEEDED.
         Mock::given(method("GET"))
+            .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
+            .and(header("authorization", "Bearer test-access-token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "lastAsyncUploadState": "SUCCEEDED",
             })))
@@ -754,17 +664,14 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let state = store
+        let client = client_for(&server);
+        let state = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
     }
 
-    // The fetchStatus V2 response schema does not include any field for
-    // failure detail - only `lastAsyncUploadState`. So when state is FAILED,
-    // we surface the official enum description verbatim and stop there.
     #[tokio::test]
     async fn wait_until_uploaded_errors_when_polling_returns_failed() {
         let server = MockServer::start().await;
@@ -775,17 +682,66 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
         match err {
-            WepubError::Upload { item_id, body } => {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The upload failed.");
+                assert_eq!(reason, "upload failed");
             }
-            other => panic!("expected WepubError::Upload, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_until_uploaded_errors_when_polling_response_omits_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "name": "publishers/publisher-1/items/item-1",
+                "itemId": "item-1",
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
+                assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload not found");
+            }
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_until_uploaded_errors_when_polling_returns_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "lastAsyncUploadState": "NOT_FOUND",
+            })))
+            .mount(&server)
+            .await;
+
+        let client = client_for(&server);
+        let err = client
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .await
+            .unwrap_err();
+        match err {
+            WepubError::ChromeUploadFailed { item_id, reason } => {
+                assert_eq!(item_id, "item-1");
+                assert_eq!(reason, "upload not found");
+            }
+            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
     }
 
@@ -799,8 +755,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
@@ -811,8 +767,6 @@ mod tests {
         );
     }
 
-    // With all fields at defaults the request body must contain none of the
-    // optional keys, so the server side falls back to API defaults.
     #[tokio::test]
     async fn submit_for_publish_default_sends_minimal_body() {
         let server = MockServer::start().await;
@@ -828,8 +782,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap();
@@ -867,10 +821,10 @@ mod tests {
             .await;
 
         let mut opts = default_options();
-        opts.publish_type = PublishType::Staged;
+        opts.publish_type = Some(PublishType::StagedPublish);
 
-        let store = store_for(&server);
-        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Staged));
     }
 
@@ -890,17 +844,14 @@ mod tests {
             .await;
 
         let mut opts = default_options();
-        opts.skip_review = true;
+        opts.skip_review = Some(true);
         opts.deploy_percentage = Some(50);
 
-        let store = store_for(&server);
-        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Published));
     }
 
-    // Terminal failure states must surface as WepubError::Publish even though
-    // the HTTP call itself returned 200. CLI users rely on the exit code to
-    // detect that the publish request was not accepted.
     #[tokio::test]
     async fn submit_for_publish_errors_on_rejected_state() {
         let server = MockServer::start().await;
@@ -913,17 +864,17 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap_err();
         match err {
-            WepubError::Publish { item_id, body } => {
+            WepubError::ChromePublishFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The publish was rejected.");
+                assert_eq!(reason, "rejected");
             }
-            other => panic!("expected WepubError::Publish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }
     }
 
@@ -939,23 +890,20 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap_err();
         match err {
-            WepubError::Publish { item_id, body } => {
+            WepubError::ChromePublishFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(body, "The publish was cancelled.");
+                assert_eq!(reason, "cancelled");
             }
-            other => panic!("expected WepubError::Publish, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
         }
     }
 
-    // Non-terminal ItemState wire values from the official docs must
-    // round-trip. ITEM_STATE_UNSPECIFIED is documented as "unused" so we drop
-    // it from the public enum and let serde fail-fast if it ever appears.
     #[tokio::test]
     async fn submit_for_publish_decodes_non_terminal_item_states() {
         let cases = [
@@ -975,8 +923,8 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let store = store_for(&server);
-            let resp = store
+            let client = client_for(&server);
+            let resp = client
                 .submit_for_publish(TEST_TOKEN, &default_options())
                 .await
                 .unwrap();
@@ -1021,15 +969,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
             .await
             .unwrap();
     }
 
-    // When upload returns SUCCEEDED immediately, no fetchStatus call should be
-    // made; we go straight from upload to the publish endpoint.
     #[tokio::test]
     async fn publish_skips_polling_when_upload_returns_succeeded() {
         let server = MockServer::start().await;
@@ -1063,8 +1009,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
             .await
             .unwrap();
@@ -1072,13 +1018,13 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store = ChromeStore::from_access_token(
+        let client = Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
         )
         .unwrap();
-        let Err(err) = store.with_root_url("not a url") else {
+        let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
@@ -1086,21 +1032,21 @@ mod tests {
 
     #[test]
     fn with_token_url_rejects_garbage() {
-        let store = ChromeStore::from_access_token(
+        let client = Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
         )
         .unwrap();
-        let Err(err) = store.with_token_url("not a url") else {
+        let Err(err) = client.with_token_url("not a url") else {
             panic!("expected with_token_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> ChromeStore {
+    fn client_for(server: &MockServer) -> Client {
         let base = server.uri();
-        ChromeStore::from_access_token(
+        Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "test-access-token".to_string(),
@@ -1112,17 +1058,17 @@ mod tests {
         .unwrap()
     }
 
-    fn fast_poll() -> ChromePollConfig {
-        ChromePollConfig {
+    fn fast_poll() -> PollConfig {
+        PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
         }
     }
 
-    fn default_options() -> ChromePublishOptions {
-        ChromePublishOptions {
-            publish_type: PublishType::Default,
-            skip_review: false,
+    fn default_options() -> PublishOptions {
+        PublishOptions {
+            publish_type: None,
+            skip_review: None,
             deploy_percentage: None,
             poll: fast_poll(),
         }

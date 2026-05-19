@@ -1,14 +1,11 @@
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Convenience alias for [`std::result::Result`] specialized to [`WepubError`].
 pub type Result<T> = std::result::Result<T, WepubError>;
 
 /// Error type returned by every fallible call in this crate.
-///
-/// Variants split errors by responsibility: the network layer, the wire
-/// protocol, the credentials, the per-store domain (validation / upload /
-/// publish), and a catch-all [`Internal`](WepubError::Internal) for
-/// "should-never-happen" states.
 #[derive(Debug, Error)]
 pub enum WepubError {
     /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
@@ -16,58 +13,33 @@ pub enum WepubError {
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
 
-    /// The remote returned a non-2xx HTTP status. `body` carries the
-    /// (possibly empty) response body verbatim.
-    #[error("API error (status {status}): {body}")]
-    Api {
-        /// HTTP status code from the failed response.
+    /// The remote returned a non-2xx HTTP status.
+    #[error("HTTP error (status {status}): {body}")]
+    HttpStatus {
+        /// HTTP status code.
         status: u16,
-        /// Response body received with the failure status.
+        /// Response body, as received (possibly empty).
         body: String,
     },
 
-    /// The OAuth / JWT credential exchange failed at the protocol level
-    /// (e.g. Google's token endpoint returned `invalid_grant`).
-    #[error("authentication failed: {0}")]
-    Auth(String),
-
-    /// Firefox AMO reported the upload as `valid: false`, or validation
-    /// polling exceeded its timeout. `body` is the validation result JSON
-    /// (pretty-printed) or a timeout description.
-    #[error("AMO validation failed for upload {uuid}: {body}")]
-    Validation {
-        /// AMO upload UUID returned by `POST /addons/upload/`.
-        uuid: String,
-        /// Pretty-printed AMO validation result, or a timeout description.
-        body: String,
+    /// A polling loop exceeded the `PollConfig::timeout` budget without
+    /// reaching a terminal state.
+    #[error("polling timed out after {elapsed:?}")]
+    PollTimeout {
+        /// Total elapsed time before giving up.
+        elapsed: Duration,
     },
 
-    /// Chrome Web Store reported `uploadState = FAILED` or `NOT_FOUND`, or
-    /// upload polling exceeded its timeout.
-    #[error("CWS upload failed for item {item_id}: {body}")]
-    Upload {
-        /// CWS item id whose upload failed.
-        item_id: String,
-        /// Failure description from the official enum docs, or a timeout
-        /// description.
-        body: String,
+    /// The server returned a response that violated the documented wire
+    /// shape: malformed JSON, missing required fields, missing required
+    /// headers, or an enum value the API documents as never appearing.
+    /// Against a conforming server this should not happen; reaching this
+    /// variant points at an API change or a server-side bug.
+    #[error("unexpected response: {detail}")]
+    UnexpectedResponse {
+        /// Short description of the wire-shape violation.
+        detail: String,
     },
-
-    /// The CWS publish endpoint returned 200 OK but the item state is a
-    /// terminal failure (`REJECTED` or `CANCELLED`). The HTTP call itself
-    /// succeeded, hence this is not [`Api`](WepubError::Api).
-    #[error("publish failed for item {item_id}: {body}")]
-    Publish {
-        /// CWS item id reported in the publish response.
-        item_id: String,
-        /// Short description of the terminal state.
-        body: String,
-    },
-
-    /// JSON deserialization of a response body failed. Indicates the wire
-    /// shape diverged from this crate's expectations.
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
 
     /// Local filesystem I/O failed (e.g. could not read the source zip).
     #[error("I/O error: {0}")]
@@ -78,10 +50,55 @@ pub enum WepubError {
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
 
-    /// "Should never happen" programmer-error states: URL join failure,
-    /// pre-epoch system clock, JWT encode failure, hard-coded MIME literal
-    /// rejected by `mime_str`. Reaching this variant indicates a bug in
-    /// `wepub-core` itself.
+    /// "Should never happen" programmer-error state. Reaching this
+    /// variant indicates a bug in `wepub-core` itself.
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// Chrome Web Store reported the asynchronous upload as failed.
+    #[error("chrome upload failed for item {item_id}: {reason}")]
+    ChromeUploadFailed {
+        /// Chrome Web Store item id.
+        item_id: String,
+        /// Short human-readable cause.
+        reason: String,
+    },
+
+    /// Chrome Web Store accepted the publish request but reported the
+    /// item as having reached a terminal failure state.
+    #[error("chrome publish failed for item {item_id}: {reason}")]
+    ChromePublishFailed {
+        /// Chrome Web Store item id.
+        item_id: String,
+        /// Short human-readable cause.
+        reason: String,
+    },
+
+    /// Firefox Add-ons reported the upload as having failed validation.
+    #[error("firefox validation failed for upload {uuid}: {validation}")]
+    FirefoxValidationFailed {
+        /// Firefox Add-ons upload UUID.
+        uuid: String,
+        /// Validation results blob, pretty-printed.
+        validation: String,
+    },
+
+    /// Edge Add-ons reported the upload operation as failed.
+    #[error("edge upload failed for product {product_id}: {operation}")]
+    EdgeUploadFailed {
+        /// Edge product id.
+        product_id: String,
+        /// Operation status response, pretty-printed.
+        operation: String,
+    },
+
+    /// Edge Add-ons reported the publish operation as failed (including
+    /// the documented "unexpected failure" response shape).
+    #[error("edge publish failed for product {product_id}: {operation}")]
+    EdgePublishFailed {
+        /// Edge product id.
+        product_id: String,
+        /// Operation status response, pretty-printed.
+        operation: String,
+    },
 }
