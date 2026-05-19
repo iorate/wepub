@@ -98,7 +98,7 @@ impl Client {
         item_id: String,
         access_token: String,
     ) -> Result<Self> {
-        Self::with_credentials(
+        Self::from_credentials(
             publisher_id,
             item_id,
             Credentials::AccessToken(access_token),
@@ -119,7 +119,7 @@ impl Client {
         client_secret: String,
         refresh_token: String,
     ) -> Result<Self> {
-        Self::with_credentials(
+        Self::from_credentials(
             publisher_id,
             item_id,
             Credentials::ClientCredentials {
@@ -374,7 +374,7 @@ impl Client {
         Ok(parsed)
     }
 
-    fn with_credentials(
+    fn from_credentials(
         publisher_id: String,
         item_id: String,
         credentials: Credentials,
