@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/iorate/wepub/compare/v0.3.0...v0.4.0)
+
+### ⛰️ Features
+
+
+- [**breaking**] Add Edge Add-ons support (with cross-cutting refactors) ([#18](https://github.com/iorate/wepub/pull/18)) - ([55ef595](https://github.com/iorate/wepub/commit/55ef595e989716dafafe270a528722a570d59381))
+
+
 ## [0.3.0](https://github.com/iorate/wepub/compare/v0.2.0...v0.3.0)
 
 ### ⛰️ Features
