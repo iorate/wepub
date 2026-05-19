@@ -1,15 +1,15 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{PublishOptions, PublishType, Store};
+use wepub_core::chrome::{Client, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
 pub async fn run(args: ChromeArgs) -> Result<()> {
-    let mut store = build_store(&args)?;
+    let mut client = build_client(&args)?;
     if let Some(url) = args.test_root_url {
-        store = store.with_root_url(url.as_str())?;
+        client = client.with_root_url(url.as_str())?;
     }
     if let Some(url) = args.test_token_url {
-        store = store.with_token_url(url.as_str())?;
+        client = client.with_token_url(url.as_str())?;
     }
 
     let zip = tokio::fs::read(&args.zip)
@@ -23,14 +23,14 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
         ..PublishOptions::new()
     };
 
-    store
+    client
         .publish(zip, options)
         .await
         .context("Chrome Web Store publish failed")?;
     Ok(())
 }
 
-fn build_store(args: &ChromeArgs) -> Result<Store> {
+fn build_client(args: &ChromeArgs) -> Result<Client> {
     let client_set = (
         args.client_id.as_deref(),
         args.client_secret.as_deref(),
@@ -54,7 +54,7 @@ fn build_store(args: &ChromeArgs) -> Result<Store> {
                     "--client-id, --client-secret and --refresh-token must all be provided together"
                 );
             };
-            Ok(Store::from_credentials(
+            Ok(Client::new(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
                 client_id.to_string(),
@@ -62,7 +62,7 @@ fn build_store(args: &ChromeArgs) -> Result<Store> {
                 refresh_token.to_string(),
             )?)
         }
-        (false, Some(access_token)) => Ok(Store::from_access_token(
+        (false, Some(access_token)) => Ok(Client::from_access_token(
             args.publisher_id.clone(),
             args.item_id.clone(),
             access_token.to_string(),

@@ -13,7 +13,7 @@ const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/"
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`Store::publish`] submits the new version.
+/// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Optional notes for the Edge Add-ons certification team
@@ -48,20 +48,21 @@ impl Default for PublishOptions {
 
 /// Client for the Edge Add-ons Update REST API (v1.1).
 ///
-/// The store holds the Partner Center credentials and a reusable HTTP
+/// The client holds the Partner Center credentials and a reusable HTTP
 /// client; it is cheap to construct and intended to live for the
 /// duration of a single publish run.
 // Debug intentionally omitted: holds the Partner Center API key.
-pub struct Store {
+#[allow(clippy::struct_field_names)] // `client_id` is the Partner Center auth term
+pub struct Client {
     product_id: String,
     client_id: String,
     api_key: String,
     root_url: Url,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
-impl Store {
-    /// Build a store bound to `product_id`, signing requests with the
+impl Client {
+    /// Build a client bound to `product_id`, signing requests with the
     /// API credentials issued from Partner Center (Client ID + API
     /// key).
     ///
@@ -73,17 +74,13 @@ impl Store {
     ///
     /// Fails if the underlying HTTP client cannot be built (e.g. rustls
     /// platform-verifier initialization fails).
-    pub fn from_credentials(
-        product_id: String,
-        client_id: String,
-        api_key: String,
-    ) -> Result<Self> {
+    pub fn new(product_id: String, client_id: String, api_key: String) -> Result<Self> {
         Ok(Self {
             product_id,
             client_id,
             api_key,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            client: build_client()?,
+            http: build_client()?,
         })
     }
 
@@ -113,15 +110,15 @@ impl Store {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::edge::{PublishOptions, Store};
+    /// use wepub_core::edge::{Client, PublishOptions};
     ///
-    /// let store = Store::from_credentials(
+    /// let client = Client::new(
     ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
     ///     "client-id".into(),
     ///     "api-key".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// store.publish(zip, PublishOptions::new()).await?;
+    /// client.publish(zip, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -150,7 +147,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id)
@@ -177,7 +174,7 @@ impl Store {
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
-                .client
+                .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.client_id)
@@ -216,7 +213,7 @@ impl Store {
 
         log_request(&method, &url);
         let mut request = self
-            .client
+            .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id);
@@ -243,7 +240,7 @@ impl Store {
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
-                .client
+                .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.client_id)
@@ -371,8 +368,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let op_id = store.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
+        let client = client_for(&server);
+        let op_id = client.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -384,8 +381,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let client = client_for(&server);
+        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -403,8 +400,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let client = client_for(&server);
+        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -437,8 +434,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .wait_until_uploaded("op-1", &fast_poll())
             .await
             .unwrap();
@@ -458,8 +455,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded("op-2", &fast_poll())
             .await
             .unwrap_err();
@@ -497,8 +494,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded("up-u", &fast_poll())
             .await
             .unwrap_err();
@@ -528,8 +525,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded("op-3", &fast_poll())
             .await
             .unwrap_err();
@@ -556,8 +553,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let op_id = store
+        let client = client_for(&server);
+        let op_id = client
             .submit_for_publish(Some("for reviewers"))
             .await
             .unwrap();
@@ -575,8 +572,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let op_id = store.submit_for_publish(None).await.unwrap();
+        let client = client_for(&server);
+        let op_id = client.submit_for_publish(None).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -613,8 +610,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .wait_until_published("pub-1", &fast_poll())
             .await
             .unwrap();
@@ -658,8 +655,8 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let store = store_for(&server);
-            let err = store
+            let client = client_for(&server);
+            let err = client
                 .wait_until_published("pub-x", &fast_poll())
                 .await
                 .unwrap_err();
@@ -694,8 +691,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_published("pub-u", &fast_poll())
             .await
             .unwrap_err();
@@ -761,19 +758,18 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
+        let client = client_for(&server);
         let options = PublishOptions {
             notes: Some("ship it".into()),
             poll: fast_poll(),
         };
-        store.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
+        client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
     }
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let store =
-            Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
-        let url = store.endpoint("v1/products/p/submissions").unwrap();
+        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
             "https://api.addons.microsoftedge.microsoft.com/v1/products/p/submissions"
@@ -782,11 +778,11 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store = Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
             .unwrap()
             .with_root_url("http://127.0.0.1:8000/")
             .unwrap();
-        let url = store.endpoint("v1/products/p/submissions").unwrap();
+        let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
             "http://127.0.0.1:8000/v1/products/p/submissions"
@@ -795,16 +791,15 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store =
-            Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
-        let Err(err) = store.with_root_url("not a url") else {
+        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> Store {
-        Store::from_credentials(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
+    fn client_for(server: &MockServer) -> Client {
+        Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()

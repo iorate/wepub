@@ -15,7 +15,7 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`Store::publish`] submits the new version.
+/// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Whether the version goes live immediately after review or stays in
@@ -71,21 +71,21 @@ pub enum PublishType {
 
 /// Client for the Chrome Web Store Publish API (v2).
 ///
-/// The store holds OAuth credentials and a reusable HTTP client; it is cheap
+/// The client holds OAuth credentials and a reusable HTTP client; it is cheap
 /// to construct and intended to live for the duration of a single publish
 /// run.
 // Debug intentionally omitted: holds OAuth credentials.
-pub struct Store {
+pub struct Client {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
     root_url: Url,
     token_url: Url,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
-impl Store {
-    /// Build a store from a pre-fetched OAuth access token.
+impl Client {
+    /// Build a client from a pre-fetched OAuth access token.
     ///
     /// Intended for service-account authentication. The token is used
     /// verbatim; this constructor never touches the OAuth token endpoint.
@@ -105,14 +105,14 @@ impl Store {
         )
     }
 
-    /// Build a store from a long-lived OAuth refresh token.
+    /// Build a client from a long-lived OAuth refresh token.
     ///
-    /// An access token is fetched lazily during [`publish`](Store::publish).
+    /// An access token is fetched lazily during [`publish`](Client::publish).
     ///
     /// # Errors
     ///
     /// Fails if the underlying HTTP client cannot be built.
-    pub fn from_credentials(
+    pub fn new(
         publisher_id: String,
         item_id: String,
         client_id: String,
@@ -147,9 +147,8 @@ impl Store {
 
     /// Override the Google OAuth token endpoint URL.
     ///
-    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for
-    /// tests; only consulted when the store was built with
-    /// [`from_credentials`](Store::from_credentials).
+    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for tests;
+    /// only consulted when the client was built with [`Client::new`].
     ///
     /// # Errors
     ///
@@ -173,9 +172,9 @@ impl Store {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{PublishOptions, PublishType, Store};
+    /// use wepub_core::chrome::{Client, PublishOptions, PublishType};
     ///
-    /// let store = Store::from_credentials(
+    /// let client = Client::new(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
     ///     "client-id".into(),
@@ -183,7 +182,7 @@ impl Store {
     ///     "refresh-token".into(),
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// store
+    /// client
     ///     .publish(
     ///         zip,
     ///         PublishOptions {
@@ -217,7 +216,7 @@ impl Store {
                 refresh_token,
             } => {
                 refresh_access_token(
-                    &self.client,
+                    &self.http,
                     &self.token_url,
                     client_id,
                     client_secret,
@@ -243,7 +242,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
@@ -283,7 +282,7 @@ impl Store {
                 let method = reqwest::Method::GET;
                 log_request(&method, &url);
                 let resp = self
-                    .client
+                    .http
                     .request(method, url.clone())
                     .bearer_auth(token)
                     .send()
@@ -345,7 +344,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .bearer_auth(token)
             .json(&body)
@@ -386,7 +385,7 @@ impl Store {
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
             token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
-            client: build_client()?,
+            http: build_client()?,
         })
     }
 }
@@ -471,7 +470,7 @@ mod tests {
     const TEST_TOKEN: &str = "test-access-token";
 
     #[tokio::test]
-    async fn from_credentials_refreshes_token_before_calling_api() {
+    async fn new_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
@@ -497,7 +496,7 @@ mod tests {
             .await;
 
         let base = Url::parse(&server.uri()).unwrap();
-        let store = Store::from_credentials(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "client-id".to_string(),
@@ -510,9 +509,9 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = store.get_token().await.unwrap();
+        let token = client.get_token().await.unwrap();
         assert_eq!(token, "fresh-token");
-        store.upload(&token, b"FAKE".to_vec()).await.unwrap();
+        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
@@ -533,8 +532,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
@@ -555,8 +554,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
@@ -583,8 +582,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
         assert!(matches!(resp, UploadState::InProgress));
     }
 
@@ -596,8 +595,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
@@ -621,8 +620,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let state = store
+        let client = client_for(&server);
+        let state = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &fast_poll())
             .await
             .unwrap();
@@ -638,8 +637,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &fast_poll())
             .await
             .unwrap_err();
@@ -665,8 +664,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let state = store
+        let client = client_for(&server);
+        let state = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap();
@@ -683,8 +682,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
@@ -708,8 +707,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
@@ -732,8 +731,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
@@ -756,8 +755,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
             .await
             .unwrap_err();
@@ -783,8 +782,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap();
@@ -824,8 +823,8 @@ mod tests {
         let mut opts = default_options();
         opts.publish_type = Some(PublishType::StagedPublish);
 
-        let store = store_for(&server);
-        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Staged));
     }
 
@@ -848,8 +847,8 @@ mod tests {
         opts.skip_review = Some(true);
         opts.deploy_percentage = Some(50);
 
-        let store = store_for(&server);
-        let resp = store.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let client = client_for(&server);
+        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
         assert!(matches!(resp.state, ItemState::Published));
     }
 
@@ -865,8 +864,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap_err();
@@ -891,8 +890,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .submit_for_publish(TEST_TOKEN, &default_options())
             .await
             .unwrap_err();
@@ -924,8 +923,8 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let store = store_for(&server);
-            let resp = store
+            let client = client_for(&server);
+            let resp = client
                 .submit_for_publish(TEST_TOKEN, &default_options())
                 .await
                 .unwrap();
@@ -970,8 +969,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
             .await
             .unwrap();
@@ -1010,8 +1009,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        store
+        let client = client_for(&server);
+        client
             .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
             .await
             .unwrap();
@@ -1019,13 +1018,13 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store = Store::from_access_token(
+        let client = Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
         )
         .unwrap();
-        let Err(err) = store.with_root_url("not a url") else {
+        let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
@@ -1033,21 +1032,21 @@ mod tests {
 
     #[test]
     fn with_token_url_rejects_garbage() {
-        let store = Store::from_access_token(
+        let client = Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "token".to_string(),
         )
         .unwrap();
-        let Err(err) = store.with_token_url("not a url") else {
+        let Err(err) = client.with_token_url("not a url") else {
             panic!("expected with_token_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> Store {
+    fn client_for(server: &MockServer) -> Client {
         let base = server.uri();
-        Store::from_access_token(
+        Client::from_access_token(
             "publisher-1".to_string(),
             "item-1".to_string(),
             "test-access-token".to_string(),

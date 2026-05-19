@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use wepub_core::edge::{PublishOptions, Store};
+use wepub_core::edge::{Client, PublishOptions};
 
 use crate::cli::EdgeArgs;
 use crate::commands::common::read_text_input;
@@ -13,9 +13,9 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
 
     let notes = load_notes(args.notes, args.notes_file).await?;
 
-    let mut store = Store::from_credentials(args.product_id, args.client_id, args.api_key)?;
+    let mut client = Client::new(args.product_id, args.client_id, args.api_key)?;
     if let Some(url) = args.test_root_url {
-        store = store.with_root_url(url.as_str())?;
+        client = client.with_root_url(url.as_str())?;
     }
 
     let options = PublishOptions {
@@ -23,7 +23,7 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
         ..PublishOptions::new()
     };
 
-    store
+    client
         .publish(zip, options)
         .await
         .context("Edge Add-ons publish failed")?;

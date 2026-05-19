@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use wepub_core::firefox::{Application, Channel, Compatibility, PublishOptions, Store};
+use wepub_core::firefox::{Application, Channel, Client, Compatibility, PublishOptions};
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
@@ -34,9 +34,9 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         None => None,
     };
 
-    let mut store = Store::from_credentials(args.addon_id, args.api_key, args.api_secret)?;
+    let mut client = Client::new(args.addon_id, args.api_key, args.api_secret)?;
     if let Some(root_url) = args.test_root_url {
-        store = store.with_root_url(root_url.as_str())?;
+        client = client.with_root_url(root_url.as_str())?;
     }
 
     let options = PublishOptions {
@@ -47,7 +47,7 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         ..PublishOptions::new(args.channel.into())
     };
 
-    store
+    client
         .publish(zip, options)
         .await
         .context("Firefox Add-ons publish failed")?;

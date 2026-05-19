@@ -18,7 +18,7 @@ const UPLOAD_FILE_NAME: &str = "addon.zip";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Options that shape how [`Store::publish`] creates the new version.
+/// Options that shape how [`Client::publish`] creates the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
     /// Distribution channel for the new version.
@@ -143,20 +143,20 @@ pub struct VersionRange {
 
 /// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
-/// The store holds the JWT credential pair and a reusable HTTP client; it
+/// The client holds the JWT credential pair and a reusable HTTP client; it
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
 // Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
-pub struct Store {
+pub struct Client {
     addon_id: String,
     issuer: String,
     secret: String,
     root_url: Url,
-    client: reqwest::Client,
+    http: reqwest::Client,
 }
 
-impl Store {
-    /// Build a store bound to `addon_id`, signing requests with the supplied
+impl Client {
+    /// Build a client bound to `addon_id`, signing requests with the supplied
     /// HS256 JWT credential pair (issuer + secret).
     ///
     /// Get the credentials from
@@ -166,17 +166,13 @@ impl Store {
     ///
     /// Fails if the underlying HTTP client cannot be built (e.g. rustls
     /// platform-verifier initialization fails).
-    pub fn from_credentials(
-        addon_id: String,
-        jwt_issuer: String,
-        jwt_secret: String,
-    ) -> Result<Self> {
+    pub fn new(addon_id: String, jwt_issuer: String, jwt_secret: String) -> Result<Self> {
         Ok(Self {
             addon_id,
             issuer: jwt_issuer,
             secret: jwt_secret,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            client: build_client()?,
+            http: build_client()?,
         })
     }
 
@@ -206,15 +202,15 @@ impl Store {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{Channel, PublishOptions, Store};
+    /// use wepub_core::firefox::{Channel, Client, PublishOptions};
     ///
-    /// let store = Store::from_credentials(
+    /// let client = Client::new(
     ///     "myaddon@example.com".into(),
     ///     "user:12345:6789".into(),
     ///     "jwt-secret".into(),
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// store.publish(zip, PublishOptions::new(Channel::Listed)).await?;
+    /// client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -267,7 +263,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
@@ -295,7 +291,7 @@ impl Store {
             let auth = self.auth_header()?;
             log_request(&method, &url);
             let resp = self
-                .client
+                .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, auth)
                 .send()
@@ -353,7 +349,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .json(&body)
@@ -390,7 +386,7 @@ impl Store {
 
         log_request(&method, &url);
         let resp = self
-            .client
+            .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, auth)
             .multipart(form)
@@ -455,8 +451,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .upload(b"fake-zip".to_vec(), Channel::Listed)
             .await
             .unwrap();
@@ -486,8 +482,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .wait_until_validated("uuid-1", &fast_poll())
             .await
             .unwrap();
@@ -516,8 +512,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_validated("uuid-2", &fast_poll())
             .await
             .unwrap_err();
@@ -542,8 +538,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let err = store
+        let client = client_for(&server);
+        let err = client
             .wait_until_validated("uuid-3", &fast_poll())
             .await
             .unwrap_err();
@@ -565,8 +561,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .create_version("uuid-x", None, None, None)
             .await
             .unwrap();
@@ -585,8 +581,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
-        let resp = store
+        let client = client_for(&server);
+        let resp = client
             .patch_version_source(4242, b"source-zip".to_vec())
             .await
             .unwrap();
@@ -629,13 +625,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
+        let client = client_for(&server);
         let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
             ..PublishOptions::new(Channel::Listed)
         };
-        store.publish(b"zip".to_vec(), options).await.unwrap();
+        client.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]
@@ -673,12 +669,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
+        let client = client_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
             ..PublishOptions::new(Channel::Listed)
         };
-        store.publish(b"zip".to_vec(), options).await.unwrap();
+        client.publish(b"zip".to_vec(), options).await.unwrap();
     }
 
     #[tokio::test]
@@ -691,12 +687,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let store = store_for(&server);
+        let client = client_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
             ..PublishOptions::new(Channel::Listed)
         };
-        let err = store.publish(b"zip".to_vec(), options).await.unwrap_err();
+        let err = client.publish(b"zip".to_vec(), options).await.unwrap_err();
 
         match err {
             WepubError::HttpStatus { status, body } => {
@@ -779,9 +775,8 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let store =
-            Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
-        let url = store.endpoint("api/v5/addons/upload/").unwrap();
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
             "https://addons.mozilla.org/api/v5/addons/upload/"
@@ -790,26 +785,25 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let store = Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
             .with_root_url("http://127.0.0.1:8000/")
             .unwrap();
-        let url = store.endpoint("api/v5/addons/upload/").unwrap();
+        let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let store =
-            Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
-        let Err(err) = store.with_root_url("not a url") else {
+        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
         assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
     }
 
-    fn store_for(server: &MockServer) -> Store {
-        Store::from_credentials("test-addon".into(), "issuer".into(), "secret".into())
+    fn client_for(server: &MockServer) -> Client {
+        Client::new("test-addon".into(), "issuer".into(), "secret".into())
             .unwrap()
             .with_root_url(&server.uri())
             .unwrap()
