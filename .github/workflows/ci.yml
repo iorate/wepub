@@ -15,36 +15,34 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           toolchain: stable
           components: rustfmt, clippy
-
-      - name: Restore cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Check formatting
         run: cargo fmt -- --check
 
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets
 
       - name: Test
         run: cargo test
 
-  ci-msrv:
+  msrv:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: "1.88.0"
+      - name: Read MSRV
+        id: read-msrv
+        uses: actions-rust-lang/msrv@b95a3a81b0efee6438b858b41a84aff627e01351 # v0.1.1
 
-      - name: Restore cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: ${{ steps.read-msrv.outputs.msrv }}
 
       - name: Check
         run: cargo check
