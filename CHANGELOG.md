@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1](https://github.com/iorate/wepub/compare/v0.4.0...v0.4.1)
+
+### 🐛 Bug Fixes
+
+
+- *(edge)* Submit publish notes as plain text ([#21](https://github.com/iorate/wepub/pull/21)) - ([534922d](https://github.com/iorate/wepub/commit/534922d69d03f406d0bcb8563bfa2c2f29565c8d))
+
+### 📚 Documentation
+
+
+- Remove redundant Errors sections from rustdoc ([#23](https://github.com/iorate/wepub/pull/23)) - ([496840a](https://github.com/iorate/wepub/commit/496840a76b78e89f96c2901a81c8407deced37d5))
+
+
 ## [0.4.0](https://github.com/iorate/wepub/compare/v0.3.0...v0.4.0)
 
 ### ⛰️ Features
