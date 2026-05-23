@@ -218,12 +218,10 @@ impl Client {
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id);
         if let Some(notes) = notes {
-            // `notes` encoding is a best guess: Microsoft's docs and samples
-            // disagree between JSON, form, and plain text, and we haven't
-            // verified against the live Edge Add-ons API. Form-urlencoded
-            // matches the on-the-wire shape of the official PowerShell sample
-            // and lets `reqwest::form()` handle escaping.
-            request = request.form(&[("notes", notes)]);
+            // Docs disagree (reference page says plain text, using page says
+            // JSON); wdzeng/edge-addon reports plain text "worked":
+            // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
+            request = request.body(notes.to_string());
         }
 
         let resp = request.send().await?;
@@ -348,7 +346,7 @@ struct OperationResponse {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wiremock::matchers::{body_string, body_string_contains, header, method, path};
+    use wiremock::matchers::{body_string, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const PRODUCT_ID: &str = "11111111-2222-3333-4444-555555555555";
@@ -542,7 +540,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_posts_notes_form_urlencoded() {
+    async fn submit_for_publish_posts_notes_as_plain_text_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(format!("/v1/products/{PRODUCT_ID}/submissions")))
@@ -551,8 +549,7 @@ mod tests {
                 format!("ApiKey {API_KEY}").as_str(),
             ))
             .and(header("x-clientid", CLIENT_ID))
-            .and(header("content-type", "application/x-www-form-urlencoded"))
-            .and(body_string("notes=for+reviewers"))
+            .and(body_string("for reviewers"))
             .respond_with(ResponseTemplate::new(202).insert_header("Location", "publish-op-1"))
             .expect(1)
             .mount(&server)
@@ -564,6 +561,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
+
+        let received = server.received_requests().await.unwrap();
+        let req = &received[0];
+        assert!(
+            req.headers.get("content-type").is_none(),
+            "Content-Type must not be set; got {:?}",
+            req.headers.get("content-type"),
+        );
     }
 
     #[tokio::test]
@@ -744,7 +749,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path(format!("/v1/products/{PRODUCT_ID}/submissions")))
-            .and(body_string_contains("notes=ship+it"))
+            .and(body_string("ship it"))
             .respond_with(ResponseTemplate::new(202).insert_header("Location", "pub-op"))
             .expect(1)
             .mount(&server)
