@@ -89,10 +89,6 @@ impl Client {
     ///
     /// Intended for service-account authentication. The token is used
     /// verbatim; this constructor never touches the OAuth token endpoint.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the underlying HTTP client cannot be built.
     pub fn from_access_token(
         publisher_id: String,
         item_id: String,
@@ -108,10 +104,6 @@ impl Client {
     /// Build a client from a long-lived OAuth refresh token.
     ///
     /// An access token is fetched lazily during [`publish`](Client::publish).
-    ///
-    /// # Errors
-    ///
-    /// Fails if the underlying HTTP client cannot be built.
     pub fn new(
         publisher_id: String,
         item_id: String,
@@ -135,11 +127,6 @@ impl Client {
     /// Defaults to `https://chromewebstore.googleapis.com/`. Intended for
     /// tests that point the client at a mock server. A missing trailing
     /// slash is added automatically so that relative paths join correctly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
-    /// URL.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
@@ -149,11 +136,6 @@ impl Client {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`. Intended for tests;
     /// only consulted when the client was built with [`Client::new`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WepubError::InvalidUrl`] if `token_url` does not parse as a
-    /// URL.
     pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
         self.token_url = Url::parse(token_url)
             .map_err(|e| WepubError::InvalidUrl(format!("{token_url:?}: {e}")))?;

@@ -160,11 +160,6 @@ impl Client {
     ///
     /// Get the credentials from
     /// <https://addons.mozilla.org/developers/addon/api/key/>.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
-    /// platform-verifier initialization fails).
     pub fn new(addon_id: String, jwt_issuer: String, jwt_secret: String) -> Result<Self> {
         Ok(Self {
             addon_id,
@@ -181,11 +176,6 @@ impl Client {
     /// or when pointing at a local `mozilla/addons-server` instance. A
     /// missing trailing slash is added automatically so that relative paths
     /// join correctly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse as a
-    /// URL.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
