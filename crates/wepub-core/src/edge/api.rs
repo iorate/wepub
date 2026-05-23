@@ -69,11 +69,6 @@ impl Client {
     /// Obtain the credentials from
     /// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
     /// under **Microsoft Edge** &gt; **Publish API**.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the underlying HTTP client cannot be built (e.g. rustls
-    /// platform-verifier initialization fails).
     pub fn new(product_id: String, client_id: String, api_key: String) -> Result<Self> {
         Ok(Self {
             product_id,
@@ -90,11 +85,6 @@ impl Client {
     /// Intended for tests that point the client at a mock server. A
     /// missing trailing slash is added automatically so that relative
     /// paths join correctly.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WepubError::InvalidUrl`] if `root_url` does not parse
-    /// as a URL.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
