@@ -120,13 +120,22 @@ pub struct FirefoxArgs {
     #[arg(long, value_delimiter = ',')]
     pub compatibility: Vec<FirefoxApplicationArg>,
 
-    /// Release notes (en-US). Mutually exclusive with --release-notes-file.
+    /// Release notes. Mutually exclusive with --release-notes-file.
     #[arg(long)]
     pub release_notes: Option<String>,
 
-    /// Path to a file containing en-US release notes. Use "-" for stdin.
+    /// Path to a file containing release notes. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
     pub release_notes_file: Option<PathBuf>,
+
+    /// Firefox Add-ons locale code for the release notes (e.g. "en-US", "ja").
+    #[arg(
+        long,
+        value_name = "LANG",
+        default_value = "en-US",
+        requires = "release_notes_input"
+    )]
+    pub release_notes_lang: String,
 
     /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
     #[arg(long)]
