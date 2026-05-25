@@ -7,8 +7,6 @@ use wepub_core::firefox::{Application, Channel, Client, Compatibility, PublishOp
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
 
-const RELEASE_NOTES_LOCALE: &str = "en-US";
-
 pub async fn run(args: FirefoxArgs) -> Result<()> {
     if is_stdin_path(args.release_notes_file.as_deref())
         && is_stdin_path(args.approval_notes_file.as_deref())
@@ -67,7 +65,7 @@ async fn load_release_notes(args: &FirefoxArgs) -> Result<Option<HashMap<String,
             })?),
             _ => None,
         };
-    Ok(text.map(|t| HashMap::from([(RELEASE_NOTES_LOCALE.to_string(), t)])))
+    Ok(text.map(|t| HashMap::from([(args.release_notes_lang.clone(), t)])))
 }
 
 async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
