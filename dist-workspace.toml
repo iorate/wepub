@@ -4,7 +4,7 @@ members = ["cargo:."]
 # Config for 'dist'
 [dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.31.0"
+cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
@@ -21,6 +21,12 @@ install-path = "CARGO_HOME"
 publish-jobs = ["homebrew", "npm"]
 # Whether to install an updater program
 install-updater = false
-# Allow CI files (release.yml) to differ from dist's generated output,
-# so we can pin actions to commit SHAs with pinact.
-allow-dirty = ["ci"]
+# Don't run the release workflow on pull requests
+pr-run-mode = "skip"
+
+# Pin GitHub Actions used by the generated release.yml to specific commit SHAs.
+[dist.github-action-commits]
+"actions/checkout" = "de0fac2e4500dabe0009e67214ff5f5447ce83dd" # v6.0.2
+"actions/upload-artifact" = "b7c566a772e6b6bfb58ed0dc250532a479d7789f" # v6.0.0
+"actions/download-artifact" = "37930b1c2abaa49bbe596cd826c3c89aef350131" # v7.0.0
+"actions/setup-node" = "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e" # v6.4.0
