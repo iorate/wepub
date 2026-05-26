@@ -16,8 +16,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
-    /// Optional notes for the Edge Add-ons certification team
-    /// (reviewer-facing).
+    /// Notes for certification.
     pub notes: Option<String>,
 
     /// Polling cadence and overall timeout used while waiting for the
