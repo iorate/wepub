@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Chrome Web Store, Firefox Add-ons and Edge Add-ons are supported.
+Chrome Web Store, Firefox Add-ons and Edge Add-ons are supported. Only existing items can be updated; the initial submission of a new extension still has to go through each store's web UI or developer dashboard.
 
 ## Install
 
@@ -16,20 +16,43 @@ cargo install wepub
 
 Requires Rust 1.88+.
 
+## Quick start
+
+### Chrome Web Store
+
+```sh
+wepub chrome ./my-extension.zip \
+  --publisher-id  "..." \
+  --item-id       "..." \
+  --client-id     "..." \
+  --client-secret "..." \
+  --refresh-token "..."
+```
+
+### Firefox Add-ons
+
+```sh
+wepub firefox ./my-addon.zip \
+  --addon-id   "..." \
+  --api-key    "..." \
+  --api-secret "..." \
+  --channel    listed
+```
+
+### Edge Add-ons
+
+```sh
+wepub edge ./my-extension.zip \
+  --product-id "..." \
+  --client-id  "..." \
+  --api-key    "..."
+```
+
 ## Usage
 
 ### Chrome Web Store
 
-Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token, then:
-
-```sh
-wepub chrome ./my-extension.zip \
-  --publisher-id  "12345678-90ab-cdef-1234-567890abcdef" \
-  --item-id       "abcdefghijklmnopabcdefghijklmnop" \
-  --client-id     "...apps.googleusercontent.com" \
-  --client-secret "..." \
-  --refresh-token "1//0..."
-```
+Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token.
 
 Alternatively, pass a pre-fetched OAuth access token via `--access-token`. Use this for [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts); see Google's docs for how to obtain the token. The two authentication modes are mutually exclusive.
 
@@ -44,21 +67,17 @@ Credentials and IDs can also be supplied via environment variables:
 | `--refresh-token`  | `WEPUB_CHROME_REFRESH_TOKEN`   |
 | `--access-token`   | `WEPUB_CHROME_ACCESS_TOKEN`    |
 
-Run `wepub chrome --help` for the full list of flags (publish type, deploy percentage, skip review, etc.).
+Other flags:
 
-**Note:** Only existing items can be updated. New items must still be created through the Chrome Web Store Developer Dashboard.
+| Flag                  | Description                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--publish-type`      | Whether to publish on approval (`default`) or stage for later publishing (`staged`).                   |
+| `--deploy-percentage` | Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.                        |
+| `--skip-review`       | Attempt to skip item review (`true` or `false`).                                                       |
 
 ### Firefox Add-ons
 
-Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>, then:
-
-```sh
-wepub firefox ./my-addon.zip \
-  --addon-id   "myaddon@example.com" \
-  --api-key    "user:1234567:89" \
-  --api-secret "abcdef..." \
-  --channel    listed
-```
+Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>.
 
 Credentials can also be supplied via environment variables:
 
@@ -68,20 +87,22 @@ Credentials can also be supplied via environment variables:
 | `--api-key`       | `WEPUB_FIREFOX_API_KEY`        |
 | `--api-secret`    | `WEPUB_FIREFOX_API_SECRET`     |
 
-Run `wepub firefox --help` for the full list of flags (compatibility, release notes, approval notes, source archive, etc.).
+Other flags:
 
-**Note:** Only existing add-ons can be updated. The very first version of an add-on must still be uploaded through the Firefox Add-ons web UI.
+| Flag                    | Description                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `--channel`             | **Required.** Version channel (`listed` or `unlisted`). Determines visibility on the site.        |
+| `--compatibility`       | Compatible applications, comma-separated (`firefox`, `android`).                                  |
+| `--approval-notes`      | Information for Mozilla reviewers. Mutually exclusive with `--approval-notes-file`.               |
+| `--approval-notes-file` | Path to a file containing approval notes. Use `-` for stdin.                                      |
+| `--release-notes`       | Release notes. Mutually exclusive with `--release-notes-file`.                                    |
+| `--release-notes-file`  | Path to a file containing release notes. Use `-` for stdin.                                       |
+| `--release-notes-lang`  | Locale code for the release notes (e.g. `en-US`, `ja`). Defaults to `en-US`.                      |
+| `--source`              | Path to a source archive to attach to the version.                                                |
 
 ### Edge Add-ons
 
-Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key, then:
-
-```sh
-wepub edge ./my-extension.zip \
-  --product-id "12345678-90ab-cdef-1234-567890abcdef" \
-  --client-id  "..." \
-  --api-key    "..."
-```
+Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key.
 
 The product ID is the GUID shown on the **Extension overview** page in Partner Center.
 
@@ -93,9 +114,12 @@ Credentials and IDs can also be supplied via environment variables:
 | `--client-id`     | `WEPUB_EDGE_CLIENT_ID`      |
 | `--api-key`       | `WEPUB_EDGE_API_KEY`        |
 
-Run `wepub edge --help` for the full list of flags (notes for the certification team, etc.).
+Other flags:
 
-**Note:** Only existing products can be updated. The very first version of a product must still be created and published through Partner Center.
+| Flag           | Description                                                                  |
+| -------------- | ---------------------------------------------------------------------------- |
+| `--notes`      | Notes for certification. Mutually exclusive with `--notes-file`.             |
+| `--notes-file` | Path to a file containing notes for certification. Use `-` for stdin.        |
 
 ### `.env` file
 
