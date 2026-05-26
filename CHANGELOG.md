@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.2](https://github.com/iorate/wepub/compare/v0.4.1...v0.4.2)
+
+### ⛰️ Features
+
+
+- *(firefox)* Allow choosing release notes locale ([#25](https://github.com/iorate/wepub/pull/25)) - ([bcaea47](https://github.com/iorate/wepub/commit/bcaea4793fd37e5081efc0cd8c77d2a82402f11a))
+
+### 📚 Documentation
+
+
+- Refresh readme and tighten cli flag descriptions ([#29](https://github.com/iorate/wepub/pull/29)) - ([4248272](https://github.com/iorate/wepub/commit/424827209ab650040d8c44adc7f1900ee19dfdbf))
+
+
 ## [0.4.1](https://github.com/iorate/wepub/compare/v0.4.0...v0.4.1)
 
 ### 🐛 Bug Fixes
