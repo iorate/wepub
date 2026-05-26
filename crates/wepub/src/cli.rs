@@ -62,17 +62,17 @@ pub struct ChromeArgs {
     #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
     pub access_token: Option<String>,
 
-    /// Publish type.
+    /// Whether to publish on approval or stage for later publishing.
     #[arg(long, value_enum)]
     pub publish_type: Option<ChromePublishTypeArg>,
-
-    /// Bypass the standard review queue (only honoured for changes Google deems eligible).
-    #[arg(long)]
-    pub skip_review: Option<bool>,
 
     /// Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
     pub deploy_percentage: Option<u8>,
+
+    /// Attempt to skip item review.
+    #[arg(long)]
+    pub skip_review: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -109,7 +109,7 @@ pub struct FirefoxArgs {
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
-    /// Distribution channel.
+    /// Version channel. Determines visibility on the site.
     #[arg(long, value_enum)]
     pub channel: FirefoxChannelArg,
 
@@ -117,7 +117,7 @@ pub struct FirefoxArgs {
     #[arg(long, value_delimiter = ',')]
     pub compatibility: Vec<FirefoxApplicationArg>,
 
-    /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
+    /// Information for Mozilla reviewers. Mutually exclusive with --approval-notes-file.
     #[arg(long)]
     pub approval_notes: Option<String>,
 
@@ -133,7 +133,7 @@ pub struct FirefoxArgs {
     #[arg(long, value_name = "PATH")]
     pub release_notes_file: Option<PathBuf>,
 
-    /// Firefox Add-ons locale code for the release notes (e.g. "en-US", "ja").
+    /// Locale code for the release notes (e.g. "en-US", "ja").
     #[arg(
         long,
         value_name = "LANG",
@@ -185,11 +185,11 @@ pub struct EdgeArgs {
     #[arg(long, env = "WEPUB_EDGE_API_KEY")]
     pub api_key: String,
 
-    /// Notes for the Edge Add-ons certification team. Mutually exclusive with --notes-file.
+    /// Notes for certification. Mutually exclusive with --notes-file.
     #[arg(long)]
     pub notes: Option<String>,
 
-    /// Path to a file containing certification notes. Use "-" for stdin.
+    /// Path to a file containing notes for certification. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
     pub notes_file: Option<PathBuf>,
 }
