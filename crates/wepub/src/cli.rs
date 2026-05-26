@@ -101,10 +101,6 @@ pub struct FirefoxArgs {
     #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
     pub addon_id: String,
 
-    /// Distribution channel.
-    #[arg(long, value_enum)]
-    pub channel: FirefoxChannelArg,
-
     /// Firefox Add-ons API key (JWT issuer).
     #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
     pub api_key: String,
@@ -113,12 +109,21 @@ pub struct FirefoxArgs {
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
-    #[arg(long, hide = true)]
-    pub internal_root_url: Option<Url>,
+    /// Distribution channel.
+    #[arg(long, value_enum)]
+    pub channel: FirefoxChannelArg,
 
     /// Compatible applications, comma-separated (e.g. "firefox,android").
     #[arg(long, value_delimiter = ',')]
     pub compatibility: Vec<FirefoxApplicationArg>,
+
+    /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
+    #[arg(long)]
+    pub approval_notes: Option<String>,
+
+    /// Path to a file containing approval notes. Use "-" for stdin.
+    #[arg(long, value_name = "PATH")]
+    pub approval_notes_file: Option<PathBuf>,
 
     /// Release notes. Mutually exclusive with --release-notes-file.
     #[arg(long)]
@@ -137,17 +142,12 @@ pub struct FirefoxArgs {
     )]
     pub release_notes_lang: String,
 
-    /// Approval notes for Firefox Add-ons reviewers. Mutually exclusive with --approval-notes-file.
-    #[arg(long)]
-    pub approval_notes: Option<String>,
-
-    /// Path to a file containing approval notes. Use "-" for stdin.
-    #[arg(long, value_name = "PATH")]
-    pub approval_notes_file: Option<PathBuf>,
-
     /// Path to a source archive to attach to the version.
     #[arg(long, value_name = "PATH")]
     pub source: Option<PathBuf>,
+
+    #[arg(long, hide = true)]
+    pub internal_root_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
