@@ -1,6 +1,6 @@
 [package]
 name = "wepub"
-version = "0.4.1"
+version = "0.4.2"
 description = "CLI to publish browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons"
 readme = "../../README.md"
 keywords = ["browser-extension", "chrome", "firefox", "edge", "cli"]
@@ -20,7 +20,7 @@ tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "fs", "io
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
-wepub-core = { version = "0.4.1", path = "../wepub-core" }
+wepub-core = { version = "0.4.2", path = "../wepub-core" }
 
 [lints]
 workspace = true
