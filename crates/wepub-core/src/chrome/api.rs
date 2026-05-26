@@ -18,11 +18,11 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
-    /// Whether the version goes live immediately after review or stays in
-    /// staging for a manual rollout from the Developer Dashboard.
+    /// Whether to publish immediately on approval, or stage for later
+    /// publishing.
     pub publish_type: Option<PublishType>,
 
-    /// Bypass the standard review queue.
+    /// Attempt to skip item review.
     pub skip_review: Option<bool>,
 
     /// Initial percentage of users to roll the new version out to.
@@ -57,15 +57,14 @@ impl Default for PublishOptions {
     }
 }
 
-/// Whether a successfully reviewed version goes live immediately or waits in
-/// staging for a manual rollout.
+/// Whether a new version goes live immediately on approval or is staged for
+/// later publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PublishType {
-    /// Publish immediately after review.
+    /// Publish immediately on approval.
     DefaultPublish,
-    /// Hold the reviewed version in staging until a Developer Dashboard
-    /// operator triggers the rollout.
+    /// Stage for publishing in the future.
     StagedPublish,
 }
 

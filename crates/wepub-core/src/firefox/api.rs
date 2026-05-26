@@ -20,19 +20,17 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] creates the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
-    /// Distribution channel for the new version.
+    /// Version channel for the new version. Determines visibility on the
+    /// site.
     pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
-    /// Release notes keyed by Firefox Add-ons locale code (e.g. `"en-US"`).
+    /// Release notes keyed by locale code (e.g. `"en-US"`).
     pub release_notes: Option<HashMap<String, String>>,
-    /// Optional message to Firefox Add-ons reviewers, typically containing
-    /// build reproduction steps.
+    /// Information for Mozilla reviewers.
     pub approval_notes: Option<String>,
-    /// Optional source archive to attach to the version. Firefox Add-ons
-    /// requires this when reviewers cannot reproduce the bundled artefact
-    /// from the listing.
+    /// Source archive to attach to the version.
     pub source: Option<Vec<u8>>,
     /// Polling cadence and overall timeout used while waiting for Firefox
     /// Add-ons to finish validating the upload.
@@ -59,7 +57,7 @@ impl PublishOptions {
     }
 }
 
-/// Distribution channel for a Firefox Add-ons version.
+/// Version channel for a Firefox Add-ons version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
     /// Listed on addons.mozilla.org. Goes through public review.
