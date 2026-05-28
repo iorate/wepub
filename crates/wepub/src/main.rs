@@ -11,7 +11,11 @@ use crate::cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let _ = dotenvy::dotenv();
+    if let Err(err) = dotenvy::dotenv()
+        && !err.not_found()
+    {
+        eprintln!("warning: failed to load .env: {err}");
+    }
 
     let cli = Cli::parse();
     init_tracing(cli.verbose, cli.quiet);
