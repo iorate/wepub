@@ -173,7 +173,7 @@ impl Client {
     /// # }
     /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let token = self.get_token().await?;
+        let token = self.get_or_refresh_token().await?;
         let initial = self.upload(&token, zip).await?;
         self.wait_until_uploaded(&token, initial, &options.poll)
             .await?;
@@ -185,7 +185,7 @@ impl Client {
         join_endpoint(&self.root_url, path)
     }
 
-    async fn get_token(&self) -> Result<String> {
+    async fn get_or_refresh_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::Classic {
@@ -464,7 +464,7 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.get_token().await.unwrap();
+        let token = client.get_or_refresh_token().await.unwrap();
         assert_eq!(token, "fresh-token");
         client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
