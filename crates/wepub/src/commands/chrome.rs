@@ -51,7 +51,7 @@ fn build_client(args: &ChromeArgs) -> Result<Client> {
             Ok(Client::new(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
-                Credentials::Classic {
+                Credentials::RefreshToken {
                     client_id: client_id.to_string(),
                     client_secret: client_secret.to_string(),
                     refresh_token: refresh_token.to_string(),

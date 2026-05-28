@@ -77,7 +77,7 @@ pub enum Credentials {
     /// An OAuth refresh token plus the client credentials needed to redeem
     /// it for an access token. Obtain them by following the
     /// [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api).
-    Classic {
+    RefreshToken {
         /// OAuth client ID.
         client_id: String,
         /// OAuth client secret.
@@ -153,7 +153,7 @@ impl Client {
     /// let client = Client::new(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
-    ///     Credentials::Classic {
+    ///     Credentials::RefreshToken {
     ///         client_id: "client-id".into(),
     ///         client_secret: "client-secret".into(),
     ///         refresh_token: "refresh-token".into(),
@@ -188,7 +188,7 @@ impl Client {
     async fn get_or_refresh_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
-            Credentials::Classic {
+            Credentials::RefreshToken {
                 client_id,
                 client_secret,
                 refresh_token,
@@ -452,7 +452,7 @@ mod tests {
         let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            Credentials::Classic {
+            Credentials::RefreshToken {
                 client_id: "client-id".to_string(),
                 client_secret: "client-secret".to_string(),
                 refresh_token: "refresh-token".to_string(),
