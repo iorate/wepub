@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3](https://github.com/iorate/wepub/compare/v0.4.2...v0.4.3)
+
+### 🐛 Bug Fixes
+
+
+- Warn when .env exists but fails to load ([#37](https://github.com/iorate/wepub/pull/37)) - ([8f07274](https://github.com/iorate/wepub/commit/8f07274baff199321040a180699d2cb646ee5237))
+
+
 ## [0.4.2](https://github.com/iorate/wepub/compare/v0.4.1...v0.4.2)
 
 ### ⛰️ Features
