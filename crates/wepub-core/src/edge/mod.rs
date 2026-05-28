@@ -7,4 +7,4 @@
 
 mod api;
 
-pub use api::{Client, PublishOptions};
+pub use api::{Client, Credentials, PublishOptions};

@@ -68,6 +68,25 @@ pub enum PublishType {
     StagedPublish,
 }
 
+/// OAuth credentials passed to [`Client::new`].
+// Debug intentionally omitted: holds OAuth credentials.
+pub enum Credentials {
+    /// A pre-fetched OAuth access token, used verbatim. Intended for
+    /// [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts).
+    AccessToken(String),
+    /// An OAuth refresh token plus the client credentials needed to redeem
+    /// it for an access token. Obtain them by following the
+    /// [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api).
+    Classic {
+        /// OAuth client ID.
+        client_id: String,
+        /// OAuth client secret.
+        client_secret: String,
+        /// OAuth refresh token.
+        refresh_token: String,
+    },
+}
+
 /// Client for the Chrome Web Store Publish API (v2).
 ///
 /// The client holds OAuth credentials and a reusable HTTP client; it is cheap
@@ -84,41 +103,17 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client from a pre-fetched OAuth access token.
-    ///
-    /// Intended for service-account authentication. The token is used
-    /// verbatim; this constructor never touches the OAuth token endpoint.
-    pub fn from_access_token(
-        publisher_id: String,
-        item_id: String,
-        access_token: String,
-    ) -> Result<Self> {
-        Self::from_credentials(
+    /// Build a client bound to `publisher_id` / `item_id`, authenticating
+    /// with the supplied [`Credentials`].
+    pub fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
+        Ok(Self {
             publisher_id,
             item_id,
-            Credentials::AccessToken(access_token),
-        )
-    }
-
-    /// Build a client from a long-lived OAuth refresh token.
-    ///
-    /// An access token is fetched lazily during [`publish`](Client::publish).
-    pub fn new(
-        publisher_id: String,
-        item_id: String,
-        client_id: String,
-        client_secret: String,
-        refresh_token: String,
-    ) -> Result<Self> {
-        Self::from_credentials(
-            publisher_id,
-            item_id,
-            Credentials::ClientCredentials {
-                client_id,
-                client_secret,
-                refresh_token,
-            },
-        )
+            credentials,
+            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
+            http: build_client()?,
+        })
     }
 
     /// Override the Chrome Web Store API root URL.
@@ -153,14 +148,16 @@ impl Client {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{Client, PublishOptions, PublishType};
+    /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
     ///
     /// let client = Client::new(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
-    ///     "client-id".into(),
-    ///     "client-secret".into(),
-    ///     "refresh-token".into(),
+    ///     Credentials::Classic {
+    ///         client_id: "client-id".into(),
+    ///         client_secret: "client-secret".into(),
+    ///         refresh_token: "refresh-token".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
     /// client
@@ -191,7 +188,7 @@ impl Client {
     async fn get_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
-            Credentials::ClientCredentials {
+            Credentials::Classic {
                 client_id,
                 client_secret,
                 refresh_token,
@@ -354,31 +351,6 @@ impl Client {
         );
         Ok(parsed)
     }
-
-    fn from_credentials(
-        publisher_id: String,
-        item_id: String,
-        credentials: Credentials,
-    ) -> Result<Self> {
-        Ok(Self {
-            publisher_id,
-            item_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
-            http: build_client()?,
-        })
-    }
-}
-
-// Debug and Clone intentionally omitted: holds OAuth secrets / refresh token.
-enum Credentials {
-    AccessToken(String),
-    ClientCredentials {
-        client_id: String,
-        client_secret: String,
-        refresh_token: String,
-    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -480,9 +452,11 @@ mod tests {
         let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "client-id".to_string(),
-            "client-secret".to_string(),
-            "refresh-token".to_string(),
+            Credentials::Classic {
+                client_id: "client-id".to_string(),
+                client_secret: "client-secret".to_string(),
+                refresh_token: "refresh-token".to_string(),
+            },
         )
         .unwrap()
         .with_root_url(base.as_str())
@@ -999,10 +973,10 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::from_access_token(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "token".to_string(),
+            Credentials::AccessToken("token".to_string()),
         )
         .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
@@ -1013,10 +987,10 @@ mod tests {
 
     #[test]
     fn with_token_url_rejects_garbage() {
-        let client = Client::from_access_token(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "token".to_string(),
+            Credentials::AccessToken("token".to_string()),
         )
         .unwrap();
         let Err(err) = client.with_token_url("not a url") else {
@@ -1027,10 +1001,10 @@ mod tests {
 
     fn client_for(server: &MockServer) -> Client {
         let base = server.uri();
-        Client::from_access_token(
+        Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "test-access-token".to_string(),
+            Credentials::AccessToken("test-access-token".to_string()),
         )
         .unwrap()
         .with_root_url(&base)

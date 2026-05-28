@@ -45,34 +45,39 @@ impl Default for PublishOptions {
     }
 }
 
+/// Partner Center API credentials passed to [`Client::new`].
+///
+/// Obtain them from
+/// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
+/// under **Microsoft Edge** &gt; **Publish API**.
+// Debug intentionally omitted: holds the Partner Center API key.
+pub struct Credentials {
+    /// Partner Center Client ID.
+    pub client_id: String,
+    /// Partner Center API key.
+    pub api_key: String,
+}
+
 /// Client for the Edge Add-ons Update REST API (v1.1).
 ///
 /// The client holds the Partner Center credentials and a reusable HTTP
 /// client; it is cheap to construct and intended to live for the
 /// duration of a single publish run.
 // Debug intentionally omitted: holds the Partner Center API key.
-#[allow(clippy::struct_field_names)] // `client_id` is the Partner Center auth term
 pub struct Client {
     product_id: String,
-    client_id: String,
-    api_key: String,
+    credentials: Credentials,
     root_url: Url,
     http: reqwest::Client,
 }
 
 impl Client {
     /// Build a client bound to `product_id`, signing requests with the
-    /// API credentials issued from Partner Center (Client ID + API
-    /// key).
-    ///
-    /// Obtain the credentials from
-    /// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
-    /// under **Microsoft Edge** &gt; **Publish API**.
-    pub fn new(product_id: String, client_id: String, api_key: String) -> Result<Self> {
+    /// Partner Center API [`Credentials`].
+    pub fn new(product_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             product_id,
-            client_id,
-            api_key,
+            credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
             http: build_client()?,
         })
@@ -99,12 +104,14 @@ impl Client {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::edge::{Client, PublishOptions};
+    /// use wepub_core::edge::{Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
     ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
-    ///     "client-id".into(),
-    ///     "api-key".into(),
+    ///     Credentials {
+    ///         client_id: "client-id".into(),
+    ///         api_key: "api-key".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
     /// client.publish(zip, PublishOptions::new()).await?;
@@ -139,7 +146,7 @@ impl Client {
             .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id)
+            .header("X-ClientID", &self.credentials.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
             .send()
@@ -166,7 +173,7 @@ impl Client {
                 .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
+                .header("X-ClientID", &self.credentials.client_id)
                 .send()
                 .await?;
             let body: OperationResponse = decode_response(resp).await?;
@@ -205,7 +212,7 @@ impl Client {
             .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id);
+            .header("X-ClientID", &self.credentials.client_id);
         if let Some(notes) = notes {
             // Docs disagree (reference page says plain text, using page says
             // JSON); wdzeng/edge-addon reports plain text "worked":
@@ -235,7 +242,7 @@ impl Client {
                 .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
+                .header("X-ClientID", &self.credentials.client_id)
                 .send()
                 .await?;
             let body: OperationResponse = decode_response(resp).await?;
@@ -272,7 +279,7 @@ impl Client {
     }
 
     fn auth_header(&self) -> String {
-        format!("ApiKey {}", self.api_key)
+        format!("ApiKey {}", self.credentials.api_key)
     }
 
     async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
@@ -767,7 +774,14 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap();
         let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -777,10 +791,16 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-            .unwrap()
-            .with_root_url("http://127.0.0.1:8000/")
-            .unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap()
+        .with_root_url("http://127.0.0.1:8000/")
+        .unwrap();
         let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -790,7 +810,14 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
@@ -798,10 +825,16 @@ mod tests {
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-            .unwrap()
-            .with_root_url(&server.uri())
-            .unwrap()
+        Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap()
+        .with_root_url(&server.uri())
+        .unwrap()
     }
 
     fn fast_poll() -> PollConfig {

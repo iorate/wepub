@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{Client, PublishOptions, PublishType};
+use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
@@ -51,15 +51,17 @@ fn build_client(args: &ChromeArgs) -> Result<Client> {
             Ok(Client::new(
                 args.publisher_id.clone(),
                 args.item_id.clone(),
-                client_id.to_string(),
-                client_secret.to_string(),
-                refresh_token.to_string(),
+                Credentials::Classic {
+                    client_id: client_id.to_string(),
+                    client_secret: client_secret.to_string(),
+                    refresh_token: refresh_token.to_string(),
+                },
             )?)
         }
-        (false, Some(access_token)) => Ok(Client::from_access_token(
+        (false, Some(access_token)) => Ok(Client::new(
             args.publisher_id.clone(),
             args.item_id.clone(),
-            access_token.to_string(),
+            Credentials::AccessToken(access_token.to_string()),
         )?),
     }
 }

@@ -138,6 +138,18 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
+/// HS256 JWT credential pair passed to [`Client::new`].
+///
+/// Get the credentials from
+/// <https://addons.mozilla.org/developers/addon/api/key/>.
+// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
+pub struct Credentials {
+    /// JWT issuer.
+    pub api_key: String,
+    /// JWT signing secret.
+    pub api_secret: String,
+}
+
 /// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
 /// The client holds the JWT credential pair and a reusable HTTP client; it
@@ -146,23 +158,18 @@ pub struct VersionRange {
 // Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
 pub struct Client {
     addon_id: String,
-    issuer: String,
-    secret: String,
+    credentials: Credentials,
     root_url: Url,
     http: reqwest::Client,
 }
 
 impl Client {
     /// Build a client bound to `addon_id`, signing requests with the supplied
-    /// HS256 JWT credential pair (issuer + secret).
-    ///
-    /// Get the credentials from
-    /// <https://addons.mozilla.org/developers/addon/api/key/>.
-    pub fn new(addon_id: String, jwt_issuer: String, jwt_secret: String) -> Result<Self> {
+    /// HS256 JWT [`Credentials`].
+    pub fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             addon_id,
-            issuer: jwt_issuer,
-            secret: jwt_secret,
+            credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
             http: build_client()?,
         })
@@ -189,12 +196,14 @@ impl Client {
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{Channel, Client, PublishOptions};
+    /// use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
     ///     "myaddon@example.com".into(),
-    ///     "user:12345:6789".into(),
-    ///     "jwt-secret".into(),
+    ///     Credentials {
+    ///         api_key: "user:12345:6789".into(),
+    ///         api_secret: "jwt-secret".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
     /// client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
@@ -388,7 +397,7 @@ impl Client {
     }
 
     fn auth_header(&self) -> Result<String> {
-        let token = generate_jwt(&self.issuer, &self.secret)?;
+        let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret)?;
         Ok(format!("JWT {token}"))
     }
 }
@@ -762,7 +771,14 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap();
         let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
@@ -772,17 +788,30 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into())
-            .unwrap()
-            .with_root_url("http://127.0.0.1:8000/")
-            .unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap()
+        .with_root_url("http://127.0.0.1:8000/")
+        .unwrap();
         let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
@@ -790,10 +819,16 @@ mod tests {
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new("test-addon".into(), "issuer".into(), "secret".into())
-            .unwrap()
-            .with_root_url(&server.uri())
-            .unwrap()
+        Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap()
+        .with_root_url(&server.uri())
+        .unwrap()
     }
 
     fn fast_poll() -> PollConfig {
