@@ -97,7 +97,7 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
         .map(Into::into)
         .filter(|app| seen.insert(*app))
         .collect();
-    Some(Compatibility::Apps(unique))
+    Some(Compatibility::Shorthand(unique))
 }
 
 impl From<FirefoxChannelArg> for Channel {

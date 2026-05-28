@@ -79,10 +79,10 @@ impl Channel {
 #[derive(Debug, Clone)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
-    Apps(Vec<Application>),
-    /// Detailed form: per-app explicit version range. An empty
+    Shorthand(Vec<Application>),
+    /// Full form: per-app explicit version range. An empty
     /// [`VersionRange`] means "use the value declared in the manifest".
-    Detailed(HashMap<Application, VersionRange>),
+    Full(HashMap<Application, VersionRange>),
 }
 
 impl Serialize for Compatibility {
@@ -91,8 +91,8 @@ impl Serialize for Compatibility {
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         match self {
-            Self::Apps(apps) => apps.serialize(serializer),
-            Self::Detailed(map) => map.serialize(serializer),
+            Self::Shorthand(apps) => apps.serialize(serializer),
+            Self::Full(map) => map.serialize(serializer),
         }
     }
 }
@@ -125,7 +125,7 @@ impl Serialize for Application {
 }
 
 /// Explicit `min` / `max` application version pair used by
-/// [`Compatibility::Detailed`].
+/// [`Compatibility::Full`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn version_create_body_with_apps_shorthand() {
-        let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
+        let compat = Compatibility::Shorthand(vec![Application::Firefox, Application::Android]);
         let json = body_to_json("uuid-123", Some(&compat), None, None);
         assert_eq!(
             json,
@@ -741,7 +741,7 @@ mod tests {
                 max: None,
             },
         );
-        let compat = Compatibility::Detailed(map);
+        let compat = Compatibility::Full(map);
         let json = body_to_json("uuid-123", Some(&compat), None, None);
 
         assert_eq!(json["upload"], "uuid-123");
