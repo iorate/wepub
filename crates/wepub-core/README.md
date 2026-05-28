@@ -21,7 +21,7 @@ let client = Client::new(
     },
 )?;
 let zip = std::fs::read("./addon.zip")?;
-client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
+client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
 ```
 
 See the full API on [docs.rs](https://docs.rs/wepub-core).

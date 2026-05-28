@@ -50,11 +50,11 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         release_notes,
         approval_notes,
         source,
-        ..PublishOptions::new(args.channel.into())
+        ..PublishOptions::new()
     };
 
     client
-        .publish(zip, options)
+        .publish(zip, args.channel.into(), options)
         .await
         .context("Firefox Add-ons publish failed")?;
     Ok(())

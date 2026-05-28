@@ -20,9 +20,6 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] creates the new version.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
-    /// Version channel for the new version. Determines visibility on the
-    /// site.
-    pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
@@ -38,13 +35,11 @@ pub struct PublishOptions {
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` for the given channel, with all other
-    /// fields at their defaults (1 second poll interval, 5 minute
-    /// timeout).
+    /// Build a `PublishOptions` with the recommended defaults
+    /// (1 second poll interval, 5 minute timeout).
     #[must_use]
-    pub fn new(channel: Channel) -> Self {
+    pub fn new() -> Self {
         Self {
-            channel,
             compatibility: None,
             release_notes: None,
             approval_notes: None,
@@ -54,6 +49,12 @@ impl PublishOptions {
                 timeout: DEFAULT_POLL_TIMEOUT,
             },
         }
+    }
+}
+
+impl Default for PublishOptions {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -186,7 +187,8 @@ impl Client {
         Ok(self)
     }
 
-    /// Upload `zip` and create a new version on the bound add-on.
+    /// Upload `zip` and create a new version on the bound add-on under
+    /// `channel`.
     ///
     /// Waits for Firefox Add-ons validation to finish, creates the new
     /// version, and (when `options.source` is set) attaches the source
@@ -206,12 +208,17 @@ impl Client {
     ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
+    /// client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let upload = self.upload(zip, options.channel).await?;
+    pub async fn publish(
+        &self,
+        zip: Vec<u8>,
+        channel: Channel,
+        options: PublishOptions,
+    ) -> Result<()> {
+        let upload = self.upload(zip, channel).await?;
         let validated = self
             .wait_until_validated(&upload.uuid, &options.poll)
             .await?;
@@ -625,9 +632,12 @@ mod tests {
         let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
             poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
+            ..PublishOptions::new()
         };
-        client.publish(b"zip".to_vec(), options).await.unwrap();
+        client
+            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -668,9 +678,12 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
+            ..PublishOptions::new()
         };
-        client.publish(b"zip".to_vec(), options).await.unwrap();
+        client
+            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -686,9 +699,12 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
+            ..PublishOptions::new()
         };
-        let err = client.publish(b"zip".to_vec(), options).await.unwrap_err();
+        let err = client
+            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .await
+            .unwrap_err();
 
         match err {
             WepubError::HttpStatus { status, body } => {
