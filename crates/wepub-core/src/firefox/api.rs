@@ -18,7 +18,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] creates the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
@@ -29,32 +29,13 @@ pub struct PublishOptions {
     pub approval_notes: Option<String>,
     /// Source archive to attach to the version.
     pub source: Option<Vec<u8>>,
-    /// Polling cadence and overall timeout used while waiting for Firefox
-    /// Add-ons to finish validating the upload.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` with the recommended defaults
-    /// (1 second poll interval, 5 minute timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            compatibility: None,
-            release_notes: None,
-            approval_notes: None,
-            source: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
-    }
-}
-
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -161,6 +142,7 @@ pub struct Client {
     addon_id: String,
     credentials: Credentials,
     root_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
@@ -172,6 +154,10 @@ impl Client {
             addon_id,
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
             http: build_client()?,
         })
     }
@@ -187,12 +173,21 @@ impl Client {
         Ok(self)
     }
 
+    /// Override the poll config used while waiting for validation to
+    /// finish.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
     /// Upload `zip` and create a new version on the bound add-on under
     /// `channel`.
     ///
     /// Waits for Firefox Add-ons validation to finish, creates the new
     /// version, and (when `options.source` is set) attaches the source
-    /// archive. The polling cadence is controlled by `options.poll`.
+    /// archive. The polling cadence is controlled by the client's poll
+    /// config.
     ///
     /// # Examples
     ///
@@ -219,9 +214,7 @@ impl Client {
         options: PublishOptions,
     ) -> Result<()> {
         let upload = self.upload(zip, channel).await?;
-        let validated = self
-            .wait_until_validated(&upload.uuid, &options.poll)
-            .await?;
+        let validated = self.wait_until_validated(&upload.uuid).await?;
 
         let version = self
             .create_version(
@@ -276,11 +269,7 @@ impl Client {
         decode_response(resp).await
     }
 
-    async fn wait_until_validated(
-        &self,
-        uuid: &str,
-        config: &PollConfig,
-    ) -> Result<UploadResponse> {
+    async fn wait_until_validated(&self, uuid: &str) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
@@ -318,11 +307,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -486,10 +475,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client
-            .wait_until_validated("uuid-1", &fast_poll())
-            .await
-            .unwrap();
+        let resp = client.wait_until_validated("uuid-1").await.unwrap();
 
         assert_eq!(resp.uuid, "uuid-1");
         assert!(resp.processed);
@@ -516,10 +502,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_validated("uuid-2", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_validated("uuid-2").await.unwrap_err();
 
         match err {
             WepubError::FirefoxValidationFailed { uuid, validation } => {
@@ -542,10 +525,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_validated("uuid-3", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_validated("uuid-3").await.unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -631,7 +611,6 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
-            poll: fast_poll(),
             ..PublishOptions::new()
         };
         client
@@ -676,12 +655,8 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let options = PublishOptions {
-            poll: fast_poll(),
-            ..PublishOptions::new()
-        };
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
             .await
             .unwrap();
     }
@@ -697,12 +672,8 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let options = PublishOptions {
-            poll: fast_poll(),
-            ..PublishOptions::new()
-        };
         let err = client
-            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
             .await
             .unwrap_err();
 
@@ -845,13 +816,10 @@ mod tests {
         .unwrap()
         .with_root_url(&server.uri())
         .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
+        })
     }
 
     fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {

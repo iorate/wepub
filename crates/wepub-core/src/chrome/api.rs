@@ -16,7 +16,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Whether to publish immediately on approval, or stage for later
     /// publishing.
@@ -28,32 +28,13 @@ pub struct PublishOptions {
     /// Initial percentage of users to roll the new version out to.
     /// `None` means "use the value configured in the Developer Dashboard".
     pub deploy_percentage: Option<u8>,
-
-    /// Polling cadence and overall timeout used while waiting for the
-    /// asynchronous upload to finish processing.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` with the recommended defaults
-    /// (2 second poll interval, 5 minute timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            publish_type: None,
-            skip_review: None,
-            deploy_percentage: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
-    }
-}
-
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -99,6 +80,7 @@ pub struct Client {
     credentials: Credentials,
     root_url: Url,
     token_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
@@ -112,6 +94,10 @@ impl Client {
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
             token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
             http: build_client()?,
         })
     }
@@ -136,12 +122,20 @@ impl Client {
         Ok(self)
     }
 
+    /// Override the poll config used while waiting for the upload to
+    /// finish processing.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
     /// Upload `zip` and submit the resulting item version for publish.
     ///
     /// If the upload is still in progress when it is accepted, the call
-    /// polls for completion according to `options.poll` until the upload
-    /// succeeds or the timeout elapses. A publish request that reaches a
-    /// terminal failure state is reported as
+    /// polls for completion according to the client's poll config until the
+    /// upload succeeds or the timeout elapses. A publish request that reaches
+    /// a terminal failure state is reported as
     /// [`WepubError::ChromePublishFailed`].
     ///
     /// # Examples
@@ -175,8 +169,7 @@ impl Client {
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let token = self.get_or_refresh_token().await?;
         let initial = self.upload(&token, zip).await?;
-        self.wait_until_uploaded(&token, initial, &options.poll)
-            .await?;
+        self.wait_until_uploaded(&token, initial).await?;
         self.submit_for_publish(&token, &options).await?;
         Ok(())
     }
@@ -236,7 +229,6 @@ impl Client {
         &self,
         token: &str,
         initial_state: UploadState,
-        config: &PollConfig,
     ) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
@@ -285,11 +277,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -577,7 +569,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded)
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -594,7 +586,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed)
             .await
             .unwrap_err();
         match err {
@@ -621,7 +613,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -639,7 +631,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -664,7 +656,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -688,7 +680,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -712,7 +704,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -739,7 +731,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap();
         assert_eq!(resp.item_id, "item-1");
@@ -775,7 +767,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = default_options();
+        let mut opts = PublishOptions::new();
         opts.publish_type = Some(PublishType::StagedPublish);
 
         let client = client_for(&server);
@@ -798,7 +790,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = default_options();
+        let mut opts = PublishOptions::new();
         opts.skip_review = Some(true);
         opts.deploy_percentage = Some(50);
 
@@ -821,7 +813,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -847,7 +839,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -880,7 +872,7 @@ mod tests {
 
             let client = client_for(&server);
             let resp = client
-                .submit_for_publish(TEST_TOKEN, &default_options())
+                .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
                 .await
                 .unwrap();
             assert!(
@@ -926,7 +918,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
     }
@@ -966,7 +958,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
     }
@@ -1011,21 +1003,9 @@ mod tests {
         .unwrap()
         .with_token_url(&base)
         .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
-    }
-
-    fn default_options() -> PublishOptions {
-        PublishOptions {
-            publish_type: None,
-            skip_review: None,
-            deploy_percentage: None,
-            poll: fast_poll(),
-        }
+        })
     }
 }

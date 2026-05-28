@@ -21,10 +21,7 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
         },
     )?;
 
-    let options = PublishOptions {
-        notes,
-        ..PublishOptions::new()
-    };
+    let options = PublishOptions { notes };
 
     client
         .publish(zip, options)

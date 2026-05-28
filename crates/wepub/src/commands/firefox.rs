@@ -50,7 +50,6 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         release_notes,
         approval_notes,
         source,
-        ..PublishOptions::new()
     };
 
     client

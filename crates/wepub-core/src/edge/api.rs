@@ -14,34 +14,17 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Notes for certification.
     pub notes: Option<String>,
-
-    /// Polling cadence and overall timeout used while waiting for the
-    /// asynchronous upload and publish operations to finish.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` with the recommended defaults
-    /// (5 second poll interval, 5 minute timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            notes: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
-    }
-}
-
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -68,6 +51,7 @@ pub struct Client {
     product_id: String,
     credentials: Credentials,
     root_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
@@ -79,6 +63,10 @@ impl Client {
             product_id,
             credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
             http: build_client()?,
         })
     }
@@ -94,11 +82,20 @@ impl Client {
         Ok(self)
     }
 
+    /// Override the poll config used while waiting for the upload and
+    /// publish operations to finish.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
     /// Upload `zip` and submit the resulting draft for publish.
     ///
     /// Waits for the upload to be ingested, submits the draft for
     /// publish, and waits for the publish operation to complete. The
-    /// polling cadence for both waits is controlled by `options.poll`.
+    /// polling cadence for both waits is controlled by the client's poll
+    /// config.
     ///
     /// # Examples
     ///
@@ -120,11 +117,10 @@ impl Client {
     /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload_op = self.upload(zip).await?;
-        self.wait_until_uploaded(&upload_op, &options.poll).await?;
+        self.wait_until_uploaded(&upload_op).await?;
 
         let publish_op = self.submit_for_publish(options.notes.as_deref()).await?;
-        self.wait_until_published(&publish_op, &options.poll)
-            .await?;
+        self.wait_until_published(&publish_op).await?;
 
         Ok(())
     }
@@ -155,7 +151,7 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_uploaded(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
+    async fn wait_until_uploaded(&self, operation_id: &str) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
@@ -190,11 +186,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -224,7 +220,7 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_published(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
+    async fn wait_until_published(&self, operation_id: &str) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/operations/{operation_id}",
             self.product_id
@@ -266,11 +262,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -434,10 +430,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client
-            .wait_until_uploaded("op-1", &fast_poll())
-            .await
-            .unwrap();
+        client.wait_until_uploaded("op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -455,10 +448,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("op-2", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("op-2").await.unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -494,10 +484,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("up-u", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("up-u").await.unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -525,10 +512,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("op-3", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -617,10 +601,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client
-            .wait_until_published("pub-1", &fast_poll())
-            .await
-            .unwrap();
+        client.wait_until_published("pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -662,10 +643,7 @@ mod tests {
                 .await;
 
             let client = client_for(&server);
-            let err = client
-                .wait_until_published("pub-x", &fast_poll())
-                .await
-                .unwrap_err();
+            let err = client.wait_until_published("pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgePublishFailed {
                     product_id,
@@ -698,10 +676,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_published("pub-u", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_published("pub-u").await.unwrap_err();
         match err {
             WepubError::EdgePublishFailed {
                 product_id,
@@ -767,7 +742,6 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             notes: Some("ship it".into()),
-            poll: fast_poll(),
         };
         client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
     }
@@ -835,12 +809,9 @@ mod tests {
         .unwrap()
         .with_root_url(&server.uri())
         .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
+        })
     }
 }
