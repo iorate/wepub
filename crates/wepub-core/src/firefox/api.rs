@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use reqwest::multipart::{Form, Part};
@@ -124,7 +125,7 @@ pub struct VersionRange {
 ///
 /// Get the credentials from
 /// <https://addons.mozilla.org/developers/addon/api/key/>.
-// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
+#[derive(Clone)]
 pub struct Credentials {
     /// JWT issuer.
     pub api_key: String,
@@ -132,12 +133,20 @@ pub struct Credentials {
     pub api_secret: String,
 }
 
+impl fmt::Debug for Credentials {
+    // Redact contents: holds the Firefox Add-ons JWT secret.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
+
 /// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
 /// The client holds the JWT credential pair and a reusable HTTP client; it
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
-// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     addon_id: String,
     credentials: Credentials,
@@ -429,6 +438,18 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let credentials = Credentials {
+            api_key: "issuer".to_string(),
+            api_secret: "secret-jwt".to_string(),
+        };
+        assert!(!format!("{credentials:?}").contains("secret-jwt"));
+
+        let client = Client::new("addon-1".to_string(), credentials).unwrap();
+        assert!(!format!("{client:?}").contains("secret-jwt"));
+    }
 
     #[tokio::test]
     async fn upload_posts_multipart_and_parses_response() {

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ pub enum PublishType {
 }
 
 /// OAuth credentials passed to [`Client::new`].
-// Debug intentionally omitted: holds OAuth credentials.
+#[derive(Clone)]
 pub enum Credentials {
     /// A pre-fetched OAuth access token, used verbatim. Intended for
     /// [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts).
@@ -68,12 +69,23 @@ pub enum Credentials {
     },
 }
 
+impl fmt::Debug for Credentials {
+    // Redact contents: every variant carries OAuth secrets.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
+            Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
+        }
+    }
+}
+
 /// Client for the Chrome Web Store Publish API (v2).
 ///
 /// The client holds OAuth credentials and a reusable HTTP client; it is cheap
 /// to construct and intended to live for the duration of a single publish
 /// run.
-// Debug intentionally omitted: holds OAuth credentials.
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     publisher_id: String,
     item_id: String,
@@ -413,6 +425,27 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_TOKEN: &str = "test-access-token";
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let access = Credentials::AccessToken("secret-token".to_string());
+        assert!(!format!("{access:?}").contains("secret-token"));
+
+        let credentials = Credentials::RefreshToken {
+            client_id: "client-id".to_string(),
+            client_secret: "secret-client".to_string(),
+            refresh_token: "secret-refresh".to_string(),
+        };
+        let credentials_debug = format!("{credentials:?}");
+        assert!(!credentials_debug.contains("secret-client"));
+        assert!(!credentials_debug.contains("secret-refresh"));
+
+        let client =
+            Client::new("publisher-1".to_string(), "item-1".to_string(), credentials).unwrap();
+        let client_debug = format!("{client:?}");
+        assert!(!client_debug.contains("secret-client"));
+        assert!(!client_debug.contains("secret-refresh"));
+    }
 
     #[tokio::test]
     async fn new_refreshes_token_before_calling_api() {

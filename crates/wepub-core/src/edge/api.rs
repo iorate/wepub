@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ impl PublishOptions {
 /// Obtain them from
 /// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
 /// under **Microsoft Edge** &gt; **Publish API**.
-// Debug intentionally omitted: holds the Partner Center API key.
+#[derive(Clone)]
 pub struct Credentials {
     /// Partner Center Client ID.
     pub client_id: String,
@@ -41,12 +42,20 @@ pub struct Credentials {
     pub api_key: String,
 }
 
+impl fmt::Debug for Credentials {
+    // Redact contents: holds the Partner Center API key.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
+
 /// Client for the Edge Add-ons Update REST API (v1.1).
 ///
 /// The client holds the Partner Center credentials and a reusable HTTP
 /// client; it is cheap to construct and intended to live for the
 /// duration of a single publish run.
-// Debug intentionally omitted: holds the Partner Center API key.
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     product_id: String,
     credentials: Credentials,
@@ -344,6 +353,18 @@ mod tests {
     const PRODUCT_ID: &str = "11111111-2222-3333-4444-555555555555";
     const API_KEY: &str = "test-api-key";
     const CLIENT_ID: &str = "test-client-id";
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let credentials = Credentials {
+            client_id: "client-id".to_string(),
+            api_key: "secret-key".to_string(),
+        };
+        assert!(!format!("{credentials:?}").contains("secret-key"));
+
+        let client = Client::new(PRODUCT_ID.to_string(), credentials).unwrap();
+        assert!(!format!("{client:?}").contains("secret-key"));
+    }
 
     #[tokio::test]
     async fn upload_posts_zip_with_apikey_and_clientid_headers() {
