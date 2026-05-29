@@ -228,13 +228,13 @@ impl Client {
 
         let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
-        let auth = self.auth_header()?;
+        let auth = self.auth_header();
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
             .file_name("addon.zip")
             .mime_str("application/zip")
-            .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
+            .expect("\"application/zip\" is a valid MIME type");
         let form = Form::new()
             .part("upload", part)
             .text("channel", channel.as_str());
@@ -262,7 +262,7 @@ impl Client {
                 "polling upload status"
             );
             let method = reqwest::Method::GET;
-            let auth = self.auth_header()?;
+            let auth = self.auth_header();
             log_request(&method, &url);
             let resp = self
                 .http
@@ -312,7 +312,7 @@ impl Client {
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
-        let auth = self.auth_header()?;
+        let auth = self.auth_header();
 
         let body = VersionCreateBody {
             upload: upload_uuid,
@@ -349,13 +349,13 @@ impl Client {
             "api/v5/addons/addon/{}/versions/{version_id}/",
             self.addon_id
         ))?;
-        let auth = self.auth_header()?;
+        let auth = self.auth_header();
 
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
             .file_name("source.zip")
             .mime_str("application/zip")
-            .map_err(|e| WepubError::Internal(format!("invalid MIME literal: {e}")))?;
+            .expect("\"application/zip\" is a valid MIME type");
         let form = Form::new().part("source", part);
 
         log_request(&method, &url);
@@ -374,9 +374,9 @@ impl Client {
         join_endpoint(&self.root_url, path)
     }
 
-    fn auth_header(&self) -> Result<String> {
-        let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret)?;
-        Ok(format!("JWT {token}"))
+    fn auth_header(&self) -> String {
+        let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret);
+        format!("JWT {token}")
     }
 }
 

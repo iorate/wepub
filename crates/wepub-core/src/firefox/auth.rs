@@ -4,14 +4,12 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::{Result, WepubError};
-
 const TOKEN_LIFETIME_SECS: u64 = 60;
 
-pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
+pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| WepubError::Internal(format!("system clock before UNIX epoch: {e}")))?
+        .expect("system clock is set after the UNIX epoch")
         .as_secs();
 
     let claims = Claims {
@@ -26,7 +24,7 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
-    .map_err(|e| WepubError::Internal(format!("failed to encode JWT: {e}")))
+    .expect("HS256 JWT encoding cannot fail for valid claims")
 }
 
 #[derive(Serialize)]
@@ -53,7 +51,7 @@ mod tests {
 
     #[test]
     fn jwt_payload_matches_amo_spec() {
-        let token = generate_jwt("user:123:456", "secret-key").unwrap();
+        let token = generate_jwt("user:123:456", "secret-key");
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = false;
@@ -73,7 +71,7 @@ mod tests {
 
     #[test]
     fn jwt_rejects_wrong_secret() {
-        let token = generate_jwt("issuer", "correct-secret").unwrap();
+        let token = generate_jwt("issuer", "correct-secret");
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = false;
@@ -94,8 +92,8 @@ mod tests {
 
     #[test]
     fn each_call_generates_unique_jti() {
-        let t1 = generate_jwt("issuer", "secret").unwrap();
-        let t2 = generate_jwt("issuer", "secret").unwrap();
+        let t1 = generate_jwt("issuer", "secret");
+        let t2 = generate_jwt("issuer", "secret");
         assert_ne!(t1, t2, "jti should be unique per call");
     }
 }
