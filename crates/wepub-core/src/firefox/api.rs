@@ -58,7 +58,10 @@ impl Channel {
 }
 
 /// Compatibility declaration sent to Firefox Add-ons when creating the version.
-#[derive(Debug, Clone)]
+// untagged: AMO accepts either a bare array or a bare object for `compatibility`,
+// so each variant serializes as its inner value with no discriminant.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
     Shorthand(Vec<Application>),
@@ -67,43 +70,14 @@ pub enum Compatibility {
     Full(HashMap<Application, VersionRange>),
 }
 
-impl Serialize for Compatibility {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Shorthand(apps) => apps.serialize(serializer),
-            Self::Full(map) => map.serialize(serializer),
-        }
-    }
-}
-
 /// Firefox Add-ons application identifier used in compatibility declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Application {
     /// Desktop Firefox.
     Firefox,
     /// Firefox for Android.
     Android,
-}
-
-impl Application {
-    fn as_str(self) -> &'static str {
-        match self {
-            Application::Firefox => "firefox",
-            Application::Android => "android",
-        }
-    }
-}
-
-impl Serialize for Application {
-    fn serialize<S: serde::Serializer>(
-        &self,
-        serializer: S,
-    ) -> std::result::Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
-    }
 }
 
 /// Explicit `min` / `max` application version pair used by
