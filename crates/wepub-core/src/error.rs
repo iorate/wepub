@@ -8,11 +8,6 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 /// Error type returned by every fallible call in this crate.
 #[derive(Debug, Error)]
 pub enum WepubError {
-    /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
-    /// connect / read / overall timeout, body read error, etc.).
-    #[error("network error: {0}")]
-    Network(#[from] reqwest::Error),
-
     /// The remote returned a non-2xx HTTP status.
     #[error("HTTP error (status {status}): {body}")]
     HttpStatus {
@@ -21,6 +16,20 @@ pub enum WepubError {
         /// Response body, as received (possibly empty).
         body: String,
     },
+
+    /// A URL passed in by the caller (typically through one of the `with_*`
+    /// builders) failed to parse.
+    #[error("invalid URL: {0}")]
+    InvalidUrl(String),
+
+    /// Local filesystem I/O failed (e.g. could not read the source zip).
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
+    /// connect / read / overall timeout, body read error, etc.).
+    #[error("network error: {0}")]
+    Network(#[from] reqwest::Error),
 
     /// A polling loop exceeded the `PollConfig::timeout` budget without
     /// reaching a terminal state.
@@ -40,20 +49,6 @@ pub enum WepubError {
         /// Short description of the wire-shape violation.
         detail: String,
     },
-
-    /// Local filesystem I/O failed (e.g. could not read the source zip).
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-
-    /// A URL passed in by the caller (typically through one of the `with_*`
-    /// builders) failed to parse.
-    #[error("invalid URL: {0}")]
-    InvalidUrl(String),
-
-    /// "Should never happen" programmer-error state. Reaching this
-    /// variant indicates a bug in `wepub-core` itself.
-    #[error("internal error: {0}")]
-    Internal(String),
 
     /// Chrome Web Store reported the asynchronous upload as failed.
     #[error("chrome upload failed for item {item_id}: {reason}")]
