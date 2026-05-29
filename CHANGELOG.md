@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/iorate/wepub/compare/v0.5.0...v0.5.1)
+
+### 📚 Documentation
+
+
+- Overhaul README and correct Firefox compatibility doc comment ([#43](https://github.com/iorate/wepub/pull/43)) - ([2b89959](https://github.com/iorate/wepub/commit/2b89959de1d116c5f7520e15a09187b02a5f8fed))
+
+
 ## [0.5.0](https://github.com/iorate/wepub/compare/v0.4.3...v0.5.0)
 
 ### ⛰️ Features
