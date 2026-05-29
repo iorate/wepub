@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -14,34 +15,37 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Notes for certification.
     pub notes: Option<String>,
-
-    /// Polling cadence and overall timeout used while waiting for the
-    /// asynchronous upload and publish operations to finish.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` with the recommended defaults
-    /// (5 second poll interval, 5 minute timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            notes: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
+        Self::default()
     }
 }
 
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self::new()
+/// Partner Center API credentials passed to [`Client::new`].
+///
+/// Obtain them from
+/// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
+/// under **Microsoft Edge** &gt; **Publish API**.
+#[derive(Clone)]
+pub struct Credentials {
+    /// Partner Center Client ID.
+    pub client_id: String,
+    /// Partner Center API key.
+    pub api_key: String,
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents: holds the Partner Center API key.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
     }
 }
 
@@ -50,30 +54,28 @@ impl Default for PublishOptions {
 /// The client holds the Partner Center credentials and a reusable HTTP
 /// client; it is cheap to construct and intended to live for the
 /// duration of a single publish run.
-// Debug intentionally omitted: holds the Partner Center API key.
-#[allow(clippy::struct_field_names)] // `client_id` is the Partner Center auth term
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     product_id: String,
-    client_id: String,
-    api_key: String,
+    credentials: Credentials,
     root_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
 impl Client {
     /// Build a client bound to `product_id`, signing requests with the
-    /// API credentials issued from Partner Center (Client ID + API
-    /// key).
-    ///
-    /// Obtain the credentials from
-    /// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
-    /// under **Microsoft Edge** &gt; **Publish API**.
-    pub fn new(product_id: String, client_id: String, api_key: String) -> Result<Self> {
+    /// Partner Center API [`Credentials`].
+    pub fn new(product_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             product_id,
-            client_id,
-            api_key,
+            credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
             http: build_client()?,
         })
     }
@@ -89,22 +91,33 @@ impl Client {
         Ok(self)
     }
 
+    /// Override the poll config used while waiting for the upload and
+    /// publish operations to finish.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
     /// Upload `zip` and submit the resulting draft for publish.
     ///
     /// Waits for the upload to be ingested, submits the draft for
     /// publish, and waits for the publish operation to complete. The
-    /// polling cadence for both waits is controlled by `options.poll`.
+    /// polling cadence for both waits is controlled by the client's poll
+    /// config.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::edge::{Client, PublishOptions};
+    /// use wepub_core::edge::{Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
     ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
-    ///     "client-id".into(),
-    ///     "api-key".into(),
+    ///     Credentials {
+    ///         client_id: "client-id".into(),
+    ///         api_key: "api-key".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
     /// client.publish(zip, PublishOptions::new()).await?;
@@ -113,11 +126,10 @@ impl Client {
     /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload_op = self.upload(zip).await?;
-        self.wait_until_uploaded(&upload_op, &options.poll).await?;
+        self.wait_until_uploaded(&upload_op).await?;
 
         let publish_op = self.submit_for_publish(options.notes.as_deref()).await?;
-        self.wait_until_published(&publish_op, &options.poll)
-            .await?;
+        self.wait_until_published(&publish_op).await?;
 
         Ok(())
     }
@@ -139,7 +151,7 @@ impl Client {
             .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id)
+            .header("X-ClientID", &self.credentials.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
             .send()
@@ -148,7 +160,7 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_uploaded(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
+    async fn wait_until_uploaded(&self, operation_id: &str) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
@@ -166,7 +178,7 @@ impl Client {
                 .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
+                .header("X-ClientID", &self.credentials.client_id)
                 .send()
                 .await?;
             let body: OperationResponse = decode_response(resp).await?;
@@ -183,11 +195,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -205,7 +217,7 @@ impl Client {
             .http
             .request(method, url)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id);
+            .header("X-ClientID", &self.credentials.client_id);
         if let Some(notes) = notes {
             // Docs disagree (reference page says plain text, using page says
             // JSON); wdzeng/edge-addon reports plain text "worked":
@@ -217,7 +229,7 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_published(&self, operation_id: &str, config: &PollConfig) -> Result<()> {
+    async fn wait_until_published(&self, operation_id: &str) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/operations/{operation_id}",
             self.product_id
@@ -235,7 +247,7 @@ impl Client {
                 .http
                 .request(method, url.clone())
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
+                .header("X-ClientID", &self.credentials.client_id)
                 .send()
                 .await?;
             let body: OperationResponse = decode_response(resp).await?;
@@ -259,11 +271,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -272,7 +284,7 @@ impl Client {
     }
 
     fn auth_header(&self) -> String {
-        format!("ApiKey {}", self.api_key)
+        format!("ApiKey {}", self.credentials.api_key)
     }
 
     async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
@@ -341,6 +353,18 @@ mod tests {
     const PRODUCT_ID: &str = "11111111-2222-3333-4444-555555555555";
     const API_KEY: &str = "test-api-key";
     const CLIENT_ID: &str = "test-client-id";
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let credentials = Credentials {
+            client_id: "client-id".to_string(),
+            api_key: "secret-key".to_string(),
+        };
+        assert!(!format!("{credentials:?}").contains("secret-key"));
+
+        let client = Client::new(PRODUCT_ID.to_string(), credentials).unwrap();
+        assert!(!format!("{client:?}").contains("secret-key"));
+    }
 
     #[tokio::test]
     async fn upload_posts_zip_with_apikey_and_clientid_headers() {
@@ -427,10 +451,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client
-            .wait_until_uploaded("op-1", &fast_poll())
-            .await
-            .unwrap();
+        client.wait_until_uploaded("op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -448,10 +469,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("op-2", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("op-2").await.unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -487,10 +505,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("up-u", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("up-u").await.unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -518,10 +533,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded("op-3", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_uploaded("op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -610,10 +622,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client
-            .wait_until_published("pub-1", &fast_poll())
-            .await
-            .unwrap();
+        client.wait_until_published("pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -655,10 +664,7 @@ mod tests {
                 .await;
 
             let client = client_for(&server);
-            let err = client
-                .wait_until_published("pub-x", &fast_poll())
-                .await
-                .unwrap_err();
+            let err = client.wait_until_published("pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgePublishFailed {
                     product_id,
@@ -691,10 +697,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_published("pub-u", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_published("pub-u").await.unwrap_err();
         match err {
             WepubError::EdgePublishFailed {
                 product_id,
@@ -760,14 +763,20 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             notes: Some("ship it".into()),
-            poll: fast_poll(),
         };
         client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
     }
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap();
         let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -777,10 +786,16 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-            .unwrap()
-            .with_root_url("http://127.0.0.1:8000/")
-            .unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap()
+        .with_root_url("http://127.0.0.1:8000/")
+        .unwrap();
         let url = client.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
@@ -790,7 +805,14 @@ mod tests {
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into()).unwrap();
+        let client = Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
@@ -798,16 +820,19 @@ mod tests {
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new(PRODUCT_ID.into(), CLIENT_ID.into(), API_KEY.into())
-            .unwrap()
-            .with_root_url(&server.uri())
-            .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        Client::new(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+        )
+        .unwrap()
+        .with_root_url(&server.uri())
+        .unwrap()
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
+        })
     }
 }

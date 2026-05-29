@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use reqwest::multipart::{Form, Part};
@@ -18,11 +19,8 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] creates the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
-    /// Version channel for the new version. Determines visibility on the
-    /// site.
-    pub channel: Channel,
     /// Application compatibility declarations. `None` falls back to whatever
     /// the manifest's `strict_min_version` / `strict_max_version` declare.
     pub compatibility: Option<Compatibility>,
@@ -32,28 +30,13 @@ pub struct PublishOptions {
     pub approval_notes: Option<String>,
     /// Source archive to attach to the version.
     pub source: Option<Vec<u8>>,
-    /// Polling cadence and overall timeout used while waiting for Firefox
-    /// Add-ons to finish validating the upload.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` for the given channel, with all other
-    /// fields at their defaults (1 second poll interval, 5 minute
-    /// timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
-    pub fn new(channel: Channel) -> Self {
-        Self {
-            channel,
-            compatibility: None,
-            release_notes: None,
-            approval_notes: None,
-            source: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -79,10 +62,10 @@ impl Channel {
 #[derive(Debug, Clone)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
-    Apps(Vec<Application>),
-    /// Detailed form: per-app explicit version range. An empty
+    Shorthand(Vec<Application>),
+    /// Full form: per-app explicit version range. An empty
     /// [`VersionRange`] means "use the value declared in the manifest".
-    Detailed(HashMap<Application, VersionRange>),
+    Full(HashMap<Application, VersionRange>),
 }
 
 impl Serialize for Compatibility {
@@ -91,8 +74,8 @@ impl Serialize for Compatibility {
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         match self {
-            Self::Apps(apps) => apps.serialize(serializer),
-            Self::Detailed(map) => map.serialize(serializer),
+            Self::Shorthand(apps) => apps.serialize(serializer),
+            Self::Full(map) => map.serialize(serializer),
         }
     }
 }
@@ -125,7 +108,7 @@ impl Serialize for Application {
 }
 
 /// Explicit `min` / `max` application version pair used by
-/// [`Compatibility::Detailed`].
+/// [`Compatibility::Full`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct VersionRange {
     /// Minimum compatible application version. `None` defers to the
@@ -138,32 +121,52 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
+/// HS256 JWT credential pair passed to [`Client::new`].
+///
+/// Get the credentials from
+/// <https://addons.mozilla.org/developers/addon/api/key/>.
+#[derive(Clone)]
+pub struct Credentials {
+    /// JWT issuer.
+    pub api_key: String,
+    /// JWT signing secret.
+    pub api_secret: String,
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents: holds the Firefox Add-ons JWT secret.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
+
 /// Client for the Firefox Add-ons Add-on Versions API (v5).
 ///
 /// The client holds the JWT credential pair and a reusable HTTP client; it
 /// is cheap to construct and intended to live for the duration of a single
 /// publish run.
-// Debug intentionally omitted: holds the Firefox Add-ons JWT secret.
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     addon_id: String,
-    issuer: String,
-    secret: String,
+    credentials: Credentials,
     root_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
 impl Client {
     /// Build a client bound to `addon_id`, signing requests with the supplied
-    /// HS256 JWT credential pair (issuer + secret).
-    ///
-    /// Get the credentials from
-    /// <https://addons.mozilla.org/developers/addon/api/key/>.
-    pub fn new(addon_id: String, jwt_issuer: String, jwt_secret: String) -> Result<Self> {
+    /// HS256 JWT [`Credentials`].
+    pub fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             addon_id,
-            issuer: jwt_issuer,
-            secret: jwt_secret,
+            credentials,
             root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
+            },
             http: build_client()?,
         })
     }
@@ -179,33 +182,48 @@ impl Client {
         Ok(self)
     }
 
-    /// Upload `zip` and create a new version on the bound add-on.
+    /// Override the poll config used while waiting for validation to
+    /// finish.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
+    /// Upload `zip` and create a new version on the bound add-on under
+    /// `channel`.
     ///
     /// Waits for Firefox Add-ons validation to finish, creates the new
     /// version, and (when `options.source` is set) attaches the source
-    /// archive. The polling cadence is controlled by `options.poll`.
+    /// archive. The polling cadence is controlled by the client's poll
+    /// config.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::firefox::{Channel, Client, PublishOptions};
+    /// use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
     ///     "myaddon@example.com".into(),
-    ///     "user:12345:6789".into(),
-    ///     "jwt-secret".into(),
+    ///     Credentials {
+    ///         api_key: "user:12345:6789".into(),
+    ///         api_secret: "jwt-secret".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
+    /// client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let upload = self.upload(zip, options.channel).await?;
-        let validated = self
-            .wait_until_validated(&upload.uuid, &options.poll)
-            .await?;
+    pub async fn publish(
+        &self,
+        zip: Vec<u8>,
+        channel: Channel,
+        options: PublishOptions,
+    ) -> Result<()> {
+        let upload = self.upload(zip, channel).await?;
+        let validated = self.wait_until_validated(&upload.uuid).await?;
 
         let version = self
             .create_version(
@@ -260,11 +278,7 @@ impl Client {
         decode_response(resp).await
     }
 
-    async fn wait_until_validated(
-        &self,
-        uuid: &str,
-        config: &PollConfig,
-    ) -> Result<UploadResponse> {
+    async fn wait_until_validated(&self, uuid: &str) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
@@ -302,11 +316,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -388,7 +402,7 @@ impl Client {
     }
 
     fn auth_header(&self) -> Result<String> {
-        let token = generate_jwt(&self.issuer, &self.secret)?;
+        let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret)?;
         Ok(format!("JWT {token}"))
     }
 }
@@ -424,6 +438,18 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let credentials = Credentials {
+            api_key: "issuer".to_string(),
+            api_secret: "secret-jwt".to_string(),
+        };
+        assert!(!format!("{credentials:?}").contains("secret-jwt"));
+
+        let client = Client::new("addon-1".to_string(), credentials).unwrap();
+        assert!(!format!("{client:?}").contains("secret-jwt"));
+    }
 
     #[tokio::test]
     async fn upload_posts_multipart_and_parses_response() {
@@ -470,10 +496,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client
-            .wait_until_validated("uuid-1", &fast_poll())
-            .await
-            .unwrap();
+        let resp = client.wait_until_validated("uuid-1").await.unwrap();
 
         assert_eq!(resp.uuid, "uuid-1");
         assert!(resp.processed);
@@ -500,10 +523,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_validated("uuid-2", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_validated("uuid-2").await.unwrap_err();
 
         match err {
             WepubError::FirefoxValidationFailed { uuid, validation } => {
@@ -526,10 +546,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_validated("uuid-3", &fast_poll())
-            .await
-            .unwrap_err();
+        let err = client.wait_until_validated("uuid-3").await.unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -615,10 +632,12 @@ mod tests {
         let client = client_for(&server);
         let options = PublishOptions {
             source: Some(b"source-zip".to_vec()),
-            poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
+            ..PublishOptions::new()
         };
-        client.publish(b"zip".to_vec(), options).await.unwrap();
+        client
+            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -657,11 +676,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let options = PublishOptions {
-            poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
-        };
-        client.publish(b"zip".to_vec(), options).await.unwrap();
+        client
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -675,11 +693,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let options = PublishOptions {
-            poll: fast_poll(),
-            ..PublishOptions::new(Channel::Listed)
-        };
-        let err = client.publish(b"zip".to_vec(), options).await.unwrap_err();
+        let err = client
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+            .await
+            .unwrap_err();
 
         match err {
             WepubError::HttpStatus { status, body } => {
@@ -704,7 +721,7 @@ mod tests {
 
     #[test]
     fn version_create_body_with_apps_shorthand() {
-        let compat = Compatibility::Apps(vec![Application::Firefox, Application::Android]);
+        let compat = Compatibility::Shorthand(vec![Application::Firefox, Application::Android]);
         let json = body_to_json("uuid-123", Some(&compat), None, None);
         assert_eq!(
             json,
@@ -732,7 +749,7 @@ mod tests {
                 max: None,
             },
         );
-        let compat = Compatibility::Detailed(map);
+        let compat = Compatibility::Full(map);
         let json = body_to_json("uuid-123", Some(&compat), None, None);
 
         assert_eq!(json["upload"], "uuid-123");
@@ -762,7 +779,14 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap();
         let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
@@ -772,17 +796,30 @@ mod tests {
 
     #[test]
     fn with_root_url_overrides_default() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into())
-            .unwrap()
-            .with_root_url("http://127.0.0.1:8000/")
-            .unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap()
+        .with_root_url("http://127.0.0.1:8000/")
+        .unwrap();
         let url = client.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::new("test-addon".into(), "issuer".into(), "secret".into()).unwrap();
+        let client = Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
@@ -790,17 +827,20 @@ mod tests {
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new("test-addon".into(), "issuer".into(), "secret".into())
-            .unwrap()
-            .with_root_url(&server.uri())
-            .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        Client::new(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+        )
+        .unwrap()
+        .with_root_url(&server.uri())
+        .unwrap()
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
+        })
     }
 
     fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {

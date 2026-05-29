@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use wepub_core::firefox::{Application, Channel, Client, Compatibility, PublishOptions};
+use wepub_core::firefox::{
+    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
+};
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
@@ -32,7 +34,13 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         None => None,
     };
 
-    let mut client = Client::new(args.addon_id, args.api_key, args.api_secret)?;
+    let mut client = Client::new(
+        args.addon_id,
+        Credentials {
+            api_key: args.api_key,
+            api_secret: args.api_secret,
+        },
+    )?;
     if let Some(root_url) = args.internal_root_url {
         client = client.with_root_url(root_url.as_str())?;
     }
@@ -42,11 +50,10 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
         release_notes,
         approval_notes,
         source,
-        ..PublishOptions::new(args.channel.into())
     };
 
     client
-        .publish(zip, options)
+        .publish(zip, args.channel.into(), options)
         .await
         .context("Firefox Add-ons publish failed")?;
     Ok(())
@@ -89,7 +96,7 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
         .map(Into::into)
         .filter(|app| seen.insert(*app))
         .collect();
-    Some(Compatibility::Apps(unique))
+    Some(Compatibility::Shorthand(unique))
 }
 
 impl From<FirefoxChannelArg> for Channel {

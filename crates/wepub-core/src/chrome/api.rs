@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Whether to publish immediately on approval, or stage for later
     /// publishing.
@@ -28,32 +29,13 @@ pub struct PublishOptions {
     /// Initial percentage of users to roll the new version out to.
     /// `None` means "use the value configured in the Developer Dashboard".
     pub deploy_percentage: Option<u8>,
-
-    /// Polling cadence and overall timeout used while waiting for the
-    /// asynchronous upload to finish processing.
-    pub poll: PollConfig,
 }
 
 impl PublishOptions {
-    /// Build a `PublishOptions` with the recommended defaults
-    /// (2 second poll interval, 5 minute timeout).
+    /// Build a `PublishOptions` with all fields unset.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            publish_type: None,
-            skip_review: None,
-            deploy_percentage: None,
-            poll: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-        }
-    }
-}
-
-impl Default for PublishOptions {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -68,57 +50,68 @@ pub enum PublishType {
     StagedPublish,
 }
 
+/// OAuth credentials passed to [`Client::new`].
+#[derive(Clone)]
+pub enum Credentials {
+    /// A pre-fetched OAuth access token, used verbatim. Intended for
+    /// [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts).
+    AccessToken(String),
+    /// An OAuth refresh token plus the client credentials needed to redeem
+    /// it for an access token. Obtain them by following the
+    /// [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api).
+    RefreshToken {
+        /// OAuth client ID.
+        client_id: String,
+        /// OAuth client secret.
+        client_secret: String,
+        /// OAuth refresh token.
+        refresh_token: String,
+    },
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents: every variant carries OAuth secrets.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
+            Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
+        }
+    }
+}
+
 /// Client for the Chrome Web Store Publish API (v2).
 ///
 /// The client holds OAuth credentials and a reusable HTTP client; it is cheap
 /// to construct and intended to live for the duration of a single publish
 /// run.
-// Debug intentionally omitted: holds OAuth credentials.
+// Debug derive is safe: the credentials field redacts its own contents.
+#[derive(Debug, Clone)]
 pub struct Client {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
     root_url: Url,
     token_url: Url,
+    poll_config: PollConfig,
     http: reqwest::Client,
 }
 
 impl Client {
-    /// Build a client from a pre-fetched OAuth access token.
-    ///
-    /// Intended for service-account authentication. The token is used
-    /// verbatim; this constructor never touches the OAuth token endpoint.
-    pub fn from_access_token(
-        publisher_id: String,
-        item_id: String,
-        access_token: String,
-    ) -> Result<Self> {
-        Self::from_credentials(
+    /// Build a client bound to `publisher_id` / `item_id`, authenticating
+    /// with the supplied [`Credentials`].
+    pub fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
+        Ok(Self {
             publisher_id,
             item_id,
-            Credentials::AccessToken(access_token),
-        )
-    }
-
-    /// Build a client from a long-lived OAuth refresh token.
-    ///
-    /// An access token is fetched lazily during [`publish`](Client::publish).
-    pub fn new(
-        publisher_id: String,
-        item_id: String,
-        client_id: String,
-        client_secret: String,
-        refresh_token: String,
-    ) -> Result<Self> {
-        Self::from_credentials(
-            publisher_id,
-            item_id,
-            Credentials::ClientCredentials {
-                client_id,
-                client_secret,
-                refresh_token,
+            credentials,
+            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
+            poll_config: PollConfig {
+                interval: DEFAULT_POLL_INTERVAL,
+                timeout: DEFAULT_POLL_TIMEOUT,
             },
-        )
+            http: build_client()?,
+        })
     }
 
     /// Override the Chrome Web Store API root URL.
@@ -141,26 +134,36 @@ impl Client {
         Ok(self)
     }
 
+    /// Override the poll config used while waiting for the upload to
+    /// finish processing.
+    #[must_use]
+    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
+        self.poll_config = poll_config;
+        self
+    }
+
     /// Upload `zip` and submit the resulting item version for publish.
     ///
     /// If the upload is still in progress when it is accepted, the call
-    /// polls for completion according to `options.poll` until the upload
-    /// succeeds or the timeout elapses. A publish request that reaches a
-    /// terminal failure state is reported as
+    /// polls for completion according to the client's poll config until the
+    /// upload succeeds or the timeout elapses. A publish request that reaches
+    /// a terminal failure state is reported as
     /// [`WepubError::ChromePublishFailed`].
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn run() -> wepub_core::Result<()> {
-    /// use wepub_core::chrome::{Client, PublishOptions, PublishType};
+    /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
     ///
     /// let client = Client::new(
     ///     "publisher-1".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
-    ///     "client-id".into(),
-    ///     "client-secret".into(),
-    ///     "refresh-token".into(),
+    ///     Credentials::RefreshToken {
+    ///         client_id: "client-id".into(),
+    ///         client_secret: "client-secret".into(),
+    ///         refresh_token: "refresh-token".into(),
+    ///     },
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
     /// client
@@ -176,10 +179,9 @@ impl Client {
     /// # }
     /// ```
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let token = self.get_token().await?;
+        let token = self.get_or_refresh_token().await?;
         let initial = self.upload(&token, zip).await?;
-        self.wait_until_uploaded(&token, initial, &options.poll)
-            .await?;
+        self.wait_until_uploaded(&token, initial).await?;
         self.submit_for_publish(&token, &options).await?;
         Ok(())
     }
@@ -188,10 +190,10 @@ impl Client {
         join_endpoint(&self.root_url, path)
     }
 
-    async fn get_token(&self) -> Result<String> {
+    async fn get_or_refresh_token(&self) -> Result<String> {
         match &self.credentials {
             Credentials::AccessToken(token) => Ok(token.clone()),
-            Credentials::ClientCredentials {
+            Credentials::RefreshToken {
                 client_id,
                 client_secret,
                 refresh_token,
@@ -239,7 +241,6 @@ impl Client {
         &self,
         token: &str,
         initial_state: UploadState,
-        config: &PollConfig,
     ) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
@@ -288,11 +289,11 @@ impl Client {
             }
 
             let elapsed = started.elapsed();
-            if elapsed >= config.timeout {
+            if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
 
-            tokio::time::sleep(config.interval).await;
+            tokio::time::sleep(self.poll_config.interval).await;
         }
     }
 
@@ -354,31 +355,6 @@ impl Client {
         );
         Ok(parsed)
     }
-
-    fn from_credentials(
-        publisher_id: String,
-        item_id: String,
-        credentials: Credentials,
-    ) -> Result<Self> {
-        Ok(Self {
-            publisher_id,
-            item_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
-            http: build_client()?,
-        })
-    }
-}
-
-// Debug and Clone intentionally omitted: holds OAuth secrets / refresh token.
-enum Credentials {
-    AccessToken(String),
-    ClientCredentials {
-        client_id: String,
-        client_secret: String,
-        refresh_token: String,
-    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,6 +426,27 @@ mod tests {
 
     const TEST_TOKEN: &str = "test-access-token";
 
+    #[test]
+    fn debug_redacts_secrets() {
+        let access = Credentials::AccessToken("secret-token".to_string());
+        assert!(!format!("{access:?}").contains("secret-token"));
+
+        let credentials = Credentials::RefreshToken {
+            client_id: "client-id".to_string(),
+            client_secret: "secret-client".to_string(),
+            refresh_token: "secret-refresh".to_string(),
+        };
+        let credentials_debug = format!("{credentials:?}");
+        assert!(!credentials_debug.contains("secret-client"));
+        assert!(!credentials_debug.contains("secret-refresh"));
+
+        let client =
+            Client::new("publisher-1".to_string(), "item-1".to_string(), credentials).unwrap();
+        let client_debug = format!("{client:?}");
+        assert!(!client_debug.contains("secret-client"));
+        assert!(!client_debug.contains("secret-refresh"));
+    }
+
     #[tokio::test]
     async fn new_refreshes_token_before_calling_api() {
         let server = MockServer::start().await;
@@ -480,9 +477,11 @@ mod tests {
         let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "client-id".to_string(),
-            "client-secret".to_string(),
-            "refresh-token".to_string(),
+            Credentials::RefreshToken {
+                client_id: "client-id".to_string(),
+                client_secret: "client-secret".to_string(),
+                refresh_token: "refresh-token".to_string(),
+            },
         )
         .unwrap()
         .with_root_url(base.as_str())
@@ -490,7 +489,7 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.get_token().await.unwrap();
+        let token = client.get_or_refresh_token().await.unwrap();
         assert_eq!(token, "fresh-token");
         client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
@@ -603,7 +602,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded)
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -620,7 +619,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed)
             .await
             .unwrap_err();
         match err {
@@ -647,7 +646,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -665,7 +664,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -690,7 +689,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -714,7 +713,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         match err {
@@ -738,7 +737,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &fast_poll())
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -765,7 +764,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap();
         assert_eq!(resp.item_id, "item-1");
@@ -801,7 +800,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = default_options();
+        let mut opts = PublishOptions::new();
         opts.publish_type = Some(PublishType::StagedPublish);
 
         let client = client_for(&server);
@@ -824,7 +823,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = default_options();
+        let mut opts = PublishOptions::new();
         opts.skip_review = Some(true);
         opts.deploy_percentage = Some(50);
 
@@ -847,7 +846,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -873,7 +872,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &default_options())
+            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -906,7 +905,7 @@ mod tests {
 
             let client = client_for(&server);
             let resp = client
-                .submit_for_publish(TEST_TOKEN, &default_options())
+                .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
                 .await
                 .unwrap();
             assert!(
@@ -952,7 +951,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
     }
@@ -992,17 +991,17 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), default_options())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
     }
 
     #[test]
     fn with_root_url_rejects_garbage() {
-        let client = Client::from_access_token(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "token".to_string(),
+            Credentials::AccessToken("token".to_string()),
         )
         .unwrap();
         let Err(err) = client.with_root_url("not a url") else {
@@ -1013,10 +1012,10 @@ mod tests {
 
     #[test]
     fn with_token_url_rejects_garbage() {
-        let client = Client::from_access_token(
+        let client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "token".to_string(),
+            Credentials::AccessToken("token".to_string()),
         )
         .unwrap();
         let Err(err) = client.with_token_url("not a url") else {
@@ -1027,31 +1026,19 @@ mod tests {
 
     fn client_for(server: &MockServer) -> Client {
         let base = server.uri();
-        Client::from_access_token(
+        Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
-            "test-access-token".to_string(),
+            Credentials::AccessToken("test-access-token".to_string()),
         )
         .unwrap()
         .with_root_url(&base)
         .unwrap()
         .with_token_url(&base)
         .unwrap()
-    }
-
-    fn fast_poll() -> PollConfig {
-        PollConfig {
+        .with_poll_config(PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        }
-    }
-
-    fn default_options() -> PublishOptions {
-        PublishOptions {
-            publish_type: None,
-            skip_review: None,
-            deploy_percentage: None,
-            poll: fast_poll(),
-        }
+        })
     }
 }

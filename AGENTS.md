@@ -12,4 +12,8 @@ After editing, run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and
 
 ## Handling secrets
 
-Prevent secret leakage. Authentication headers and the request/response bodies of credential-exchange endpoints (e.g. OAuth token refresh) carry secrets and must not be logged. Types holding secrets must not have implicit output derives like `#[derive(Debug)]` or `#[derive(Serialize)]`.
+Prevent secret leakage.
+
+Authentication headers and the request/response bodies of credential-exchange endpoints (e.g. OAuth token refresh) carry secrets and must not be logged.
+
+Secret values must never reach `Debug` or `Serialize` output. A type that directly holds a secret string must redact it with a hand-written `Debug` impl that emits no field contents (e.g. `f.debug_struct("Credentials").finish_non_exhaustive()`) rather than `#[derive(Debug)]`. Never derive `Serialize` on a secret-holding type.

@@ -20,15 +20,17 @@
 //!
 //! ```no_run
 //! # async fn run() -> wepub_core::Result<()> {
-//! use wepub_core::firefox::{Channel, Client, PublishOptions};
+//! use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
 //!
 //! let client = Client::new(
 //!     "myaddon@example.com".into(),
-//!     "user:12345:6789".into(),
-//!     "jwt-secret".into(),
+//!     Credentials {
+//!         api_key: "user:12345:6789".into(),
+//!         api_secret: "jwt-secret".into(),
+//!     },
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! client.publish(zip, PublishOptions::new(Channel::Listed)).await?;
+//! client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
 //! # Ok(())
 //! # }
 //! ```

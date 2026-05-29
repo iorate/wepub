@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use wepub_core::edge::{Client, PublishOptions};
+use wepub_core::edge::{Client, Credentials, PublishOptions};
 
 use crate::cli::EdgeArgs;
 use crate::commands::common::read_text_input;
@@ -13,12 +13,15 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
 
     let notes = load_notes(args.notes, args.notes_file).await?;
 
-    let client = Client::new(args.product_id, args.client_id, args.api_key)?;
+    let client = Client::new(
+        args.product_id,
+        Credentials {
+            client_id: args.client_id,
+            api_key: args.api_key,
+        },
+    )?;
 
-    let options = PublishOptions {
-        notes,
-        ..PublishOptions::new()
-    };
+    let options = PublishOptions { notes };
 
     client
         .publish(zip, options)
