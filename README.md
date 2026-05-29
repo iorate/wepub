@@ -6,17 +6,9 @@
 
 A CLI to publish browser extensions to web stores.
 
-Chrome Web Store, Firefox Add-ons and Edge Add-ons are supported. Only existing items can be updated; the initial submission of a new extension still has to go through each store's web UI or developer dashboard.
+Chrome Web Store, Firefox Add-ons, and Edge Add-ons are supported.
 
-## Install
-
-```sh
-cargo install wepub
-```
-
-Requires Rust 1.88+.
-
-## Quick start
+## Examples
 
 ### Chrome Web Store
 
@@ -42,21 +34,57 @@ wepub firefox ./my-addon.zip \
 ### Edge Add-ons
 
 ```sh
-wepub edge ./my-extension.zip \
+wepub edge ./my-addon.zip \
   --product-id "..." \
   --client-id  "..." \
   --api-key    "..."
 ```
 
+## Install
+
+Shell script (macOS / Linux):
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/iorate/wepub/releases/latest/download/wepub-installer.sh | sh
+```
+
+PowerShell (Windows):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/iorate/wepub/releases/latest/download/wepub-installer.ps1 | iex"
+```
+
+Homebrew:
+
+```sh
+brew install iorate/tap/wepub
+```
+
+npm:
+
+```sh
+npm install -g @iorate/wepub
+```
+
+Cargo (requires Rust 1.88+):
+
+```sh
+cargo install wepub
+```
+
+Prebuilt binaries for macOS, Linux, and Windows are also on the [release page](https://github.com/iorate/wepub/releases/latest).
+
 ## Usage
+
+Only existing items can be updated; the initial submission of a new extension still has to go through each store's web UI.
 
 ### Chrome Web Store
 
-Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token.
+Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret, and refresh token.
 
 Alternatively, pass a pre-fetched OAuth access token via `--access-token` instead of a refresh token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts). The two authentication modes are mutually exclusive.
 
-Credentials and IDs can also be supplied via environment variables:
+IDs and credentials are required and can be supplied via flags or environment variables:
 
 | Flag               | Environment variable           |
 | ------------------ | ------------------------------ |
@@ -79,7 +107,7 @@ Other flags:
 
 Get a JWT credential pair from the [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
 
-Credentials can also be supplied via environment variables:
+IDs and credentials are required and can be supplied via flags or environment variables:
 
 | Flag              | Environment variable           |
 | ----------------- | ------------------------------ |
@@ -106,7 +134,7 @@ Enable the Update REST API at the [Partner Center developer dashboard](https://p
 
 The product ID is the GUID shown on the **Extension overview** page in Partner Center.
 
-Credentials and IDs can also be supplied via environment variables:
+IDs and credentials are required and can be supplied via flags or environment variables:
 
 | Flag              | Environment variable        |
 | ----------------- | --------------------------- |
@@ -123,29 +151,17 @@ Other flags:
 
 ### `.env` file
 
-`wepub` reads a `.env` file from the current working directory at startup. Any `KEY=VALUE` lines populate the process environment for subsequent flag resolution, so the `WEPUB_*` variables documented above can live in `.env` alongside your project. Existing shell environment values take precedence over `.env` entries.
+`wepub` reads a `.env` file from the current working directory at startup, so the `WEPUB_*` variables above can live there. Existing shell environment values take precedence over `.env` entries.
 
 ### Logging
 
-- Default: `INFO` level (upload / validation progress visible)
-- `-v` / `--verbose`: `DEBUG`
-- `-q` / `--quiet`: `WARN+` only
-- `RUST_LOG`: takes precedence (e.g. `RUST_LOG=trace`)
+| Flag                | Log level |
+| ------------------- | --------- |
+| (none)              | `INFO`    |
+| `-v` / `--verbose`  | `DEBUG`   |
+| `-q` / `--quiet`    | `WARN`    |
 
-## Development
-
-This is a Cargo workspace with two crates:
-
-- `crates/wepub-core` — async library that talks to store APIs (built on `reqwest` + `tokio`)
-- `crates/wepub` — CLI binary (`#[tokio::main]`, `clap`)
-
-```sh
-cargo build
-cargo test
-cargo clippy --all-targets -- -D warnings
-```
-
-Pre-commit hooks (`prek`) run `cargo fmt --check` and `cargo clippy` on Rust file changes.
+`RUST_LOG` overrides the above (e.g. `RUST_LOG=trace`).
 
 ## License
 
