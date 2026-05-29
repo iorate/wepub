@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/iorate/wepub/compare/v0.5.1...v0.6.0)
+
+### 🐛 Bug Fixes
+
+
+- [**breaking**] Remove WepubError::Internal in favor of expect on impossible states ([#46](https://github.com/iorate/wepub/pull/46)) - ([5a8eca3](https://github.com/iorate/wepub/commit/5a8eca3a829f73868c9203f7c19590abd490e9b3))
+
+
 ## [0.5.1](https://github.com/iorate/wepub/compare/v0.5.0...v0.5.1)
 
 ### 📚 Documentation
