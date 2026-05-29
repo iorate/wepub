@@ -21,8 +21,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] creates the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
-    /// Application compatibility declarations. `None` falls back to whatever
-    /// the manifest's `strict_min_version` / `strict_max_version` declare.
+    /// Application compatibility declarations.
     pub compatibility: Option<Compatibility>,
     /// Release notes keyed by locale code (e.g. `"en-US"`).
     pub release_notes: Option<HashMap<String, String>>,
