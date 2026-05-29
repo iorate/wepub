@@ -123,8 +123,8 @@ pub struct VersionRange {
 
 /// HS256 JWT credential pair passed to [`Client::new`].
 ///
-/// Get the credentials from
-/// <https://addons.mozilla.org/developers/addon/api/key/>.
+/// Get the credentials from the
+/// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
 #[derive(Clone)]
 pub struct Credentials {
     /// JWT issuer.

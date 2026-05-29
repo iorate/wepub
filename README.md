@@ -52,9 +52,9 @@ wepub edge ./my-extension.zip \
 
 ### Chrome Web Store
 
-Follow the [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token.
+Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret and refresh token.
 
-Alternatively, pass a pre-fetched OAuth access token via `--access-token`. Use this for [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts); see Google's docs for how to obtain the token. The two authentication modes are mutually exclusive.
+Alternatively, pass a pre-fetched OAuth access token via `--access-token` instead of a refresh token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts). The two authentication modes are mutually exclusive.
 
 Credentials and IDs can also be supplied via environment variables:
 
@@ -77,7 +77,7 @@ Other flags:
 
 ### Firefox Add-ons
 
-Get a JWT credential pair from <https://addons.mozilla.org/developers/addon/api/key/>.
+Get a JWT credential pair from the [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
 
 Credentials can also be supplied via environment variables:
 

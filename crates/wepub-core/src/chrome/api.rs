@@ -53,12 +53,13 @@ pub enum PublishType {
 /// OAuth credentials passed to [`Client::new`].
 #[derive(Clone)]
 pub enum Credentials {
-    /// A pre-fetched OAuth access token, used verbatim. Intended for
-    /// [service-account auth](https://developer.chrome.com/docs/webstore/service-accounts).
+    /// A pre-fetched OAuth access token, used verbatim. Suitable for
+    /// automated workflows that authenticate with a
+    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
     AccessToken(String),
     /// An OAuth refresh token plus the client credentials needed to redeem
-    /// it for an access token. Obtain them by following the
-    /// [Chrome Web Store API setup guide](https://developer.chrome.com/docs/webstore/using-api).
+    /// it for an access token. Obtain them by following
+    /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
     RefreshToken {
         /// OAuth client ID.
         client_id: String,
