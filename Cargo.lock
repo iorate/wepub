@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "wepub"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "wepub-core"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "jsonwebtoken",
  "reqwest",

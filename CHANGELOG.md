@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/iorate/wepub/compare/v0.4.3...v0.5.0)
+
+### ⛰️ Features
+
+
+- [**breaking**] Introduce per-store Credentials type and tidy Client APIs ([#39](https://github.com/iorate/wepub/pull/39)) - ([6b9f152](https://github.com/iorate/wepub/commit/6b9f1526da9d6beffe9afc7761149f65523b6426))
+
+### 📚 Documentation
+
+
+- Tidy store credential setup links ([#41](https://github.com/iorate/wepub/pull/41)) - ([cdc6fb8](https://github.com/iorate/wepub/commit/cdc6fb8edf7a82924deb0eb10cbd83e9b647b6da))
+
+
 ## [0.4.3](https://github.com/iorate/wepub/compare/v0.4.2...v0.4.3)
 
 ### 🐛 Bug Fixes
