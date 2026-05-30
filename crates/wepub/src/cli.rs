@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(short = 'v', long = "verbose", global = true)]
     pub verbose: bool,
 
-    /// Suppress non-warning logs.
+    /// Suppress info-level logs.
     #[arg(short = 'q', long = "quiet", global = true, conflicts_with = "verbose")]
     pub quiet: bool,
 
@@ -38,11 +38,11 @@ pub struct ChromeArgs {
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,
 
-    /// Publisher ID under which the item is registered.
+    /// Publisher ID (UUID).
     #[arg(long, env = "WEPUB_CHROME_PUBLISHER_ID")]
     pub publisher_id: String,
 
-    /// Item ID (the 32-character extension ID).
+    /// Item ID (32-character string).
     #[arg(long, env = "WEPUB_CHROME_ITEM_ID")]
     pub item_id: String,
 
@@ -58,11 +58,11 @@ pub struct ChromeArgs {
     #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
     pub refresh_token: Option<String>,
 
-    /// Pre-fetched OAuth access token (for service-account auth).
+    /// Pre-fetched OAuth access token.
     #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
     pub access_token: Option<String>,
 
-    /// Whether to publish on approval or stage for later publishing.
+    /// Whether to publish immediately on approval or stage for later publishing.
     #[arg(long, value_enum)]
     pub publish_type: Option<ChromePublishTypeArg>,
 
@@ -93,19 +93,19 @@ pub enum ChromePublishTypeArg {
         .args(["approval_notes", "approval_notes_file"]),
 ))]
 pub struct FirefoxArgs {
-    /// Path to the extension archive (zip).
+    /// Path to the add-on archive (zip).
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,
 
-    /// Add-on ID (e.g. "myaddon@example.com").
+    /// Add-on ID (slug or GUID).
     #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
     pub addon_id: String,
 
-    /// Firefox Add-ons API key (JWT issuer).
+    /// API key (JWT issuer).
     #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
     pub api_key: String,
 
-    /// Firefox Add-ons API secret (JWT secret).
+    /// API secret (JWT secret).
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
     pub api_secret: String,
 
@@ -169,19 +169,19 @@ pub enum FirefoxApplicationArg {
         .args(["notes", "notes_file"]),
 ))]
 pub struct EdgeArgs {
-    /// Path to the extension archive (zip).
+    /// Path to the add-on archive (zip).
     #[arg(value_name = "ZIP")]
     pub zip: PathBuf,
 
-    /// Edge Add-ons product ID (GUID).
+    /// Product ID (GUID).
     #[arg(long, env = "WEPUB_EDGE_PRODUCT_ID")]
     pub product_id: String,
 
-    /// Partner Center Client ID.
+    /// Client ID.
     #[arg(long, env = "WEPUB_EDGE_CLIENT_ID")]
     pub client_id: String,
 
-    /// Partner Center API key.
+    /// API key.
     #[arg(long, env = "WEPUB_EDGE_API_KEY")]
     pub api_key: String,
 
