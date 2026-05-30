@@ -13,26 +13,23 @@ pub enum WepubError {
     HttpStatus {
         /// HTTP status code.
         status: u16,
-        /// Response body, as received (possibly empty).
+        /// Response body, as received.
         body: String,
     },
 
-    /// A URL passed in by the caller (typically through one of the `with_*`
-    /// builders) failed to parse.
+    /// A URL passed in by the caller failed to parse.
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
 
-    /// Local filesystem I/O failed (e.g. could not read the source zip).
+    /// Local filesystem I/O failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Underlying transport failure surfaced by `reqwest` (DNS, TCP, TLS,
-    /// connect / read / overall timeout, body read error, etc.).
+    /// An error from the underlying HTTP client.
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
 
-    /// A polling loop exceeded the `PollConfig::timeout` budget without
-    /// reaching a terminal state.
+    /// A polling loop exceeded the timeout without reaching a terminal state.
     #[error("polling timed out after {elapsed:?}")]
     PollTimeout {
         /// Total elapsed time before giving up.
@@ -40,18 +37,15 @@ pub enum WepubError {
     },
 
     /// The server returned a response that violated the documented wire
-    /// shape: malformed JSON, missing required fields, missing required
-    /// headers, or an enum value the API documents as never appearing.
-    /// Against a conforming server this should not happen; reaching this
-    /// variant points at an API change or a server-side bug.
+    /// format.
     #[error("unexpected response: {detail}")]
     UnexpectedResponse {
-        /// Short description of the wire-shape violation.
+        /// Short description of the wire-format violation.
         detail: String,
     },
 
-    /// Chrome Web Store reported the asynchronous upload as failed.
-    #[error("chrome upload failed for item {item_id}: {reason}")]
+    /// Chrome Web Store reported the upload as failed.
+    #[error("upload failed for item {item_id}: {reason}")]
     ChromeUploadFailed {
         /// Chrome Web Store item id.
         item_id: String,
@@ -59,9 +53,8 @@ pub enum WepubError {
         reason: String,
     },
 
-    /// Chrome Web Store accepted the publish request but reported the
-    /// item as having reached a terminal failure state.
-    #[error("chrome publish failed for item {item_id}: {reason}")]
+    /// Chrome Web Store accepted the publish as failed.
+    #[error("publish failed for item {item_id}: {reason}")]
     ChromePublishFailed {
         /// Chrome Web Store item id.
         item_id: String,
@@ -70,7 +63,7 @@ pub enum WepubError {
     },
 
     /// Firefox Add-ons reported the upload as having failed validation.
-    #[error("firefox validation failed for upload {uuid}: {validation}")]
+    #[error("validation failed for upload {uuid}: {validation}")]
     FirefoxValidationFailed {
         /// Firefox Add-ons upload UUID.
         uuid: String,
@@ -78,20 +71,19 @@ pub enum WepubError {
         validation: String,
     },
 
-    /// Edge Add-ons reported the upload operation as failed.
-    #[error("edge upload failed for product {product_id}: {operation}")]
+    /// Edge Add-ons reported the upload as failed.
+    #[error("upload failed for product {product_id}: {operation}")]
     EdgeUploadFailed {
-        /// Edge product id.
+        /// Edge Add-ons product id.
         product_id: String,
         /// Operation status response, pretty-printed.
         operation: String,
     },
 
-    /// Edge Add-ons reported the publish operation as failed (including
-    /// the documented "unexpected failure" response shape).
-    #[error("edge publish failed for product {product_id}: {operation}")]
+    /// Edge Add-ons reported the publish as failed.
+    #[error("publish failed for product {product_id}: {operation}")]
     EdgePublishFailed {
-        /// Edge product id.
+        /// Edge Add-ons product id.
         product_id: String,
         /// Operation status response, pretty-printed.
         operation: String,

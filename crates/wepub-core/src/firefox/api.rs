@@ -23,7 +23,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub struct PublishOptions {
     /// Application compatibility declarations.
     pub compatibility: Option<Compatibility>,
-    /// Release notes keyed by locale code (e.g. `"en-US"`).
+    /// Release notes keyed by locale code.
     pub release_notes: Option<HashMap<String, String>>,
     /// Information for Mozilla reviewers.
     pub approval_notes: Option<String>,
@@ -39,10 +39,10 @@ impl PublishOptions {
     }
 }
 
-/// Version channel for a Firefox Add-ons version.
+/// Version channel. Determines visibility on the site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
-    /// Listed on addons.mozilla.org. Goes through public review.
+    /// Listed on Firefox Add-ons.
     Listed,
     /// Self-distributed signed build. Reviewed but not listed.
     Unlisted,
@@ -57,20 +57,17 @@ impl Channel {
     }
 }
 
-/// Compatibility declaration sent to Firefox Add-ons when creating the version.
-// untagged: AMO accepts either a bare array or a bare object for `compatibility`,
-// so each variant serializes as its inner value with no discriminant.
+/// Compatibility declaration.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Compatibility {
     /// Shorthand form: list compatible apps; min/max come from the manifest.
     Shorthand(Vec<Application>),
-    /// Full form: per-app explicit version range. An empty
-    /// [`VersionRange`] means "use the value declared in the manifest".
+    /// Full form: per-app explicit version range.
     Full(HashMap<Application, VersionRange>),
 }
 
-/// Firefox Add-ons application identifier used in compatibility declarations.
+/// Application identifier used in compatibility declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Application {
@@ -94,31 +91,26 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// HS256 JWT credential pair passed to [`Client::new`].
+/// API credentials passed to [`Client::new`].
 ///
-/// Get the credentials from the
+/// Obtain them from the
 /// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
 #[derive(Clone)]
 pub struct Credentials {
-    /// JWT issuer.
+    /// API key (JWT issuer).
     pub api_key: String,
-    /// JWT signing secret.
+    /// API secret (JWT secret).
     pub api_secret: String,
 }
 
 impl fmt::Debug for Credentials {
-    // Redact contents: holds the Firefox Add-ons JWT secret.
+    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials").finish_non_exhaustive()
     }
 }
 
-/// Client for the Firefox Add-ons Add-on Versions API (v5).
-///
-/// The client holds the JWT credential pair and a reusable HTTP client; it
-/// is cheap to construct and intended to live for the duration of a single
-/// publish run.
-// Debug derive is safe: the credentials field redacts its own contents.
+/// Client for the Firefox Add-ons API (v5).
 #[derive(Debug, Clone)]
 pub struct Client {
     addon_id: String,
@@ -129,8 +121,8 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client bound to `addon_id`, signing requests with the supplied
-    /// HS256 JWT [`Credentials`].
+    /// Build a client bound to `addon_id`, authenticating with the supplied
+    /// [`Credentials`].
     pub fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             addon_id,
@@ -146,30 +138,20 @@ impl Client {
 
     /// Override the Firefox Add-ons API root URL.
     ///
-    /// Defaults to `https://addons.mozilla.org/`. Intended for tests
-    /// or when pointing at a local `mozilla/addons-server` instance. A
-    /// missing trailing slash is added automatically so that relative paths
-    /// join correctly.
+    /// Defaults to `https://addons.mozilla.org/`.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
-    /// Override the poll config used while waiting for validation to
-    /// finish.
+    /// Override the poll config.
     #[must_use]
     pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
         self.poll_config = poll_config;
         self
     }
 
-    /// Upload `zip` and create a new version on the bound add-on under
-    /// `channel`.
-    ///
-    /// Waits for Firefox Add-ons validation to finish, creates the new
-    /// version, and (when `options.source` is set) attaches the source
-    /// archive. The polling cadence is controlled by the client's poll
-    /// config.
+    /// Upload `zip` and create a new version under `channel`.
     ///
     /// # Examples
     ///

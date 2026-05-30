@@ -29,32 +29,26 @@ impl PublishOptions {
     }
 }
 
-/// Partner Center API credentials passed to [`Client::new`].
+/// API credentials passed to [`Client::new`].
 ///
-/// Obtain them from
-/// <https://partner.microsoft.com/dashboard/microsoftedge/public/login>
-/// under **Microsoft Edge** &gt; **Publish API**.
+/// Obtain them from the **Publish API** page of the
+/// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
 #[derive(Clone)]
 pub struct Credentials {
-    /// Partner Center Client ID.
+    /// Client ID.
     pub client_id: String,
-    /// Partner Center API key.
+    /// API key.
     pub api_key: String,
 }
 
 impl fmt::Debug for Credentials {
-    // Redact contents: holds the Partner Center API key.
+    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials").finish_non_exhaustive()
     }
 }
 
-/// Client for the Edge Add-ons Update REST API (v1.1).
-///
-/// The client holds the Partner Center credentials and a reusable HTTP
-/// client; it is cheap to construct and intended to live for the
-/// duration of a single publish run.
-// Debug derive is safe: the credentials field redacts its own contents.
+/// Client for the Edge Add-ons API (v1.1).
 #[derive(Debug, Clone)]
 pub struct Client {
     product_id: String,
@@ -65,8 +59,8 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client bound to `product_id`, signing requests with the
-    /// Partner Center API [`Credentials`].
+    /// Build a client bound to `product_id`, authenticating with the
+    /// supplied [`Credentials`].
     pub fn new(product_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             product_id,
@@ -83,16 +77,12 @@ impl Client {
     /// Override the Edge Add-ons API root URL.
     ///
     /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`.
-    /// Intended for tests that point the client at a mock server. A
-    /// missing trailing slash is added automatically so that relative
-    /// paths join correctly.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
-    /// Override the poll config used while waiting for the upload and
-    /// publish operations to finish.
+    /// Override the poll config used.
     #[must_use]
     pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
         self.poll_config = poll_config;
@@ -100,11 +90,6 @@ impl Client {
     }
 
     /// Upload `zip` and submit the resulting draft for publish.
-    ///
-    /// Waits for the upload to be ingested, submits the draft for
-    /// publish, and waits for the publish operation to complete. The
-    /// polling cadence for both waits is controlled by the client's poll
-    /// config.
     ///
     /// # Examples
     ///
