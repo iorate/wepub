@@ -6,7 +6,7 @@
 
 Asynchronous client library for publishing browser extensions to web stores.
 
-`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `Client` type per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons) and a single `publish` verb that handles upload, validation polling and version submission end-to-end.
+`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `Client` type per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons) and a single `publish` verb.
 
 ## Example
 

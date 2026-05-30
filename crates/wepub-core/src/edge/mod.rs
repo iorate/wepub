@@ -1,9 +1,7 @@
-//! Edge Add-ons Update REST API (v1.1) client.
+//! Edge Add-ons API (v1.1) client.
 //!
-//! The entry point is [`Client`]. Build it with the API credentials
-//! issued by Microsoft Partner Center ([`Client::new`]), then call
-//! [`Client::publish`] to upload a packaged extension and submit it
-//! for review.
+//! The entry point is [`Client`]. Build it with [`Client::new`], then
+//! call [`Client::publish`] to publish an add-on.
 
 mod api;
 

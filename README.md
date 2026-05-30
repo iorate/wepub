@@ -99,13 +99,13 @@ Other flags:
 
 | Flag                  | Description                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------ |
-| `--publish-type`      | Whether to publish on approval (`default`) or stage for later publishing (`staged`).                   |
+| `--publish-type`      | Whether to publish immediately on approval (`default`) or stage for later publishing (`staged`).       |
 | `--deploy-percentage` | Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.                        |
 | `--skip-review`       | Attempt to skip item review (`true` or `false`).                                                       |
 
 ### Firefox Add-ons
 
-Get a JWT credential pair from the [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
+Obtain an API key and an API secret from the [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
 
 IDs and credentials are required and can be supplied via flags or environment variables:
 
@@ -120,7 +120,7 @@ Other flags:
 | Flag                    | Description                                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------- |
 | `--channel`             | **Required.** Version channel (`listed` or `unlisted`). Determines visibility on the site.        |
-| `--compatibility`       | Compatible applications, comma-separated (`firefox`, `android`).                                  |
+| `--compatibility`       | Compatible applications, comma-separated (e.g. `firefox,android`).                                |
 | `--approval-notes`      | Information for Mozilla reviewers. Mutually exclusive with `--approval-notes-file`.               |
 | `--approval-notes-file` | Path to a file containing approval notes. Use `-` for stdin.                                      |
 | `--release-notes`       | Release notes. Mutually exclusive with `--release-notes-file`.                                    |
@@ -130,7 +130,7 @@ Other flags:
 
 ### Edge Add-ons
 
-Enable the Update REST API at the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login) (Microsoft Edge → Publish API → **Create API credentials**) to obtain a Client ID and an API key.
+Obtain a client ID and an API key from the **Publish API** page of the [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
 
 The product ID is the GUID shown on the **Extension overview** page in Partner Center.
 

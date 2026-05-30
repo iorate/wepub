@@ -19,7 +19,7 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
-    /// Whether to publish immediately on approval, or stage for later
+    /// Whether to publish immediately on approval or stage for later
     /// publishing.
     pub publish_type: Option<PublishType>,
 
@@ -39,14 +39,14 @@ impl PublishOptions {
     }
 }
 
-/// Whether a new version goes live immediately on approval or is staged for
+/// Whether a new version is published immediately on approval or staged for
 /// later publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PublishType {
     /// Publish immediately on approval.
     DefaultPublish,
-    /// Stage for publishing in the future.
+    /// Stage for later publishing.
     StagedPublish,
 }
 
@@ -71,7 +71,7 @@ pub enum Credentials {
 }
 
 impl fmt::Debug for Credentials {
-    // Redact contents: every variant carries OAuth secrets.
+    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
@@ -80,12 +80,7 @@ impl fmt::Debug for Credentials {
     }
 }
 
-/// Client for the Chrome Web Store Publish API (v2).
-///
-/// The client holds OAuth credentials and a reusable HTTP client; it is cheap
-/// to construct and intended to live for the duration of a single publish
-/// run.
-// Debug derive is safe: the credentials field redacts its own contents.
+/// Client for the Chrome Web Store API (v2).
 #[derive(Debug, Clone)]
 pub struct Client {
     publisher_id: String,
@@ -99,7 +94,7 @@ pub struct Client {
 
 impl Client {
     /// Build a client bound to `publisher_id` / `item_id`, authenticating
-    /// with the supplied [`Credentials`].
+    /// with the supplied `credentials`.
     pub fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             publisher_id,
@@ -117,9 +112,7 @@ impl Client {
 
     /// Override the Chrome Web Store API root URL.
     ///
-    /// Defaults to `https://chromewebstore.googleapis.com/`. Intended for
-    /// tests that point the client at a mock server. A missing trailing
-    /// slash is added automatically so that relative paths join correctly.
+    /// Defaults to `https://chromewebstore.googleapis.com/`.
     pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
@@ -127,29 +120,21 @@ impl Client {
 
     /// Override the Google OAuth token endpoint URL.
     ///
-    /// Defaults to `https://oauth2.googleapis.com/token`. Intended for tests;
-    /// only consulted when the client was built with [`Client::new`].
+    /// Defaults to `https://oauth2.googleapis.com/token`.
     pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
         self.token_url = Url::parse(token_url)
             .map_err(|e| WepubError::InvalidUrl(format!("{token_url:?}: {e}")))?;
         Ok(self)
     }
 
-    /// Override the poll config used while waiting for the upload to
-    /// finish processing.
+    /// Override the poll config.
     #[must_use]
     pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
         self.poll_config = poll_config;
         self
     }
 
-    /// Upload `zip` and submit the resulting item version for publish.
-    ///
-    /// If the upload is still in progress when it is accepted, the call
-    /// polls for completion according to the client's poll config until the
-    /// upload succeeds or the timeout elapses. A publish request that reaches
-    /// a terminal failure state is reported as
-    /// [`WepubError::ChromePublishFailed`].
+    /// Upload `zip` and submit the resulting draft for publish.
     ///
     /// # Examples
     ///
@@ -158,7 +143,7 @@ impl Client {
     /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
     ///
     /// let client = Client::new(
-    ///     "publisher-1".into(),
+    ///     "abcd1234-ef56-7890-abcd-ef1234567890".into(),
     ///     "abcdefghijklmnopabcdefghijklmnop".into(),
     ///     Credentials::RefreshToken {
     ///         client_id: "client-id".into(),
