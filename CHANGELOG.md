@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/iorate/wepub/compare/v0.6.0...v0.6.1)
+
+### 📚 Documentation
+
+
+- Trim redundant doc comments and align store API references ([#49](https://github.com/iorate/wepub/pull/49)) - ([22e4898](https://github.com/iorate/wepub/commit/22e48983f1fe524bce0e9d22a8fd3c1376960161))
+
+
 ## [0.6.0](https://github.com/iorate/wepub/compare/v0.5.1...v0.6.0)
 
 ### 🐛 Bug Fixes
