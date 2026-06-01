@@ -20,20 +20,20 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     init_tracing(cli.verbose, cli.quiet);
 
-    match dispatch(cli.command).await {
+    match dispatch(cli.command, cli.quiet).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            tracing::error!("{err:#}");
+            eprintln!("error: {err:#}");
             ExitCode::FAILURE
         }
     }
 }
 
-async fn dispatch(command: Commands) -> Result<()> {
+async fn dispatch(command: Commands, quiet: bool) -> Result<()> {
     match command {
-        Commands::Chrome(args) => commands::chrome::run(args).await,
-        Commands::Firefox(args) => commands::firefox::run(args).await,
-        Commands::Edge(args) => commands::edge::run(args).await,
+        Commands::Chrome(args) => commands::chrome::run(args, quiet).await,
+        Commands::Firefox(args) => commands::firefox::run(args, quiet).await,
+        Commands::Edge(args) => commands::edge::run(args, quiet).await,
     }
 }
 
@@ -45,9 +45,8 @@ fn init_tracing(verbose: bool, quiet: bool) {
     } else {
         "info"
     };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(format!("wepub={default_level},wepub_core={default_level}"))
-    });
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(format!("wepub_core={default_level}")));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

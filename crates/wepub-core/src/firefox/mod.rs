@@ -7,5 +7,6 @@ mod api;
 mod auth;
 
 pub use api::{
-    Application, Channel, Client, Compatibility, Credentials, PublishOptions, VersionRange,
+    Application, Channel, Client, Compatibility, Credentials, Progress, PublishOptions,
+    VersionRange,
 };

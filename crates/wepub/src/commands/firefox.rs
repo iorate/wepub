@@ -3,13 +3,13 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use wepub_core::firefox::{
-    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
+    Application, Channel, Client, Compatibility, Credentials, Progress, PublishOptions,
 };
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
 
-pub async fn run(args: FirefoxArgs) -> Result<()> {
+pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
     if is_stdin_path(args.release_notes_file.as_deref())
         && is_stdin_path(args.approval_notes_file.as_deref())
     {
@@ -53,10 +53,25 @@ pub async fn run(args: FirefoxArgs) -> Result<()> {
     };
 
     client
-        .publish(zip, args.channel.into(), options)
+        .publish(zip, args.channel.into(), options, |progress| {
+            report(progress, quiet);
+        })
         .await
-        .context("Firefox Add-ons publish failed")?;
+        .context("Firefox Add-ons")?;
     Ok(())
+}
+
+fn report(progress: Progress, quiet: bool) {
+    if quiet {
+        return;
+    }
+    match progress {
+        Progress::Uploading => eprintln!("Uploading to Firefox Add-ons..."),
+        Progress::PollingValidation => eprintln!("Waiting for validation..."),
+        Progress::CreatingVersion => eprintln!("Creating the new version..."),
+        Progress::UploadingSource => eprintln!("Uploading the source archive..."),
+        Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
+    }
 }
 
 fn is_stdin_path(path: Option<&Path>) -> bool {

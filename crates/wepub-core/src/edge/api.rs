@@ -29,6 +29,21 @@ impl PublishOptions {
     }
 }
 
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the upload status.
+    PollingUpload,
+    /// Publishing the draft.
+    Publishing,
+    /// Polling the publish status.
+    PollingPublish,
+    /// Publishing succeeded.
+    Succeeded,
+}
+
 /// API credentials passed to [`Client::new`].
 ///
 /// Obtain them from the **Publish API** page of the
@@ -89,7 +104,7 @@ impl Client {
         self
     }
 
-    /// Upload `zip` and submit the resulting draft for publish.
+    /// Upload `zip` and publish the draft.
     ///
     /// # Examples
     ///
@@ -105,25 +120,34 @@ impl Client {
     ///     },
     /// )?;
     /// let zip = std::fs::read("./extension.zip")?;
-    /// client.publish(zip, PublishOptions::new()).await?;
+    /// client.publish(zip, PublishOptions::new(), |_progress| {}).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let upload_op = self.upload(zip).await?;
-        self.wait_until_uploaded(&upload_op).await?;
+    pub async fn publish(
+        &self,
+        zip: Vec<u8>,
+        options: PublishOptions,
+        on_progress: impl Fn(Progress) + Send + Sync,
+    ) -> Result<()> {
+        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
+        let upload_op = self.upload(zip, on_progress).await?;
+        self.wait_until_uploaded(&upload_op, on_progress).await?;
 
-        let publish_op = self.submit_for_publish(options.notes.as_deref()).await?;
-        self.wait_until_published(&publish_op).await?;
+        let publish_op = self
+            .do_publish(options.notes.as_deref(), on_progress)
+            .await?;
+        self.wait_until_published(&publish_op, on_progress).await?;
 
         Ok(())
     }
 
-    async fn upload(&self, zip: Vec<u8>) -> Result<String> {
-        tracing::info!(
-            product_id = %self.product_id,
-            "uploading"
-        );
+    async fn upload(
+        &self,
+        zip: Vec<u8>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<String> {
+        on_progress(Progress::Uploading);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
@@ -145,7 +169,11 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_uploaded(&self, operation_id: &str) -> Result<()> {
+    async fn wait_until_uploaded(
+        &self,
+        operation_id: &str,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/draft/package/operations/{operation_id}",
             self.product_id
@@ -153,10 +181,7 @@ impl Client {
         let started = Instant::now();
 
         loop {
-            tracing::info!(
-                product_id = %self.product_id,
-                "polling upload status"
-            );
+            on_progress(Progress::PollingUpload);
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
@@ -188,11 +213,12 @@ impl Client {
         }
     }
 
-    async fn submit_for_publish(&self, notes: Option<&str>) -> Result<String> {
-        tracing::info!(
-            product_id = %self.product_id,
-            "submitting for publish"
-        );
+    async fn do_publish(
+        &self,
+        notes: Option<&str>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<String> {
+        on_progress(Progress::Publishing);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
@@ -214,7 +240,11 @@ impl Client {
         Self::extract_operation_id(resp).await
     }
 
-    async fn wait_until_published(&self, operation_id: &str) -> Result<()> {
+    async fn wait_until_published(
+        &self,
+        operation_id: &str,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<()> {
         let url = self.endpoint(&format!(
             "v1/products/{}/submissions/operations/{operation_id}",
             self.product_id
@@ -222,10 +252,7 @@ impl Client {
         let started = Instant::now();
 
         loop {
-            tracing::info!(
-                product_id = %self.product_id,
-                "polling publish status"
-            );
+            on_progress(Progress::PollingPublish);
             let method = reqwest::Method::GET;
             log_request(&method, &url);
             let resp = self
@@ -239,11 +266,7 @@ impl Client {
 
             match body.status {
                 Some(OperationStatus::Succeeded) => {
-                    tracing::info!(
-                        product_id = %self.product_id,
-                        message = body.message.as_deref(),
-                        "publish succeeded"
-                    );
+                    on_progress(Progress::Succeeded);
                     return Ok(());
                 }
                 Some(OperationStatus::Failed) | None => {
@@ -370,7 +393,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
+        let op_id = client.upload(b"FAKE_ZIP".to_vec(), &|_| {}).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -383,7 +406,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -402,7 +425,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -436,7 +459,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.wait_until_uploaded("op-1").await.unwrap();
+        client.wait_until_uploaded("op-1", &|_| {}).await.unwrap();
     }
 
     #[tokio::test]
@@ -454,7 +477,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_uploaded("op-2").await.unwrap_err();
+        let err = client
+            .wait_until_uploaded("op-2", &|_| {})
+            .await
+            .unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -490,7 +516,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_uploaded("up-u").await.unwrap_err();
+        let err = client
+            .wait_until_uploaded("up-u", &|_| {})
+            .await
+            .unwrap_err();
         match err {
             WepubError::EdgeUploadFailed {
                 product_id,
@@ -518,7 +547,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_uploaded("op-3").await.unwrap_err();
+        let err = client
+            .wait_until_uploaded("op-3", &|_| {})
+            .await
+            .unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -526,7 +558,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_posts_notes_as_plain_text_body() {
+    async fn do_publish_posts_notes_as_plain_text_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(format!("/v1/products/{PRODUCT_ID}/submissions")))
@@ -543,7 +575,7 @@ mod tests {
 
         let client = client_for(&server);
         let op_id = client
-            .submit_for_publish(Some("for reviewers"))
+            .do_publish(Some("for reviewers"), &|_| {})
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
@@ -558,7 +590,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_sends_empty_body_when_notes_none() {
+    async fn do_publish_sends_empty_body_when_notes_none() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(format!("/v1/products/{PRODUCT_ID}/submissions")))
@@ -569,7 +601,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client.submit_for_publish(None).await.unwrap();
+        let op_id = client.do_publish(None, &|_| {}).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -607,7 +639,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.wait_until_published("pub-1").await.unwrap();
+        client.wait_until_published("pub-1", &|_| {}).await.unwrap();
     }
 
     #[tokio::test]
@@ -649,7 +681,10 @@ mod tests {
                 .await;
 
             let client = client_for(&server);
-            let err = client.wait_until_published("pub-x").await.unwrap_err();
+            let err = client
+                .wait_until_published("pub-x", &|_| {})
+                .await
+                .unwrap_err();
             match err {
                 WepubError::EdgePublishFailed {
                     product_id,
@@ -682,7 +717,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_published("pub-u").await.unwrap_err();
+        let err = client
+            .wait_until_published("pub-u", &|_| {})
+            .await
+            .unwrap_err();
         match err {
             WepubError::EdgePublishFailed {
                 product_id,
@@ -749,7 +787,10 @@ mod tests {
         let options = PublishOptions {
             notes: Some("ship it".into()),
         };
-        client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
+        client
+            .publish(b"FAKE_ZIP".to_vec(), options, |_| {})
+            .await
+            .unwrap();
     }
 
     #[test]
