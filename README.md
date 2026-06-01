@@ -42,6 +42,12 @@ wepub edge ./my-addon.zip \
 
 ## Install
 
+GitHub Actions, via [setup-wepub](https://github.com/iorate/setup-wepub):
+
+```yaml
+uses: iorate/setup-wepub@v1
+```
+
 Shell script (macOS / Linux):
 
 ```sh
