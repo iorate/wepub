@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use wepub_core::edge::{Client, Credentials, PublishOptions};
+use wepub_core::edge::{Client, Credentials, Progress, PublishOptions};
 
 use crate::cli::EdgeArgs;
 use crate::commands::common::read_text_input;
 
-pub async fn run(args: EdgeArgs) -> Result<()> {
+pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
     let zip = tokio::fs::read(&args.zip)
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
@@ -24,10 +24,23 @@ pub async fn run(args: EdgeArgs) -> Result<()> {
     let options = PublishOptions { notes };
 
     client
-        .publish(zip, options)
+        .publish(zip, options, |progress| report(progress, quiet))
         .await
-        .context("Edge Add-ons publish failed")?;
+        .context("Edge Add-ons")?;
     Ok(())
+}
+
+fn report(progress: Progress, quiet: bool) {
+    if quiet {
+        return;
+    }
+    match progress {
+        Progress::Uploading => eprintln!("Uploading to Edge Add-ons..."),
+        Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
+        Progress::Publishing => eprintln!("Publishing..."),
+        Progress::PollingPublish => eprintln!("Waiting for the submission to be published..."),
+        Progress::Succeeded => eprintln!("Published to Edge Add-ons."),
+    }
 }
 
 async fn load_notes(notes: Option<String>, notes_file: Option<PathBuf>) -> Result<Option<String>> {

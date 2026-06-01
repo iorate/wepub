@@ -39,6 +39,21 @@ impl PublishOptions {
     }
 }
 
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the validation status.
+    PollingValidation,
+    /// Creating the new version.
+    CreatingVersion,
+    /// Uploading the source archive.
+    UploadingSource,
+    /// Publishing succeeded.
+    Succeeded,
+}
+
 /// Version channel. Determines visibility on the site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
@@ -168,7 +183,7 @@ impl Client {
     ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
+    /// client.publish(zip, Channel::Listed, PublishOptions::new(), |_progress| {}).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -177,9 +192,11 @@ impl Client {
         zip: Vec<u8>,
         channel: Channel,
         options: PublishOptions,
+        on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
-        let upload = self.upload(zip, channel).await?;
-        let validated = self.wait_until_validated(&upload.uuid).await?;
+        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
+        let upload = self.upload(zip, channel, on_progress).await?;
+        let validated = self.wait_until_validated(&upload.uuid, on_progress).await?;
 
         let version = self
             .create_version(
@@ -187,27 +204,26 @@ impl Client {
                 options.compatibility.as_ref(),
                 options.release_notes.as_ref(),
                 options.approval_notes.as_deref(),
+                on_progress,
             )
             .await?;
 
         if let Some(source) = options.source {
-            self.patch_version_source(version.id, source).await?;
+            self.patch_version_source(version.id, source, on_progress)
+                .await?;
         }
 
-        tracing::info!(
-            addon_id = %self.addon_id,
-            version_id = version.id,
-            "publish succeeded"
-        );
+        on_progress(Progress::Succeeded);
         Ok(())
     }
 
-    async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<UploadResponse> {
-        tracing::info!(
-            addon_id = %self.addon_id,
-            channel = channel.as_str(),
-            "uploading"
-        );
+    async fn upload(
+        &self,
+        zip: Vec<u8>,
+        channel: Channel,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<UploadResponse> {
+        on_progress(Progress::Uploading);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint("api/v5/addons/upload/")?;
@@ -234,16 +250,16 @@ impl Client {
         decode_response(resp).await
     }
 
-    async fn wait_until_validated(&self, uuid: &str) -> Result<UploadResponse> {
+    async fn wait_until_validated(
+        &self,
+        uuid: &str,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<UploadResponse> {
         let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
         loop {
-            tracing::info!(
-                addon_id = %self.addon_id,
-                uuid = %uuid,
-                "polling upload status"
-            );
+            on_progress(Progress::PollingValidation);
             let method = reqwest::Method::GET;
             let auth = self.auth_header();
             log_request(&method, &url);
@@ -286,12 +302,9 @@ impl Client {
         compatibility: Option<&Compatibility>,
         release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<VersionResponse> {
-        tracing::info!(
-            addon_id = %self.addon_id,
-            uuid = upload_uuid,
-            "submitting for publish"
-        );
+        on_progress(Progress::CreatingVersion);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
@@ -320,12 +333,9 @@ impl Client {
         &self,
         version_id: u64,
         source: Vec<u8>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<VersionResponse> {
-        tracing::info!(
-            addon_id = %self.addon_id,
-            version_id,
-            "uploading source"
-        );
+        on_progress(Progress::UploadingSource);
 
         let method = reqwest::Method::PATCH;
         let url = self.endpoint(&format!(
@@ -422,7 +432,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .upload(b"fake-zip".to_vec(), Channel::Listed)
+            .upload(b"fake-zip".to_vec(), Channel::Listed, &|_| {})
             .await
             .unwrap();
 
@@ -452,7 +462,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client.wait_until_validated("uuid-1").await.unwrap();
+        let resp = client
+            .wait_until_validated("uuid-1", &|_| {})
+            .await
+            .unwrap();
 
         assert_eq!(resp.uuid, "uuid-1");
         assert!(resp.processed);
@@ -479,7 +492,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_validated("uuid-2").await.unwrap_err();
+        let err = client
+            .wait_until_validated("uuid-2", &|_| {})
+            .await
+            .unwrap_err();
 
         match err {
             WepubError::FirefoxValidationFailed { uuid, validation } => {
@@ -502,7 +518,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.wait_until_validated("uuid-3").await.unwrap_err();
+        let err = client
+            .wait_until_validated("uuid-3", &|_| {})
+            .await
+            .unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -523,7 +542,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .create_version("uuid-x", None, None, None)
+            .create_version("uuid-x", None, None, None, &|_| {})
             .await
             .unwrap();
 
@@ -543,7 +562,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .patch_version_source(4242, b"source-zip".to_vec())
+            .patch_version_source(4242, b"source-zip".to_vec(), &|_| {})
             .await
             .unwrap();
 
@@ -591,7 +610,7 @@ mod tests {
             ..PublishOptions::new()
         };
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options)
+            .publish(b"zip".to_vec(), Channel::Listed, options, |_| {})
             .await
             .unwrap();
     }
@@ -633,7 +652,12 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+            .publish(
+                b"zip".to_vec(),
+                Channel::Listed,
+                PublishOptions::new(),
+                |_| {},
+            )
             .await
             .unwrap();
     }
@@ -650,7 +674,12 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+            .publish(
+                b"zip".to_vec(),
+                Channel::Listed,
+                PublishOptions::new(),
+                |_| {},
+            )
             .await
             .unwrap_err();
 

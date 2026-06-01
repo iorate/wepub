@@ -5,4 +5,4 @@
 
 mod api;
 
-pub use api::{Client, Credentials, PublishOptions};
+pub use api::{Client, Credentials, Progress, PublishOptions};

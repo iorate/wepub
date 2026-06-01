@@ -39,6 +39,19 @@ impl PublishOptions {
     }
 }
 
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the upload status.
+    PollingUpload,
+    /// Publishing the item.
+    Publishing,
+    /// Publishing succeeded.
+    Succeeded,
+}
+
 /// Whether a new version is published immediately on approval or staged for
 /// later publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -134,7 +147,7 @@ impl Client {
         self
     }
 
-    /// Upload `zip` and submit the resulting draft for publish.
+    /// Upload `zip` and publish the item.
     ///
     /// # Examples
     ///
@@ -159,16 +172,24 @@ impl Client {
     ///             publish_type: Some(PublishType::StagedPublish),
     ///             ..PublishOptions::new()
     ///         },
+    ///         |_progress| {},
     ///     )
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+    pub async fn publish(
+        &self,
+        zip: Vec<u8>,
+        options: PublishOptions,
+        on_progress: impl Fn(Progress) + Send + Sync,
+    ) -> Result<()> {
+        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
         let token = self.get_or_refresh_token().await?;
-        let initial = self.upload(&token, zip).await?;
-        self.wait_until_uploaded(&token, initial).await?;
-        self.submit_for_publish(&token, &options).await?;
+        let initial = self.upload(&token, zip, on_progress).await?;
+        self.wait_until_uploaded(&token, initial, on_progress)
+            .await?;
+        self.do_publish(&token, &options, on_progress).await?;
         Ok(())
     }
 
@@ -196,12 +217,13 @@ impl Client {
         }
     }
 
-    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<UploadState> {
-        tracing::info!(
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id,
-            "uploading"
-        );
+    async fn upload(
+        &self,
+        token: &str,
+        zip: Vec<u8>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<UploadState> {
+        on_progress(Progress::Uploading);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
@@ -227,6 +249,7 @@ impl Client {
         &self,
         token: &str,
         initial_state: UploadState,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadState> {
         let url = self.endpoint(&format!(
             "v2/publishers/{}/items/{}:fetchStatus",
@@ -242,11 +265,7 @@ impl Client {
                 initial = false;
                 Some(initial_state)
             } else {
-                tracing::info!(
-                    publisher_id = %self.publisher_id,
-                    item_id = %self.item_id,
-                    "polling upload status"
-                );
+                on_progress(Progress::PollingUpload);
                 let method = reqwest::Method::GET;
                 log_request(&method, &url);
                 let resp = self
@@ -262,10 +281,9 @@ impl Client {
             let reason = match state {
                 Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
                 Some(UploadState::InProgress) => None,
-                Some(UploadState::Failed) => Some("upload failed"),
-                // Absent `lastAsyncUploadState` is documented as "no async
-                // upload in the past 24 hours" - same as NOT_FOUND for us.
-                Some(UploadState::NotFound) | None => Some("upload not found"),
+                Some(UploadState::Failed) => Some("failed"),
+                Some(UploadState::NotFound) => Some("not found"),
+                None => Some("no upload state"),
             };
             if let Some(reason) = reason {
                 return Err(WepubError::ChromeUploadFailed {
@@ -283,16 +301,13 @@ impl Client {
         }
     }
 
-    async fn submit_for_publish(
+    async fn do_publish(
         &self,
         token: &str,
         options: &PublishOptions,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<PublishResponse> {
-        tracing::info!(
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id,
-            "submitting for publish"
-        );
+        on_progress(Progress::Publishing);
 
         let method = reqwest::Method::POST;
         let url = self.endpoint(&format!(
@@ -334,11 +349,7 @@ impl Client {
                 reason: reason.to_string(),
             });
         }
-        tracing::info!(
-            item_id = %parsed.item_id,
-            state = ?parsed.state,
-            "publish succeeded"
-        );
+        on_progress(Progress::Succeeded);
         Ok(parsed)
     }
 }
@@ -477,7 +488,10 @@ mod tests {
 
         let token = client.get_or_refresh_token().await.unwrap();
         assert_eq!(token, "fresh-token");
-        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
+        client
+            .upload(&token, b"FAKE".to_vec(), &|_| {})
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -500,7 +514,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
             .await
             .unwrap();
     }
@@ -522,7 +536,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
             .await
             .unwrap();
 
@@ -549,7 +563,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        let resp = client
+            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .await
+            .unwrap();
         assert!(matches!(resp, UploadState::InProgress));
     }
 
@@ -563,7 +580,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec())
+            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
             .await
             .unwrap_err();
         match err {
@@ -588,7 +605,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &|_| {})
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -605,13 +622,13 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &|_| {})
             .await
             .unwrap_err();
         match err {
             WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "upload failed");
+                assert_eq!(reason, "failed");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -632,7 +649,7 @@ mod tests {
 
         let client = client_for(&server);
         let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
             .await
             .unwrap();
         assert!(matches!(state, UploadState::Succeeded));
@@ -650,13 +667,13 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
             .await
             .unwrap_err();
         match err {
             WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "upload failed");
+                assert_eq!(reason, "failed");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -675,13 +692,13 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
             .await
             .unwrap_err();
         match err {
             WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "upload not found");
+                assert_eq!(reason, "no upload state");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -699,13 +716,13 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
             .await
             .unwrap_err();
         match err {
             WepubError::ChromeUploadFailed { item_id, reason } => {
                 assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "upload not found");
+                assert_eq!(reason, "not found");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
         }
@@ -723,7 +740,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress)
+            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
             .await
             .unwrap_err();
         let msg = err.to_string();
@@ -734,7 +751,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_default_sends_minimal_body() {
+    async fn do_publish_default_sends_minimal_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -750,7 +767,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
+            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
             .await
             .unwrap();
         assert_eq!(resp.item_id, "item-1");
@@ -773,7 +790,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_staged_sends_publish_type() {
+    async fn do_publish_staged_sends_publish_type() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -790,12 +807,12 @@ mod tests {
         opts.publish_type = Some(PublishType::StagedPublish);
 
         let client = client_for(&server);
-        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let resp = client.do_publish(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
         assert!(matches!(resp.state, ItemState::Staged));
     }
 
     #[tokio::test]
-    async fn submit_for_publish_with_skip_review_and_deploy_percentage() {
+    async fn do_publish_with_skip_review_and_deploy_percentage() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(body_string_contains("\"skipReview\":true"))
@@ -814,12 +831,12 @@ mod tests {
         opts.deploy_percentage = Some(50);
 
         let client = client_for(&server);
-        let resp = client.submit_for_publish(TEST_TOKEN, &opts).await.unwrap();
+        let resp = client.do_publish(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
         assert!(matches!(resp.state, ItemState::Published));
     }
 
     #[tokio::test]
-    async fn submit_for_publish_errors_on_rejected_state() {
+    async fn do_publish_errors_on_rejected_state() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -832,7 +849,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
+            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
             .await
             .unwrap_err();
         match err {
@@ -845,7 +862,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_errors_on_cancelled_state() {
+    async fn do_publish_errors_on_cancelled_state() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -858,7 +875,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
+            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
             .await
             .unwrap_err();
         match err {
@@ -871,7 +888,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_for_publish_decodes_non_terminal_item_states() {
+    async fn do_publish_decodes_non_terminal_item_states() {
         let cases = [
             ("PENDING_REVIEW", ItemState::PendingReview),
             ("STAGED", ItemState::Staged),
@@ -891,7 +908,7 @@ mod tests {
 
             let client = client_for(&server);
             let resp = client
-                .submit_for_publish(TEST_TOKEN, &PublishOptions::new())
+                .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
                 .await
                 .unwrap();
             assert!(
@@ -937,7 +954,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |_| {})
             .await
             .unwrap();
     }
@@ -977,7 +994,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |_| {})
             .await
             .unwrap();
     }

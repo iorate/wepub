@@ -1,9 +1,9 @@
 use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
+use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 
-pub async fn run(args: ChromeArgs) -> Result<()> {
+pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
     let client = build_client(&args)?;
 
     let zip = tokio::fs::read(&args.zip)
@@ -17,10 +17,22 @@ pub async fn run(args: ChromeArgs) -> Result<()> {
     };
 
     client
-        .publish(zip, options)
+        .publish(zip, options, |progress| report(progress, quiet))
         .await
-        .context("Chrome Web Store publish failed")?;
+        .context("Chrome Web Store")?;
     Ok(())
+}
+
+fn report(progress: Progress, quiet: bool) {
+    if quiet {
+        return;
+    }
+    match progress {
+        Progress::Uploading => eprintln!("Uploading to Chrome Web Store..."),
+        Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
+        Progress::Publishing => eprintln!("Publishing..."),
+        Progress::Succeeded => eprintln!("Published to Chrome Web Store."),
+    }
 }
 
 fn build_client(args: &ChromeArgs) -> Result<Client> {

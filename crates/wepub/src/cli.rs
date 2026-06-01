@@ -10,11 +10,11 @@ use url::Url;
     about = "Publish browser extensions to web stores"
 )]
 pub struct Cli {
-    /// Show debug-level logs.
+    /// Show additional debug logs.
     #[arg(short = 'v', long = "verbose", global = true)]
     pub verbose: bool,
 
-    /// Suppress info-level logs.
+    /// Show only warnings and errors.
     #[arg(short = 'q', long = "quiet", global = true, conflicts_with = "verbose")]
     pub quiet: bool,
 
