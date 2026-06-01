@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use wepub_core::edge::{Client, Credentials, Progress, PublishOptions};
@@ -11,7 +11,8 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
 
-    let notes = load_notes(args.notes, args.notes_file).await?;
+    let notes = load_notes(args.notes, args.notes_file.as_deref()).await?;
+    let options = PublishOptions { notes };
 
     let client = Client::new(
         args.product_id,
@@ -21,13 +22,23 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
         },
     )?;
 
-    let options = PublishOptions { notes };
-
     client
         .publish(zip, options, |progress| report(progress, quiet))
         .await
         .context("Edge Add-ons")?;
     Ok(())
+}
+
+async fn load_notes(notes: Option<String>, notes_file: Option<&Path>) -> Result<Option<String>> {
+    match (notes, notes_file) {
+        (Some(text), _) => Ok(Some(text)),
+        (_, Some(path)) => {
+            Ok(Some(read_text_input(path).await.with_context(|| {
+                format!("failed to read notes from {}", path.display())
+            })?))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn report(progress: Progress, quiet: bool) {
@@ -40,17 +51,5 @@ fn report(progress: Progress, quiet: bool) {
         Progress::Publishing => eprintln!("Publishing..."),
         Progress::PollingPublish => eprintln!("Waiting for the submission to be published..."),
         Progress::Succeeded => eprintln!("Published to Edge Add-ons."),
-    }
-}
-
-async fn load_notes(notes: Option<String>, notes_file: Option<PathBuf>) -> Result<Option<String>> {
-    match (notes, notes_file) {
-        (Some(text), _) => Ok(Some(text)),
-        (_, Some(path)) => {
-            Ok(Some(read_text_input(&path).await.with_context(|| {
-                format!("failed to read notes from {}", path.display())
-            })?))
-        }
-        _ => Ok(None),
     }
 }
