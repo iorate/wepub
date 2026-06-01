@@ -19,21 +19,12 @@ async fn main() -> ExitCode {
 
     let cli = Cli::parse();
     init_tracing(cli.verbose, cli.quiet);
-
     match dispatch(cli.command, cli.quiet).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err:#}");
             ExitCode::FAILURE
         }
-    }
-}
-
-async fn dispatch(command: Commands, quiet: bool) -> Result<()> {
-    match command {
-        Commands::Chrome(args) => commands::chrome::run(args, quiet).await,
-        Commands::Firefox(args) => commands::firefox::run(args, quiet).await,
-        Commands::Edge(args) => commands::edge::run(args, quiet).await,
     }
 }
 
@@ -53,4 +44,12 @@ fn init_tracing(verbose: bool, quiet: bool) {
         .with_target(false)
         .without_time()
         .init();
+}
+
+async fn dispatch(command: Commands, quiet: bool) -> Result<()> {
+    match command {
+        Commands::Chrome(args) => commands::chrome::run(args, quiet).await,
+        Commands::Firefox(args) => commands::firefox::run(args, quiet).await,
+        Commands::Edge(args) => commands::edge::run(args, quiet).await,
+    }
 }
