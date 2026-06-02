@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url},
+    common::{decode_response, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -15,53 +15,6 @@ use super::auth::{DEFAULT_TOKEN_URL, refresh_access_token};
 const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-/// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    /// Whether to publish immediately on approval or stage for later
-    /// publishing.
-    pub publish_type: Option<PublishType>,
-
-    /// Attempt to skip item review.
-    pub skip_review: Option<bool>,
-
-    /// Initial percentage of users to roll the new version out to.
-    /// `None` means "use the value configured in the Developer Dashboard".
-    pub deploy_percentage: Option<u8>,
-}
-
-impl PublishOptions {
-    /// Build a `PublishOptions` with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Progress {
-    /// Uploading the package archive.
-    Uploading,
-    /// Polling the upload status.
-    PollingUpload,
-    /// Publishing the item.
-    Publishing,
-    /// Publishing succeeded.
-    Succeeded,
-}
-
-/// Whether a new version is published immediately on approval or staged for
-/// later publishing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum PublishType {
-    /// Publish immediately on approval.
-    DefaultPublish,
-    /// Stage for later publishing.
-    StagedPublish,
-}
 
 /// OAuth credentials passed to [`Client::new`].
 #[derive(Clone)]
@@ -91,6 +44,53 @@ impl fmt::Debug for Credentials {
             Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
         }
     }
+}
+
+/// Options that shape how [`Client::publish`] submits the new version.
+#[derive(Debug, Clone, Default)]
+pub struct PublishOptions {
+    /// Whether to publish immediately on approval or stage for later
+    /// publishing.
+    pub publish_type: Option<PublishType>,
+
+    /// Initial percentage of users to roll the new version out to.
+    /// `None` means "use the value configured in the Developer Dashboard".
+    pub deploy_percentage: Option<u8>,
+
+    /// Attempt to skip item review.
+    pub skip_review: Option<bool>,
+}
+
+impl PublishOptions {
+    /// Build a `PublishOptions` with all fields unset.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Whether a new version is published immediately on approval or staged for
+/// later publishing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PublishType {
+    /// Publish immediately on approval.
+    DefaultPublish,
+    /// Stage for later publishing.
+    StagedPublish,
+}
+
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the upload status.
+    PollingUpload,
+    /// Publishing the item.
+    Publishing,
+    /// Publishing succeeded.
+    Succeeded,
 }
 
 /// Client for the Chrome Web Store API (v2).
@@ -185,16 +185,17 @@ impl Client {
         on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-        let token = self.get_or_refresh_token().await?;
-        let initial = self.upload(&token, zip, on_progress).await?;
-        self.wait_until_uploaded(&token, initial, on_progress)
-            .await?;
-        self.do_publish(&token, &options, on_progress).await?;
-        Ok(())
-    }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
-        join_endpoint(&self.root_url, path)
+        let token = self.get_or_refresh_token().await?;
+
+        let initial_upload_state = self.upload(&token, zip, on_progress).await?;
+        self.wait_until_uploaded(&token, initial_upload_state, on_progress)
+            .await?;
+
+        self.do_publish(&token, &options, on_progress).await?;
+
+        on_progress(Progress::Succeeded);
+        Ok(())
     }
 
     async fn get_or_refresh_token(&self) -> Result<String> {
@@ -225,24 +226,21 @@ impl Client {
     ) -> Result<UploadState> {
         on_progress(Progress::Uploading);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "upload/v2/publishers/{}/items/{}:upload",
-            self.publisher_id, self.item_id
-        ))?;
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!(
+                "upload/v2/publishers/{}/items/{}:upload",
+                self.publisher_id, self.item_id
+            ))?)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
-            .send()
-            .await?;
+            .build()?;
 
-        let body: UploadResponse = decode_response(resp).await?;
-        Ok(body.upload_state)
+        let resp = send_request(&self.http, req).await?;
+
+        let upload: UploadResponse = decode_response(resp).await?;
+        Ok(upload.upload_state)
     }
 
     async fn wait_until_uploaded(
@@ -251,10 +249,6 @@ impl Client {
         initial_state: UploadState,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadState> {
-        let url = self.endpoint(&format!(
-            "v2/publishers/{}/items/{}:fetchStatus",
-            self.publisher_id, self.item_id
-        ))?;
         let started = Instant::now();
         // First iteration uses the caller-provided state from the initial
         // upload response; subsequent iterations re-fetch from the server.
@@ -266,16 +260,20 @@ impl Client {
                 Some(initial_state)
             } else {
                 on_progress(Progress::PollingUpload);
-                let method = reqwest::Method::GET;
-                log_request(&method, &url);
-                let resp = self
+
+                let req = self
                     .http
-                    .request(method, url.clone())
+                    .get(self.endpoint(&format!(
+                        "v2/publishers/{}/items/{}:fetchStatus",
+                        self.publisher_id, self.item_id
+                    ))?)
                     .bearer_auth(token)
-                    .send()
-                    .await?;
-                let body: FetchStatusResponse = decode_response(resp).await?;
-                body.last_async_upload_state
+                    .build()?;
+
+                let resp = send_request(&self.http, req).await?;
+
+                let status: FetchStatusResponse = decode_response(resp).await?;
+                status.last_async_upload_state
             };
 
             let reason = match state {
@@ -296,7 +294,6 @@ impl Client {
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-
             tokio::time::sleep(self.poll_config.interval).await;
         }
     }
@@ -309,33 +306,29 @@ impl Client {
     ) -> Result<PublishResponse> {
         on_progress(Progress::Publishing);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "v2/publishers/{}/items/{}:publish",
-            self.publisher_id, self.item_id
-        ))?;
-
         let body = PublishRequestBody {
             publish_type: options.publish_type,
-            skip_review: options.skip_review,
             deploy_infos: options.deploy_percentage.map(|p| {
                 vec![DeployInfo {
                     deploy_percentage: p,
                 }]
             }),
+            skip_review: options.skip_review,
         };
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!(
+                "v2/publishers/{}/items/{}:publish",
+                self.publisher_id, self.item_id
+            ))?)
             .bearer_auth(token)
             .json(&body)
-            .send()
-            .await?;
+            .build()?;
 
-        let parsed: PublishResponse = decode_response(resp).await?;
-        let reason = match parsed.state {
+        let resp = send_request(&self.http, req).await?;
+
+        let publish: PublishResponse = decode_response(resp).await?;
+        let reason = match publish.state {
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
@@ -345,12 +338,15 @@ impl Client {
         };
         if let Some(reason) = reason {
             return Err(WepubError::ChromePublishFailed {
-                item_id: parsed.item_id,
+                item_id: publish.item_id,
                 reason: reason.to_string(),
             });
         }
-        on_progress(Progress::Succeeded);
-        Ok(parsed)
+        Ok(publish)
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        join_endpoint(&self.root_url, path)
     }
 }
 
@@ -383,9 +379,9 @@ struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     publish_type: Option<PublishType>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    skip_review: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     deploy_infos: Option<Vec<DeployInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_review: Option<bool>,
 }
 
 #[derive(Serialize)]

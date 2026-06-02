@@ -32,14 +32,6 @@ pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
         .map_err(|e| WepubError::InvalidUrl(format!("{path:?}: {e}")))
 }
 
-pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
-    tracing::debug!(
-        method = %method,
-        url = %url,
-        "sending request",
-    );
-}
-
 pub(crate) async fn send_request(
     client: &reqwest::Client,
     req: reqwest::Request,

@@ -10,8 +10,8 @@ pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
 
     let options = PublishOptions {
         publish_type: args.publish_type.map(Into::into),
-        skip_review: args.skip_review,
         deploy_percentage: args.deploy_percentage,
+        skip_review: args.skip_review,
     };
 
     let client = build_client(args)?;
