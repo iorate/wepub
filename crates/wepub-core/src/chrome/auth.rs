@@ -21,10 +21,11 @@ pub(crate) async fn refresh_access_token(
             ("refresh_token", refresh_token),
         ])
         .build()?;
-    let response = send_request(client, req).await?;
 
-    let status = response.status();
-    let body = response.text().await?;
+    let resp = send_request(client, req).await?;
+
+    let status = resp.status();
+    let body = resp.text().await?;
     // The success body carries the access_token, so mask it in logs.
     // Error bodies (e.g. {"error": "invalid_grant"}) are safe and useful.
     let logged_body: &str = if status.is_success() { "***" } else { &body };
@@ -33,19 +34,17 @@ pub(crate) async fn refresh_access_token(
         body = %logged_body,
         "received response",
     );
-
     if !status.is_success() {
         return Err(WepubError::HttpStatus {
             status: status.as_u16(),
             body,
         });
     }
-
-    let parsed: TokenResponse =
+    let token: TokenResponse =
         serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
             detail: format!("failed to decode token response: {e}"),
         })?;
-    Ok(parsed.access_token)
+    Ok(token.access_token)
 }
 
 #[derive(Deserialize)]
