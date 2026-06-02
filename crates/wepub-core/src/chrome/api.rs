@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -6,7 +7,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url},
+    common::{decode_response, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -16,6 +17,36 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// OAuth credentials passed to [`Client::new`].
+#[derive(Clone)]
+pub enum Credentials {
+    /// An OAuth refresh token plus the client credentials needed to redeem
+    /// it for an access token. Obtain them by following
+    /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
+    RefreshToken {
+        /// OAuth client ID.
+        client_id: String,
+        /// OAuth client secret.
+        client_secret: String,
+        /// OAuth refresh token.
+        refresh_token: String,
+    },
+    /// A pre-fetched OAuth access token, used verbatim. Suitable for
+    /// automated workflows that authenticate with a
+    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
+    AccessToken(String),
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
+            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
+        }
+    }
+}
+
 /// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
@@ -23,12 +54,12 @@ pub struct PublishOptions {
     /// publishing.
     pub publish_type: Option<PublishType>,
 
-    /// Attempt to skip item review.
-    pub skip_review: Option<bool>,
-
     /// Initial percentage of users to roll the new version out to.
     /// `None` means "use the value configured in the Developer Dashboard".
     pub deploy_percentage: Option<u8>,
+
+    /// Attempt to skip item review.
+    pub skip_review: Option<bool>,
 }
 
 impl PublishOptions {
@@ -37,19 +68,6 @@ impl PublishOptions {
     pub fn new() -> Self {
         Self::default()
     }
-}
-
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Progress {
-    /// Uploading the package archive.
-    Uploading,
-    /// Polling the upload status.
-    PollingUpload,
-    /// Publishing the item.
-    Publishing,
-    /// Publishing succeeded.
-    Succeeded,
 }
 
 /// Whether a new version is published immediately on approval or staged for
@@ -63,34 +81,17 @@ pub enum PublishType {
     StagedPublish,
 }
 
-/// OAuth credentials passed to [`Client::new`].
-#[derive(Clone)]
-pub enum Credentials {
-    /// A pre-fetched OAuth access token, used verbatim. Suitable for
-    /// automated workflows that authenticate with a
-    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
-    AccessToken(String),
-    /// An OAuth refresh token plus the client credentials needed to redeem
-    /// it for an access token. Obtain them by following
-    /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
-    RefreshToken {
-        /// OAuth client ID.
-        client_id: String,
-        /// OAuth client secret.
-        client_secret: String,
-        /// OAuth refresh token.
-        refresh_token: String,
-    },
-}
-
-impl fmt::Debug for Credentials {
-    // Redact contents.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
-            Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
-        }
-    }
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the upload status.
+    PollingUpload,
+    /// Publishing the item.
+    Publishing,
+    /// Publishing succeeded.
+    Succeeded,
 }
 
 /// Client for the Chrome Web Store API (v2).
@@ -185,35 +186,37 @@ impl Client {
         on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-        let token = self.get_or_refresh_token().await?;
-        let initial = self.upload(&token, zip, on_progress).await?;
-        self.wait_until_uploaded(&token, initial, on_progress)
+
+        let token = self.resolve_access_token().await?;
+
+        let initial_upload_state = self.upload(&token, zip, on_progress).await?;
+        self.wait_until_uploaded(&token, initial_upload_state, on_progress)
             .await?;
+
         self.do_publish(&token, &options, on_progress).await?;
+
+        on_progress(Progress::Succeeded);
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
-        join_endpoint(&self.root_url, path)
-    }
-
-    async fn get_or_refresh_token(&self) -> Result<String> {
+    async fn resolve_access_token(&self) -> Result<Cow<'_, str>> {
         match &self.credentials {
-            Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::RefreshToken {
                 client_id,
                 client_secret,
                 refresh_token,
             } => {
-                refresh_access_token(
+                let token = refresh_access_token(
                     &self.http,
                     &self.token_url,
                     client_id,
                     client_secret,
                     refresh_token,
                 )
-                .await
+                .await?;
+                Ok(Cow::Owned(token))
             }
+            Credentials::AccessToken(token) => Ok(Cow::Borrowed(token)),
         }
     }
 
@@ -225,24 +228,21 @@ impl Client {
     ) -> Result<UploadState> {
         on_progress(Progress::Uploading);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "upload/v2/publishers/{}/items/{}:upload",
-            self.publisher_id, self.item_id
-        ))?;
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!(
+                "upload/v2/publishers/{}/items/{}:upload",
+                self.publisher_id, self.item_id
+            ))?)
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
-            .send()
-            .await?;
+            .build()?;
 
-        let body: UploadResponse = decode_response(resp).await?;
-        Ok(body.upload_state)
+        let resp = send_request(&self.http, req).await?;
+
+        let upload: UploadResponse = decode_response(resp).await?;
+        Ok(upload.upload_state)
     }
 
     async fn wait_until_uploaded(
@@ -251,10 +251,6 @@ impl Client {
         initial_state: UploadState,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadState> {
-        let url = self.endpoint(&format!(
-            "v2/publishers/{}/items/{}:fetchStatus",
-            self.publisher_id, self.item_id
-        ))?;
         let started = Instant::now();
         // First iteration uses the caller-provided state from the initial
         // upload response; subsequent iterations re-fetch from the server.
@@ -266,16 +262,20 @@ impl Client {
                 Some(initial_state)
             } else {
                 on_progress(Progress::PollingUpload);
-                let method = reqwest::Method::GET;
-                log_request(&method, &url);
-                let resp = self
+
+                let req = self
                     .http
-                    .request(method, url.clone())
+                    .get(self.endpoint(&format!(
+                        "v2/publishers/{}/items/{}:fetchStatus",
+                        self.publisher_id, self.item_id
+                    ))?)
                     .bearer_auth(token)
-                    .send()
-                    .await?;
-                let body: FetchStatusResponse = decode_response(resp).await?;
-                body.last_async_upload_state
+                    .build()?;
+
+                let resp = send_request(&self.http, req).await?;
+
+                let status: FetchStatusResponse = decode_response(resp).await?;
+                status.last_async_upload_state
             };
 
             let reason = match state {
@@ -296,7 +296,6 @@ impl Client {
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-
             tokio::time::sleep(self.poll_config.interval).await;
         }
     }
@@ -309,33 +308,29 @@ impl Client {
     ) -> Result<PublishResponse> {
         on_progress(Progress::Publishing);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "v2/publishers/{}/items/{}:publish",
-            self.publisher_id, self.item_id
-        ))?;
-
         let body = PublishRequestBody {
             publish_type: options.publish_type,
-            skip_review: options.skip_review,
             deploy_infos: options.deploy_percentage.map(|p| {
                 vec![DeployInfo {
                     deploy_percentage: p,
                 }]
             }),
+            skip_review: options.skip_review,
         };
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!(
+                "v2/publishers/{}/items/{}:publish",
+                self.publisher_id, self.item_id
+            ))?)
             .bearer_auth(token)
             .json(&body)
-            .send()
-            .await?;
+            .build()?;
 
-        let parsed: PublishResponse = decode_response(resp).await?;
-        let reason = match parsed.state {
+        let resp = send_request(&self.http, req).await?;
+
+        let publish: PublishResponse = decode_response(resp).await?;
+        let reason = match publish.state {
             ItemState::PendingReview
             | ItemState::Staged
             | ItemState::Published
@@ -345,12 +340,15 @@ impl Client {
         };
         if let Some(reason) = reason {
             return Err(WepubError::ChromePublishFailed {
-                item_id: parsed.item_id,
+                item_id: publish.item_id,
                 reason: reason.to_string(),
             });
         }
-        on_progress(Progress::Succeeded);
-        Ok(parsed)
+        Ok(publish)
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        join_endpoint(&self.root_url, path)
     }
 }
 
@@ -383,9 +381,9 @@ struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     publish_type: Option<PublishType>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    skip_review: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     deploy_infos: Option<Vec<DeployInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_review: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -425,9 +423,6 @@ mod tests {
 
     #[test]
     fn debug_redacts_secrets() {
-        let access = Credentials::AccessToken("secret-token".to_string());
-        assert!(!format!("{access:?}").contains("secret-token"));
-
         let credentials = Credentials::RefreshToken {
             client_id: "client-id".to_string(),
             client_secret: "secret-client".to_string(),
@@ -436,6 +431,9 @@ mod tests {
         let credentials_debug = format!("{credentials:?}");
         assert!(!credentials_debug.contains("secret-client"));
         assert!(!credentials_debug.contains("secret-refresh"));
+
+        let access = Credentials::AccessToken("secret-token".to_string());
+        assert!(!format!("{access:?}").contains("secret-token"));
 
         let client =
             Client::new("publisher-1".to_string(), "item-1".to_string(), credentials).unwrap();
@@ -486,7 +484,7 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.get_or_refresh_token().await.unwrap();
+        let token = client.resolve_access_token().await.unwrap();
         assert_eq!(token, "fresh-token");
         client
             .upload(&token, b"FAKE".to_vec(), &|_| {})
@@ -953,10 +951,22 @@ mod tests {
             .await;
 
         let client = client_for(&server);
+        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |_| {})
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |p| {
+                progress.lock().unwrap().push(p);
+            })
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [
+                Progress::Uploading,
+                Progress::PollingUpload,
+                Progress::Publishing,
+                Progress::Succeeded,
+            ],
+        );
     }
 
     #[tokio::test]

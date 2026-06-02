@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use url::Url;
 
-use crate::{Result, WepubError, common::log_request};
+use crate::{Result, WepubError, common::send_request};
 
 pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
@@ -12,21 +12,20 @@ pub(crate) async fn refresh_access_token(
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<String> {
-    let method = reqwest::Method::POST;
-    log_request(&method, token_url);
-    let response = client
-        .request(method, token_url.clone())
+    let req = client
+        .post(token_url.clone())
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", client_id),
             ("client_secret", client_secret),
             ("refresh_token", refresh_token),
         ])
-        .send()
-        .await?;
+        .build()?;
 
-    let status = response.status();
-    let body = response.text().await?;
+    let resp = send_request(client, req).await?;
+
+    let status = resp.status();
+    let body = resp.text().await?;
     // The success body carries the access_token, so mask it in logs.
     // Error bodies (e.g. {"error": "invalid_grant"}) are safe and useful.
     let logged_body: &str = if status.is_success() { "***" } else { &body };
@@ -35,19 +34,17 @@ pub(crate) async fn refresh_access_token(
         body = %logged_body,
         "received response",
     );
-
     if !status.is_success() {
         return Err(WepubError::HttpStatus {
             status: status.as_u16(),
             body,
         });
     }
-
-    let parsed: TokenResponse =
+    let token: TokenResponse =
         serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
             detail: format!("failed to decode token response: {e}"),
         })?;
-    Ok(parsed.access_token)
+    Ok(token.access_token)
 }
 
 #[derive(Deserialize)]

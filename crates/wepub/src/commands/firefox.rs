@@ -10,29 +10,11 @@ use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::read_text_input;
 
 pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
-    if is_stdin_path(args.release_notes_file.as_deref())
-        && is_stdin_path(args.approval_notes_file.as_deref())
+    if is_stdin_path(args.approval_notes_file.as_deref())
+        && is_stdin_path(args.release_notes_file.as_deref())
     {
-        bail!(
-            "--release-notes-file and --approval-notes-file cannot both read from stdin (\"-\"); \
-             stdin is a single stream"
-        );
+        bail!("--approval-notes-file and --release-notes-file cannot both read from stdin (\"-\")");
     }
-
-    let zip = tokio::fs::read(&args.zip)
-        .await
-        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
-
-    let release_notes = load_release_notes(&args).await?;
-    let approval_notes = load_approval_notes(&args).await?;
-    let source = match &args.source {
-        Some(path) => Some(
-            tokio::fs::read(path)
-                .await
-                .with_context(|| format!("failed to read source from {}", path.display()))?,
-        ),
-        None => None,
-    };
 
     let mut client = Client::new(
         args.addon_id,
@@ -45,59 +27,45 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         client = client.with_root_url(root_url.as_str())?;
     }
 
+    let zip = tokio::fs::read(&args.zip)
+        .await
+        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
+
+    let channel: Channel = args.channel.into();
+
+    let compatibility = build_compatibility(&args.compatibility);
+    let approval_notes =
+        load_approval_notes(args.approval_notes, args.approval_notes_file.as_deref()).await?;
+    let release_notes = load_release_notes(
+        args.release_notes,
+        args.release_notes_file.as_deref(),
+        args.release_notes_lang,
+    )
+    .await?;
+    let source = match &args.source {
+        Some(path) => Some(
+            tokio::fs::read(path)
+                .await
+                .with_context(|| format!("failed to read source from {}", path.display()))?,
+        ),
+        None => None,
+    };
     let options = PublishOptions {
-        compatibility: build_compatibility(&args.compatibility),
-        release_notes,
+        compatibility,
         approval_notes,
+        release_notes,
         source,
     };
 
     client
-        .publish(zip, args.channel.into(), options, |progress| {
-            report(progress, quiet);
-        })
+        .publish(zip, channel, options, |progress| report(progress, quiet))
         .await
         .context("Firefox Add-ons")?;
     Ok(())
 }
 
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
-    }
-    match progress {
-        Progress::Uploading => eprintln!("Uploading to Firefox Add-ons..."),
-        Progress::PollingValidation => eprintln!("Waiting for validation..."),
-        Progress::CreatingVersion => eprintln!("Creating the new version..."),
-        Progress::UploadingSource => eprintln!("Uploading the source archive..."),
-        Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
-    }
-}
-
 fn is_stdin_path(path: Option<&Path>) -> bool {
     path.is_some_and(|p| p.as_os_str() == "-")
-}
-
-async fn load_release_notes(args: &FirefoxArgs) -> Result<Option<HashMap<String, String>>> {
-    let text =
-        match (&args.release_notes, &args.release_notes_file) {
-            (Some(text), _) => Some(text.clone()),
-            (_, Some(path)) => Some(read_text_input(path).await.with_context(|| {
-                format!("failed to read release notes from {}", path.display())
-            })?),
-            _ => None,
-        };
-    Ok(text.map(|t| HashMap::from([(args.release_notes_lang.clone(), t)])))
-}
-
-async fn load_approval_notes(args: &FirefoxArgs) -> Result<Option<String>> {
-    match (&args.approval_notes, &args.approval_notes_file) {
-        (Some(text), _) => Ok(Some(text.clone())),
-        (_, Some(path)) => Ok(Some(read_text_input(path).await.with_context(|| {
-            format!("failed to read approval notes from {}", path.display())
-        })?)),
-        _ => Ok(None),
-    }
 }
 
 fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
@@ -112,6 +80,35 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
         .filter(|app| seen.insert(*app))
         .collect();
     Some(Compatibility::Shorthand(unique))
+}
+
+async fn load_approval_notes(
+    approval_notes: Option<String>,
+    approval_notes_file: Option<&Path>,
+) -> Result<Option<String>> {
+    match (approval_notes, approval_notes_file) {
+        (Some(text), _) => Ok(Some(text)),
+        (_, Some(path)) => Ok(Some(read_text_input(path).await.with_context(|| {
+            format!("failed to read approval notes from {}", path.display())
+        })?)),
+        _ => Ok(None),
+    }
+}
+
+async fn load_release_notes(
+    release_notes: Option<String>,
+    release_notes_file: Option<&Path>,
+    release_notes_lang: String,
+) -> Result<Option<HashMap<String, String>>> {
+    let text =
+        match (release_notes, release_notes_file) {
+            (Some(text), _) => Some(text),
+            (_, Some(path)) => Some(read_text_input(path).await.with_context(|| {
+                format!("failed to read release notes from {}", path.display())
+            })?),
+            _ => None,
+        };
+    Ok(text.map(|t| HashMap::from([(release_notes_lang, t)])))
 }
 
 impl From<FirefoxChannelArg> for Channel {
@@ -129,5 +126,18 @@ impl From<FirefoxApplicationArg> for Application {
             FirefoxApplicationArg::Firefox => Application::Firefox,
             FirefoxApplicationArg::Android => Application::Android,
         }
+    }
+}
+
+fn report(progress: Progress, quiet: bool) {
+    if quiet {
+        return;
+    }
+    match progress {
+        Progress::Uploading => eprintln!("Uploading to Firefox Add-ons..."),
+        Progress::PollingValidation => eprintln!("Waiting for validation..."),
+        Progress::CreatingVersion => eprintln!("Creating the new version..."),
+        Progress::UploadingSource => eprintln!("Uploading the source archive..."),
+        Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
     }
 }

@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 /// Error type returned by every fallible call in this crate.
 #[derive(Debug, Error)]
 pub enum WepubError {
-    /// The remote returned a non-2xx HTTP status.
+    /// The server returned a non-2xx HTTP status.
     #[error("HTTP error (status {status}): {body}")]
     HttpStatus {
         /// HTTP status code.
@@ -17,7 +17,7 @@ pub enum WepubError {
         body: String,
     },
 
-    /// A URL passed in by the caller failed to parse.
+    /// An invalid URL was provided.
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
 

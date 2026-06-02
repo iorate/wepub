@@ -24,11 +24,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Upload a zip and submit a new version to Chrome Web Store.
+    /// Publish to Chrome Web Store.
     Chrome(ChromeArgs),
-    /// Upload a zip and submit a new version to Firefox Add-ons.
+    /// Publish to Firefox Add-ons.
     Firefox(FirefoxArgs),
-    /// Upload a zip and submit a new version to Edge Add-ons.
+    /// Publish to Edge Add-ons.
     Edge(EdgeArgs),
 }
 

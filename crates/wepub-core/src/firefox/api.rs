@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
+    common::{decode_response, join_endpoint, parse_root_url, send_request, to_pretty_string},
     http::build_client,
 };
 
@@ -18,15 +18,34 @@ const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// API credentials passed to [`Client::new`].
+///
+/// Obtain them from the
+/// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
+#[derive(Clone)]
+pub struct Credentials {
+    /// API key (JWT issuer).
+    pub api_key: String,
+    /// API secret (JWT secret).
+    pub api_secret: String,
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
+
 /// Options that shape how [`Client::publish`] creates the new version.
 #[derive(Debug, Clone, Default)]
 pub struct PublishOptions {
     /// Application compatibility declarations.
     pub compatibility: Option<Compatibility>,
-    /// Release notes keyed by locale code.
-    pub release_notes: Option<HashMap<String, String>>,
     /// Information for Mozilla reviewers.
     pub approval_notes: Option<String>,
+    /// Release notes keyed by locale code.
+    pub release_notes: Option<HashMap<String, String>>,
     /// Source archive to attach to the version.
     pub source: Option<Vec<u8>>,
 }
@@ -37,21 +56,6 @@ impl PublishOptions {
     pub fn new() -> Self {
         Self::default()
     }
-}
-
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Progress {
-    /// Uploading the package archive.
-    Uploading,
-    /// Polling the validation status.
-    PollingValidation,
-    /// Creating the new version.
-    CreatingVersion,
-    /// Uploading the source archive.
-    UploadingSource,
-    /// Publishing succeeded.
-    Succeeded,
 }
 
 /// Version channel. Determines visibility on the site.
@@ -107,23 +111,19 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// API credentials passed to [`Client::new`].
-///
-/// Obtain them from the
-/// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
-#[derive(Clone)]
-pub struct Credentials {
-    /// API key (JWT issuer).
-    pub api_key: String,
-    /// API secret (JWT secret).
-    pub api_secret: String,
-}
-
-impl fmt::Debug for Credentials {
-    // Redact contents.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credentials").finish_non_exhaustive()
-    }
+/// Progress events reported by [`Client::publish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Progress {
+    /// Uploading the package archive.
+    Uploading,
+    /// Polling the validation status.
+    PollingValidation,
+    /// Creating the new version.
+    CreatingVersion,
+    /// Uploading the source archive.
+    UploadingSource,
+    /// Publishing succeeded.
+    Succeeded,
 }
 
 /// Client for the Firefox Add-ons API (v5).
@@ -195,19 +195,19 @@ impl Client {
         on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
+
         let upload = self.upload(zip, channel, on_progress).await?;
-        let validated = self.wait_until_validated(&upload.uuid, on_progress).await?;
+        let upload = self.wait_until_validated(&upload.uuid, on_progress).await?;
 
         let version = self
             .create_version(
-                &validated.uuid,
+                &upload.uuid,
                 options.compatibility.as_ref(),
-                options.release_notes.as_ref(),
                 options.approval_notes.as_deref(),
+                options.release_notes.as_ref(),
                 on_progress,
             )
             .await?;
-
         if let Some(source) = options.source {
             self.patch_version_source(version.id, source, on_progress)
                 .await?;
@@ -225,10 +225,6 @@ impl Client {
     ) -> Result<UploadResponse> {
         on_progress(Progress::Uploading);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint("api/v5/addons/upload/")?;
-        let auth = self.auth_header();
-
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
             .file_name("addon.zip")
@@ -237,15 +233,14 @@ impl Client {
         let form = Form::new()
             .part("upload", part)
             .text("channel", channel.as_str());
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
-            .header(reqwest::header::AUTHORIZATION, auth)
+            .post(self.endpoint("api/v5/addons/upload/")?)
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
-            .send()
-            .await?;
+            .build()?;
+
+        let resp = send_request(&self.http, req).await?;
 
         decode_response(resp).await
     }
@@ -255,35 +250,32 @@ impl Client {
         uuid: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadResponse> {
-        let url = self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?;
         let started = Instant::now();
 
         loop {
             on_progress(Progress::PollingValidation);
-            let method = reqwest::Method::GET;
-            let auth = self.auth_header();
-            log_request(&method, &url);
-            let resp = self
-                .http
-                .request(method, url.clone())
-                .header(reqwest::header::AUTHORIZATION, auth)
-                .send()
-                .await?;
-            let upload: UploadResponse = decode_response(resp).await?;
 
+            let req = self
+                .http
+                .get(self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?)
+                .header(reqwest::header::AUTHORIZATION, self.auth_header())
+                .build()?;
+
+            let resp = send_request(&self.http, req).await?;
+
+            let upload: UploadResponse = decode_response(resp).await?;
             if upload.processed {
                 if upload.valid {
                     return Ok(upload);
                 }
                 let Some(validation) = upload.validation.as_ref() else {
                     return Err(WepubError::UnexpectedResponse {
-                        detail: "upload reported valid=false without a validation field"
-                            .to_string(),
+                        detail: "missing validation field".to_string(),
                     });
                 };
                 return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
-                    validation: pretty_json(validation),
+                    validation: to_pretty_string(validation),
                 });
             }
 
@@ -291,7 +283,6 @@ impl Client {
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-
             tokio::time::sleep(self.poll_config.interval).await;
         }
     }
@@ -300,31 +291,26 @@ impl Client {
         &self,
         upload_uuid: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
+        release_notes: Option<&HashMap<String, String>>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<VersionResponse> {
         on_progress(Progress::CreatingVersion);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?;
-        let auth = self.auth_header();
-
         let body = VersionCreateBody {
             upload: upload_uuid,
             compatibility,
-            release_notes,
             approval_notes,
+            release_notes,
         };
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
-            .header(reqwest::header::AUTHORIZATION, auth)
+            .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?)
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .json(&body)
-            .send()
-            .await?;
+            .build()?;
+
+        let resp = send_request(&self.http, req).await?;
 
         decode_response(resp).await
     }
@@ -337,28 +323,23 @@ impl Client {
     ) -> Result<VersionResponse> {
         on_progress(Progress::UploadingSource);
 
-        let method = reqwest::Method::PATCH;
-        let url = self.endpoint(&format!(
-            "api/v5/addons/addon/{}/versions/{version_id}/",
-            self.addon_id
-        ))?;
-        let auth = self.auth_header();
-
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
             .file_name("source.zip")
             .mime_str("application/zip")
             .expect("\"application/zip\" is a valid MIME type");
         let form = Form::new().part("source", part);
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
-            .header(reqwest::header::AUTHORIZATION, auth)
+            .patch(self.endpoint(&format!(
+                "api/v5/addons/addon/{}/versions/{version_id}/",
+                self.addon_id
+            ))?)
+            .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
-            .send()
-            .await?;
+            .build()?;
+
+        let resp = send_request(&self.http, req).await?;
 
         decode_response(resp).await
     }
@@ -388,9 +369,9 @@ struct VersionCreateBody<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     compatibility: Option<&'a Compatibility>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    release_notes: Option<&'a HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release_notes: Option<&'a HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -609,10 +590,23 @@ mod tests {
             source: Some(b"source-zip".to_vec()),
             ..PublishOptions::new()
         };
+        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options, |_| {})
+            .publish(b"zip".to_vec(), Channel::Listed, options, |p| {
+                progress.lock().unwrap().push(p);
+            })
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [
+                Progress::Uploading,
+                Progress::PollingValidation,
+                Progress::CreatingVersion,
+                Progress::UploadingSource,
+                Progress::Succeeded,
+            ],
+        );
     }
 
     #[tokio::test]
@@ -754,7 +748,7 @@ mod tests {
         notes.insert("en-US".into(), "Hello".into());
         notes.insert("ja".into(), "こんにちは".into());
 
-        let json = body_to_json("uuid-123", None, Some(&notes), Some("for reviewers"));
+        let json = body_to_json("uuid-123", None, Some("for reviewers"), Some(&notes));
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(json["release_notes"]["en-US"], "Hello");
@@ -844,14 +838,14 @@ mod tests {
     fn body_to_json(
         upload: &str,
         compatibility: Option<&Compatibility>,
-        release_notes: Option<&HashMap<String, String>>,
         approval_notes: Option<&str>,
+        release_notes: Option<&HashMap<String, String>>,
     ) -> serde_json::Value {
         serde_json::to_value(VersionCreateBody {
             upload,
             compatibility,
-            release_notes,
             approval_notes,
+            release_notes,
         })
         .unwrap()
     }
