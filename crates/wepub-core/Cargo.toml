@@ -23,9 +23,9 @@ tracing = "0.1.44"
 url = "2.5.8"
 uuid = { version = "1.23.1", features = ["v4"] }
 
-[lints]
-workspace = true
-
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
 wiremock = "0.6.5"
+
+[lints]
+workspace = true
