@@ -83,6 +83,7 @@ pub enum PublishType {
 
 /// Progress events reported by [`Client::publish`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
     Uploading,

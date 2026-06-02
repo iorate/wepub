@@ -7,6 +7,7 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 
 /// Error type returned by every fallible call in this crate.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum WepubError {
     /// The server returned a non-2xx HTTP status.
     #[error("HTTP error (status {status}): {body}")]
