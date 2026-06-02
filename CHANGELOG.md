@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/iorate/wepub/compare/v0.7.0...v0.7.1)
+
+### 🐛 Bug Fixes
+
+
+- Group global options under their own help heading ([#68](https://github.com/iorate/wepub/pull/68)) - ([98ce56c](https://github.com/iorate/wepub/commit/98ce56ce874284fb31b1fe25c5a63400d8e60590))
+
+
 ## [0.7.0](https://github.com/iorate/wepub/compare/v0.6.1...v0.7.0)
 
 ### ⛰️ Features
