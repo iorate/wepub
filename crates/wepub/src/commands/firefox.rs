@@ -7,7 +7,7 @@ use wepub_core::firefox::{
 };
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
-use crate::commands::common::read_text_input;
+use crate::commands::common::{read_binary_input, resolve_text_input};
 
 pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
@@ -27,27 +27,26 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         client = client.with_root_url(root_url.as_str())?;
     }
 
-    let zip = tokio::fs::read(&args.zip)
-        .await
-        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
+    let zip = read_binary_input(&args.zip, "package").await?;
 
     let channel: Channel = args.channel.into();
 
     let compatibility = build_compatibility(&args.compatibility);
-    let approval_notes =
-        load_approval_notes(args.approval_notes, args.approval_notes_file.as_deref()).await?;
-    let release_notes = load_release_notes(
-        args.release_notes,
-        args.release_notes_file.as_deref(),
-        args.release_notes_lang,
+    let approval_notes = resolve_text_input(
+        args.approval_notes,
+        args.approval_notes_file.as_deref(),
+        "approval notes",
     )
     .await?;
+    let release_notes = resolve_text_input(
+        args.release_notes,
+        args.release_notes_file.as_deref(),
+        "release notes",
+    )
+    .await?
+    .map(|text| HashMap::from([(args.release_notes_lang, text)]));
     let source = match &args.source {
-        Some(path) => Some(
-            tokio::fs::read(path)
-                .await
-                .with_context(|| format!("failed to read source from {}", path.display()))?,
-        ),
+        Some(path) => Some(read_binary_input(path, "source").await?),
         None => None,
     };
     let options = PublishOptions {
@@ -80,35 +79,6 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
         .filter(|app| seen.insert(*app))
         .collect();
     Some(Compatibility::Shorthand(unique))
-}
-
-async fn load_approval_notes(
-    approval_notes: Option<String>,
-    approval_notes_file: Option<&Path>,
-) -> Result<Option<String>> {
-    match (approval_notes, approval_notes_file) {
-        (Some(text), _) => Ok(Some(text)),
-        (_, Some(path)) => Ok(Some(read_text_input(path).await.with_context(|| {
-            format!("failed to read approval notes from {}", path.display())
-        })?)),
-        _ => Ok(None),
-    }
-}
-
-async fn load_release_notes(
-    release_notes: Option<String>,
-    release_notes_file: Option<&Path>,
-    release_notes_lang: String,
-) -> Result<Option<HashMap<String, String>>> {
-    let text =
-        match (release_notes, release_notes_file) {
-            (Some(text), _) => Some(text),
-            (_, Some(path)) => Some(read_text_input(path).await.with_context(|| {
-                format!("failed to read release notes from {}", path.display())
-            })?),
-            _ => None,
-        };
-    Ok(text.map(|t| HashMap::from([(release_notes_lang, t)])))
 }
 
 impl From<FirefoxChannelArg> for Channel {
