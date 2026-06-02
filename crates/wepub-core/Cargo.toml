@@ -1,6 +1,6 @@
 [package]
 name = "wepub-core"
-version = "0.6.1"
+version = "0.7.0"
 description = "Library for publishing browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons"
 readme = "README.md"
 keywords = ["browser-extension", "chrome", "firefox", "edge"]
