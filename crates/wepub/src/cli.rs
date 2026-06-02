@@ -10,24 +10,24 @@ use url::Url;
     about = "Publish browser extensions to web stores"
 )]
 pub struct Cli {
-    /// Show additional debug logs.
-    #[arg(
-        short = 'v',
-        long = "verbose",
-        global = true,
-        help_heading = "Global Options"
-    )]
-    pub verbose: bool,
-
     /// Show only warnings and errors.
     #[arg(
         short = 'q',
         long = "quiet",
         global = true,
-        conflicts_with = "verbose",
         help_heading = "Global Options"
     )]
     pub quiet: bool,
+
+    /// Show additional debug logs.
+    #[arg(
+        short = 'v',
+        long = "verbose",
+        global = true,
+        conflicts_with = "quiet",
+        help_heading = "Global Options"
+    )]
+    pub verbose: bool,
 
     #[command(subcommand)]
     pub command: Commands,
