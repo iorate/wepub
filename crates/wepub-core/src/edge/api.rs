@@ -6,13 +6,32 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, log_request, parse_root_url, pretty_json},
+    common::{decode_response, join_endpoint, parse_root_url, pretty_json, send_request},
     http::build_client,
 };
 
 const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// API credentials passed to [`Client::new`].
+///
+/// Obtain them from the **Publish API** page of the
+/// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
+#[derive(Clone)]
+pub struct Credentials {
+    /// Client ID.
+    pub client_id: String,
+    /// API key.
+    pub api_key: String,
+}
+
+impl fmt::Debug for Credentials {
+    // Redact contents.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials").finish_non_exhaustive()
+    }
+}
 
 /// Options that shape how [`Client::publish`] submits the new version.
 #[derive(Debug, Clone, Default)]
@@ -42,25 +61,6 @@ pub enum Progress {
     PollingPublish,
     /// Publishing succeeded.
     Succeeded,
-}
-
-/// API credentials passed to [`Client::new`].
-///
-/// Obtain them from the **Publish API** page of the
-/// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
-#[derive(Clone)]
-pub struct Credentials {
-    /// Client ID.
-    pub client_id: String,
-    /// API key.
-    pub api_key: String,
-}
-
-impl fmt::Debug for Credentials {
-    // Redact contents.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credentials").finish_non_exhaustive()
-    }
 }
 
 /// Client for the Edge Add-ons API (v1.1).
@@ -131,14 +131,18 @@ impl Client {
         on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-        let upload_op = self.upload(zip, on_progress).await?;
-        self.wait_until_uploaded(&upload_op, on_progress).await?;
 
-        let publish_op = self
+        let upload_operation_id = self.upload(zip, on_progress).await?;
+        self.wait_until_uploaded(&upload_operation_id, on_progress)
+            .await?;
+
+        let publish_operation_id = self
             .do_publish(options.notes.as_deref(), on_progress)
             .await?;
-        self.wait_until_published(&publish_op, on_progress).await?;
+        self.wait_until_published(&publish_operation_id, on_progress)
+            .await?;
 
+        on_progress(Progress::Succeeded);
         Ok(())
     }
 
@@ -149,24 +153,21 @@ impl Client {
     ) -> Result<String> {
         on_progress(Progress::Uploading);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!(
-            "v1/products/{}/submissions/draft/package",
-            self.product_id
-        ))?;
-
-        log_request(&method, &url);
-        let resp = self
+        let req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!(
+                "v1/products/{}/submissions/draft/package",
+                self.product_id
+            ))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.credentials.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
-            .send()
-            .await?;
+            .build()?;
 
-        Self::extract_operation_id(resp).await
+        let resp = send_request(&self.http, req).await?;
+
+        extract_operation_id(resp).await
     }
 
     async fn wait_until_uploaded(
@@ -174,31 +175,30 @@ impl Client {
         operation_id: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        let url = self.endpoint(&format!(
-            "v1/products/{}/submissions/draft/package/operations/{operation_id}",
-            self.product_id
-        ))?;
         let started = Instant::now();
 
         loop {
             on_progress(Progress::PollingUpload);
-            let method = reqwest::Method::GET;
-            log_request(&method, &url);
-            let resp = self
+
+            let req = self
                 .http
-                .request(method, url.clone())
+                .get(self.endpoint(&format!(
+                    "v1/products/{}/submissions/draft/package/operations/{operation_id}",
+                    self.product_id
+                ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.credentials.client_id)
-                .send()
-                .await?;
-            let body: OperationResponse = decode_response(resp).await?;
+                .build()?;
 
-            match body.status {
+            let resp = send_request(&self.http, req).await?;
+
+            let operation: OperationResponse = decode_response(resp).await?;
+            match operation.status {
                 Some(OperationStatus::Succeeded) => return Ok(()),
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgeUploadFailed {
                         product_id: self.product_id.clone(),
-                        operation: pretty_json(&body),
+                        operation: pretty_json(&operation),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
@@ -208,7 +208,6 @@ impl Client {
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-
             tokio::time::sleep(self.poll_config.interval).await;
         }
     }
@@ -220,24 +219,22 @@ impl Client {
     ) -> Result<String> {
         on_progress(Progress::Publishing);
 
-        let method = reqwest::Method::POST;
-        let url = self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?;
-
-        log_request(&method, &url);
-        let mut request = self
+        let mut req = self
             .http
-            .request(method, url)
+            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.credentials.client_id);
         if let Some(notes) = notes {
             // Docs disagree (reference page says plain text, using page says
             // JSON); wdzeng/edge-addon reports plain text "worked":
             // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
-            request = request.body(notes.to_string());
+            req = req.body(notes.to_string());
         }
+        let req = req.build()?;
 
-        let resp = request.send().await?;
-        Self::extract_operation_id(resp).await
+        let resp = send_request(&self.http, req).await?;
+
+        extract_operation_id(resp).await
     }
 
     async fn wait_until_published(
@@ -245,34 +242,30 @@ impl Client {
         operation_id: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        let url = self.endpoint(&format!(
-            "v1/products/{}/submissions/operations/{operation_id}",
-            self.product_id
-        ))?;
         let started = Instant::now();
 
         loop {
             on_progress(Progress::PollingPublish);
-            let method = reqwest::Method::GET;
-            log_request(&method, &url);
-            let resp = self
+
+            let req = self
                 .http
-                .request(method, url.clone())
+                .get(self.endpoint(&format!(
+                    "v1/products/{}/submissions/operations/{operation_id}",
+                    self.product_id
+                ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.credentials.client_id)
-                .send()
-                .await?;
-            let body: OperationResponse = decode_response(resp).await?;
+                .build()?;
 
-            match body.status {
-                Some(OperationStatus::Succeeded) => {
-                    on_progress(Progress::Succeeded);
-                    return Ok(());
-                }
+            let resp = send_request(&self.http, req).await?;
+
+            let operation: OperationResponse = decode_response(resp).await?;
+            match operation.status {
+                Some(OperationStatus::Succeeded) => return Ok(()),
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgePublishFailed {
                         product_id: self.product_id.clone(),
-                        operation: pretty_json(&body),
+                        operation: pretty_json(&operation),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
@@ -282,7 +275,6 @@ impl Client {
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-
             tokio::time::sleep(self.poll_config.interval).await;
         }
     }
@@ -294,36 +286,12 @@ impl Client {
     fn auth_header(&self) -> String {
         format!("ApiKey {}", self.credentials.api_key)
     }
-
-    async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await?;
-            return Err(WepubError::HttpStatus {
-                status: status.as_u16(),
-                body,
-            });
-        }
-        let location = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .ok_or_else(|| WepubError::UnexpectedResponse {
-                detail: "202 response missing Location header".to_string(),
-            })?;
-        let operation_id = location
-            .to_str()
-            .map_err(|e| WepubError::UnexpectedResponse {
-                detail: format!("Location header is not ASCII: {e}"),
-            })?
-            .to_string();
-        Ok(operation_id)
-    }
 }
 
 // The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
 // which matches Rust's idiomatic variant casing, so no `#[serde(rename_all)]`
 // is needed.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum OperationStatus {
     InProgress,
     Succeeded,
@@ -333,7 +301,7 @@ enum OperationStatus {
 // The "Unexpected" shape documented for the publish endpoint lacks `status`;
 // serde fills it with `None` so callers can distinguish it from a regular
 // response.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
     id: String,
@@ -349,6 +317,34 @@ struct OperationResponse {
     error_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     errors: Option<Vec<serde_json::Value>>,
+}
+
+async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
+    let status = resp.status();
+    // Clone the Location header before `text()` consumes the response.
+    let location = resp.headers().get(reqwest::header::LOCATION).cloned();
+    let body = resp.text().await?;
+    tracing::debug!(
+        status = status.as_u16(),
+        body = %body,
+        "received response",
+    );
+    if !status.is_success() {
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    let location = location.ok_or_else(|| WepubError::UnexpectedResponse {
+        detail: "missing Location header".to_string(),
+    })?;
+    let operation_id = location
+        .to_str()
+        .map_err(|_| WepubError::UnexpectedResponse {
+            detail: "non-ASCII Location header".to_string(),
+        })?
+        .to_string();
+    Ok(operation_id)
 }
 
 #[cfg(test)]
