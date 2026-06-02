@@ -164,8 +164,8 @@ Other flags:
 | Flag                | Log level |
 | ------------------- | --------- |
 | (none)              | `INFO`    |
-| `-v` / `--verbose`  | `DEBUG`   |
 | `-q` / `--quiet`    | `WARN`    |
+| `-v` / `--verbose`  | `DEBUG`   |
 
 `RUST_LOG` overrides the above (e.g. `RUST_LOG=trace`).
 
