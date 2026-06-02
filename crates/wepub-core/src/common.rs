@@ -40,6 +40,19 @@ pub(crate) fn log_request(method: &reqwest::Method, url: &reqwest::Url) {
     );
 }
 
+pub(crate) async fn send_request(
+    client: &reqwest::Client,
+    req: reqwest::Request,
+) -> Result<reqwest::Response> {
+    tracing::debug!(
+        method = %req.method(),
+        url = %req.url(),
+        "sending request",
+    );
+    let resp = client.execute(req).await?;
+    Ok(resp)
+}
+
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T> {
