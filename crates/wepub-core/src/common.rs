@@ -13,11 +13,10 @@ pub struct PollConfig {
     pub timeout: Duration,
 }
 
-// A trailing slash is required so `Url::join` appends relative paths
-// instead of replacing the last path segment.
 pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
     let mut parsed =
         Url::parse(root_url).map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
+    // A trailing slash makes `Url::join` append rather than replace the last segment.
     if !parsed.path().ends_with('/') {
         let new_path = format!("{}/", parsed.path());
         parsed.set_path(&new_path);
@@ -25,8 +24,6 @@ pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
     Ok(parsed)
 }
 
-// `path` embeds caller-supplied values (addon/product ids, upload
-// uuids), so a join failure reflects bad input rather than a bug.
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
     root.join(path)
         .map_err(|e| WepubError::InvalidUrl(format!("{path:?}: {e}")))
@@ -66,7 +63,7 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     })
 }
 
-pub(crate) fn pretty_json<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
+pub(crate) fn to_pretty_string<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 

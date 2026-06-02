@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, pretty_json, send_request},
+    common::{decode_response, join_endpoint, parse_root_url, send_request, to_pretty_string},
     http::build_client,
 };
 
@@ -275,7 +275,7 @@ impl Client {
                 };
                 return Err(WepubError::FirefoxValidationFailed {
                     uuid: uuid.to_string(),
-                    validation: pretty_json(validation),
+                    validation: to_pretty_string(validation),
                 });
             }
 

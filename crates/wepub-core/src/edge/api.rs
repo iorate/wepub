@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, pretty_json, send_request},
+    common::{decode_response, join_endpoint, parse_root_url, send_request, to_pretty_string},
     http::build_client,
 };
 
@@ -198,7 +198,7 @@ impl Client {
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgeUploadFailed {
                         product_id: self.product_id.clone(),
-                        operation: pretty_json(&operation),
+                        operation: to_pretty_string(&operation),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
@@ -265,7 +265,7 @@ impl Client {
                 Some(OperationStatus::Failed) | None => {
                     return Err(WepubError::EdgePublishFailed {
                         product_id: self.product_id.clone(),
-                        operation: pretty_json(&operation),
+                        operation: to_pretty_string(&operation),
                     });
                 }
                 Some(OperationStatus::InProgress) => {}
