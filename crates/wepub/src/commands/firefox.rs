@@ -104,8 +104,8 @@ fn report(progress: Progress, quiet: bool) {
         return;
     }
     match progress {
-        Progress::Uploading => eprintln!("Uploading to Firefox Add-ons..."),
-        Progress::PollingValidation => eprintln!("Waiting for validation..."),
+        Progress::Uploading => eprintln!("Uploading the package archive..."),
+        Progress::PollingValidation => eprintln!("Waiting for the upload to be validated..."),
         Progress::CreatingVersion => eprintln!("Creating the new version..."),
         Progress::UploadingSource => eprintln!("Uploading the source archive..."),
         Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
