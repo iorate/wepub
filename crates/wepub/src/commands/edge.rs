@@ -1,10 +1,8 @@
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use wepub_core::edge::{Client, Credentials, Progress, PublishOptions};
 
 use crate::cli::EdgeArgs;
-use crate::commands::common::read_text_input;
+use crate::commands::common::{read_binary_input, resolve_text_input};
 
 pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
     let client = Client::new(
@@ -15,11 +13,9 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
         },
     )?;
 
-    let zip = tokio::fs::read(&args.zip)
-        .await
-        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
+    let zip = read_binary_input(&args.zip, "package").await?;
 
-    let notes = load_notes(args.notes, args.notes_file.as_deref()).await?;
+    let notes = resolve_text_input(args.notes, args.notes_file.as_deref(), "notes").await?;
     let options = PublishOptions { notes };
 
     client
@@ -27,18 +23,6 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
         .await
         .context("Edge Add-ons")?;
     Ok(())
-}
-
-async fn load_notes(notes: Option<String>, notes_file: Option<&Path>) -> Result<Option<String>> {
-    match (notes, notes_file) {
-        (Some(text), _) => Ok(Some(text)),
-        (_, Some(path)) => {
-            Ok(Some(read_text_input(path).await.with_context(|| {
-                format!("failed to read notes from {}", path.display())
-            })?))
-        }
-        _ => Ok(None),
-    }
 }
 
 fn report(progress: Progress, quiet: bool) {

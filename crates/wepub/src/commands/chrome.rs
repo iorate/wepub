@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
+use crate::commands::common::read_binary_input;
 
 pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
     let client = build_client(
@@ -13,9 +14,7 @@ pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
         args.access_token,
     )?;
 
-    let zip = tokio::fs::read(&args.zip)
-        .await
-        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
+    let zip = read_binary_input(&args.zip, "package").await?;
 
     let options = PublishOptions {
         publish_type: args.publish_type.map(Into::into),
