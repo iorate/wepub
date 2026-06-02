@@ -16,6 +16,17 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         bail!("--approval-notes-file and --release-notes-file cannot both read from stdin (\"-\")");
     }
 
+    let mut client = Client::new(
+        args.addon_id,
+        Credentials {
+            api_key: args.api_key,
+            api_secret: args.api_secret,
+        },
+    )?;
+    if let Some(root_url) = args.internal_root_url {
+        client = client.with_root_url(root_url.as_str())?;
+    }
+
     let zip = tokio::fs::read(&args.zip)
         .await
         .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
@@ -45,17 +56,6 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         release_notes,
         source,
     };
-
-    let mut client = Client::new(
-        args.addon_id,
-        Credentials {
-            api_key: args.api_key,
-            api_secret: args.api_secret,
-        },
-    )?;
-    if let Some(root_url) = args.internal_root_url {
-        client = client.with_root_url(root_url.as_str())?;
-    }
 
     client
         .publish(zip, channel, options, |progress| report(progress, quiet))

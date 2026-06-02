@@ -7,13 +7,6 @@ use crate::cli::EdgeArgs;
 use crate::commands::common::read_text_input;
 
 pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
-    let zip = tokio::fs::read(&args.zip)
-        .await
-        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
-
-    let notes = load_notes(args.notes, args.notes_file.as_deref()).await?;
-    let options = PublishOptions { notes };
-
     let client = Client::new(
         args.product_id,
         Credentials {
@@ -21,6 +14,13 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
             api_key: args.api_key,
         },
     )?;
+
+    let zip = tokio::fs::read(&args.zip)
+        .await
+        .with_context(|| format!("failed to read archive from {}", args.zip.display()))?;
+
+    let notes = load_notes(args.notes, args.notes_file.as_deref()).await?;
+    let options = PublishOptions { notes };
 
     client
         .publish(zip, options, |progress| report(progress, quiet))
