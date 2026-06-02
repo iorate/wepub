@@ -208,7 +208,7 @@ impl Client {
             } => {
                 let token = refresh_access_token(
                     &self.http,
-                    &self.token_url,
+                    self.token_url.clone(),
                     client_id,
                     client_secret,
                     refresh_token,

@@ -7,13 +7,13 @@ pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token"
 
 pub(crate) async fn refresh_access_token(
     client: &reqwest::Client,
-    token_url: &Url,
+    token_url: Url,
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<String> {
     let req = client
-        .post(token_url.clone())
+        .post(token_url)
         .form(&[
             ("grant_type", "refresh_token"),
             ("client_id", client_id),
@@ -64,7 +64,7 @@ mod tests {
         let token_url = Url::parse(&server.uri()).unwrap();
         refresh_access_token(
             &client,
-            &token_url,
+            token_url,
             "client-id",
             secret,
             "refresh-token-value",
