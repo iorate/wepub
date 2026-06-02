@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -19,10 +20,6 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// OAuth credentials passed to [`Client::new`].
 #[derive(Clone)]
 pub enum Credentials {
-    /// A pre-fetched OAuth access token, used verbatim. Suitable for
-    /// automated workflows that authenticate with a
-    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
-    AccessToken(String),
     /// An OAuth refresh token plus the client credentials needed to redeem
     /// it for an access token. Obtain them by following
     /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
@@ -34,14 +31,18 @@ pub enum Credentials {
         /// OAuth refresh token.
         refresh_token: String,
     },
+    /// A pre-fetched OAuth access token, used verbatim. Suitable for
+    /// automated workflows that authenticate with a
+    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
+    AccessToken(String),
 }
 
 impl fmt::Debug for Credentials {
     // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
             Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
+            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
         }
     }
 }
@@ -186,7 +187,7 @@ impl Client {
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
 
-        let token = self.get_or_refresh_token().await?;
+        let token = self.resolve_access_token().await?;
 
         let initial_upload_state = self.upload(&token, zip, on_progress).await?;
         self.wait_until_uploaded(&token, initial_upload_state, on_progress)
@@ -198,23 +199,24 @@ impl Client {
         Ok(())
     }
 
-    async fn get_or_refresh_token(&self) -> Result<String> {
+    async fn resolve_access_token(&self) -> Result<Cow<'_, str>> {
         match &self.credentials {
-            Credentials::AccessToken(token) => Ok(token.clone()),
             Credentials::RefreshToken {
                 client_id,
                 client_secret,
                 refresh_token,
             } => {
-                refresh_access_token(
+                let token = refresh_access_token(
                     &self.http,
                     &self.token_url,
                     client_id,
                     client_secret,
                     refresh_token,
                 )
-                .await
+                .await?;
+                Ok(Cow::Owned(token))
             }
+            Credentials::AccessToken(token) => Ok(Cow::Borrowed(token)),
         }
     }
 
@@ -421,9 +423,6 @@ mod tests {
 
     #[test]
     fn debug_redacts_secrets() {
-        let access = Credentials::AccessToken("secret-token".to_string());
-        assert!(!format!("{access:?}").contains("secret-token"));
-
         let credentials = Credentials::RefreshToken {
             client_id: "client-id".to_string(),
             client_secret: "secret-client".to_string(),
@@ -432,6 +431,9 @@ mod tests {
         let credentials_debug = format!("{credentials:?}");
         assert!(!credentials_debug.contains("secret-client"));
         assert!(!credentials_debug.contains("secret-refresh"));
+
+        let access = Credentials::AccessToken("secret-token".to_string());
+        assert!(!format!("{access:?}").contains("secret-token"));
 
         let client =
             Client::new("publisher-1".to_string(), "item-1".to_string(), credentials).unwrap();
@@ -482,7 +484,7 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.get_or_refresh_token().await.unwrap();
+        let token = client.resolve_access_token().await.unwrap();
         assert_eq!(token, "fresh-token");
         client
             .upload(&token, b"FAKE".to_vec(), &|_| {})
