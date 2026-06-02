@@ -26,8 +26,7 @@ pub(crate) async fn refresh_access_token(
 
     let status = resp.status();
     let body = resp.text().await?;
-    // The success body carries the access_token, so mask it in logs.
-    // Error bodies (e.g. {"error": "invalid_grant"}) are safe and useful.
+    // The success body carries the access token, so mask it in logs.
     let logged_body: &str = if status.is_success() { "***" } else { &body };
     tracing::debug!(
         status = status.as_u16(),
