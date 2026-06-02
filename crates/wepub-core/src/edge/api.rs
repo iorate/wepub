@@ -136,9 +136,7 @@ impl Client {
         self.wait_until_uploaded(&upload_operation_id, on_progress)
             .await?;
 
-        let publish_operation_id = self
-            .do_publish(options.notes.as_deref(), on_progress)
-            .await?;
+        let publish_operation_id = self.do_publish(options.notes, on_progress).await?;
         self.wait_until_published(&publish_operation_id, on_progress)
             .await?;
 
@@ -214,7 +212,7 @@ impl Client {
 
     async fn do_publish(
         &self,
-        notes: Option<&str>,
+        notes: Option<String>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
         on_progress(Progress::Publishing);
@@ -228,7 +226,7 @@ impl Client {
             // Docs disagree (reference page says plain text, using page says
             // JSON); wdzeng/edge-addon reports plain text "worked":
             // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
-            req = req.body(notes.to_string());
+            req = req.body(notes);
         }
         let req = req.build()?;
 
@@ -571,7 +569,7 @@ mod tests {
 
         let client = client_for(&server);
         let op_id = client
-            .do_publish(Some("for reviewers"), &|_| {})
+            .do_publish(Some("for reviewers".to_string()), &|_| {})
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
