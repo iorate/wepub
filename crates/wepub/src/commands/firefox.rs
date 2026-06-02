@@ -109,5 +109,6 @@ fn report(progress: Progress, quiet: bool) {
         Progress::CreatingVersion => eprintln!("Creating the new version..."),
         Progress::UploadingSource => eprintln!("Uploading the source archive..."),
         Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
+        _ => {}
     }
 }

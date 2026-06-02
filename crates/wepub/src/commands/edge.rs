@@ -35,5 +35,6 @@ fn report(progress: Progress, quiet: bool) {
         Progress::Publishing => eprintln!("Publishing the draft..."),
         Progress::PollingPublish => eprintln!("Waiting for the draft to be published..."),
         Progress::Succeeded => eprintln!("Published to Edge Add-ons."),
+        _ => {}
     }
 }

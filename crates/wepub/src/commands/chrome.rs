@@ -92,5 +92,6 @@ fn report(progress: Progress, quiet: bool) {
         Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
         Progress::Publishing => eprintln!("Publishing the item..."),
         Progress::Succeeded => eprintln!("Published to Chrome Web Store."),
+        _ => {}
     }
 }
