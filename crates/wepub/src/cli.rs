@@ -11,11 +11,22 @@ use url::Url;
 )]
 pub struct Cli {
     /// Show additional debug logs.
-    #[arg(short = 'v', long = "verbose", global = true)]
+    #[arg(
+        short = 'v',
+        long = "verbose",
+        global = true,
+        help_heading = "Global Options"
+    )]
     pub verbose: bool,
 
     /// Show only warnings and errors.
-    #[arg(short = 'q', long = "quiet", global = true, conflicts_with = "verbose")]
+    #[arg(
+        short = 'q',
+        long = "quiet",
+        global = true,
+        conflicts_with = "verbose",
+        help_heading = "Global Options"
+    )]
     pub quiet: bool,
 
     #[command(subcommand)]
