@@ -247,7 +247,7 @@ impl Client {
 
     async fn wait_until_validated(
         &self,
-        uuid: &str,
+        upload_uuid: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadResponse> {
         let started = Instant::now();
@@ -257,7 +257,7 @@ impl Client {
 
             let req = self
                 .http
-                .get(self.endpoint(&format!("api/v5/addons/upload/{uuid}/"))?)
+                .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .build()?;
 
@@ -274,7 +274,7 @@ impl Client {
                     });
                 };
                 return Err(WepubError::FirefoxValidationFailed {
-                    uuid: uuid.to_string(),
+                    upload_uuid: upload_uuid.to_string(),
                     validation: to_pretty_string(validation),
                 });
             }
@@ -479,8 +479,11 @@ mod tests {
             .unwrap_err();
 
         match err {
-            WepubError::FirefoxValidationFailed { uuid, validation } => {
-                assert_eq!(uuid, "uuid-2");
+            WepubError::FirefoxValidationFailed {
+                upload_uuid,
+                validation,
+            } => {
+                assert_eq!(upload_uuid, "uuid-2");
                 assert!(validation.contains("manifest broken"));
             }
             other => panic!("expected WepubError::FirefoxValidationFailed, got {other:?}"),
