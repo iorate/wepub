@@ -26,8 +26,8 @@ pub struct Credentials {
     pub api_key: String,
 }
 
+// Hand-written so secrets never reach `Debug` output.
 impl fmt::Debug for Credentials {
-    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials").finish_non_exhaustive()
     }
@@ -286,9 +286,7 @@ impl Client {
     }
 }
 
-// The wire format is PascalCase (`InProgress` / `Succeeded` / `Failed`),
-// which matches Rust's idiomatic variant casing, so no `#[serde(rename_all)]`
-// is needed.
+// The variant names are the wire format as-is (PascalCase).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum OperationStatus {
     InProgress,
@@ -296,9 +294,6 @@ enum OperationStatus {
     Failed,
 }
 
-// The "Unexpected" shape documented for the publish endpoint lacks `status`;
-// serde fills it with `None` so callers can distinguish it from a regular
-// response.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
@@ -319,7 +314,6 @@ struct OperationResponse {
 
 async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
     let status = resp.status();
-    // Clone the Location header before `text()` consumes the response.
     let location = resp.headers().get(reqwest::header::LOCATION).cloned();
     let body = resp.text().await?;
     tracing::debug!(

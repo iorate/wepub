@@ -37,8 +37,8 @@ pub enum Credentials {
     AccessToken(String),
 }
 
+// Hand-written so secrets never reach `Debug` output.
 impl fmt::Debug for Credentials {
-    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
@@ -252,8 +252,6 @@ impl Client {
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadState> {
         let started = Instant::now();
-        // First iteration uses the caller-provided state from the initial
-        // upload response; subsequent iterations re-fetch from the server.
         let mut initial = true;
 
         loop {
@@ -365,7 +363,6 @@ struct FetchStatusResponse {
     last_async_upload_state: Option<UploadState>,
 }
 
-// `UPLOAD_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UploadState {
@@ -399,7 +396,6 @@ struct PublishResponse {
     state: ItemState,
 }
 
-// `ITEM_STATE_UNSPECIFIED` is documented as unused, so serde will reject it.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ItemState {

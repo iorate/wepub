@@ -30,8 +30,8 @@ pub struct Credentials {
     pub api_secret: String,
 }
 
+// Hand-written so secrets never reach `Debug` output.
 impl fmt::Debug for Credentials {
-    // Redact contents.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials").finish_non_exhaustive()
     }
