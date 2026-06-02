@@ -30,10 +30,10 @@ fn report(progress: Progress, quiet: bool) {
         return;
     }
     match progress {
-        Progress::Uploading => eprintln!("Uploading to Edge Add-ons..."),
+        Progress::Uploading => eprintln!("Uploading the package archive..."),
         Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publishing => eprintln!("Publishing..."),
-        Progress::PollingPublish => eprintln!("Waiting for the submission to be published..."),
+        Progress::Publishing => eprintln!("Publishing the draft..."),
+        Progress::PollingPublish => eprintln!("Waiting for the draft to be published..."),
         Progress::Succeeded => eprintln!("Published to Edge Add-ons."),
     }
 }

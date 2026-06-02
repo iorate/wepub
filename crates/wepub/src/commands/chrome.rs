@@ -88,9 +88,9 @@ fn report(progress: Progress, quiet: bool) {
         return;
     }
     match progress {
-        Progress::Uploading => eprintln!("Uploading to Chrome Web Store..."),
+        Progress::Uploading => eprintln!("Uploading the package archive..."),
         Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publishing => eprintln!("Publishing..."),
+        Progress::Publishing => eprintln!("Publishing the item..."),
         Progress::Succeeded => eprintln!("Published to Chrome Web Store."),
     }
 }
