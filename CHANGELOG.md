@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/iorate/wepub/compare/v0.6.1...v0.7.0)
+
+### ⛰️ Features
+
+
+- [**breaking**] Move publish progress from tracing to an on_progress callback ([#51](https://github.com/iorate/wepub/pull/51)) - ([08e1f18](https://github.com/iorate/wepub/commit/08e1f18b0a28abaea1689af89f22b9ac27236a6d))
+
+### 📚 Documentation
+
+
+- Add setup-wepub GitHub Action to install options ([#53](https://github.com/iorate/wepub/pull/53)) - ([d89177c](https://github.com/iorate/wepub/commit/d89177cf9a6adba4bd2c7a4e4d3793954274f4db))
+
+
 ## [0.6.1](https://github.com/iorate/wepub/compare/v0.6.0...v0.6.1)
 
 ### 📚 Documentation
