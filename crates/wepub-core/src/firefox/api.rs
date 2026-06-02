@@ -590,10 +590,23 @@ mod tests {
             source: Some(b"source-zip".to_vec()),
             ..PublishOptions::new()
         };
+        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options, |_| {})
+            .publish(b"zip".to_vec(), Channel::Listed, options, |p| {
+                progress.lock().unwrap().push(p);
+            })
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [
+                Progress::Uploading,
+                Progress::PollingValidation,
+                Progress::CreatingVersion,
+                Progress::UploadingSource,
+                Progress::Succeeded,
+            ],
+        );
     }
 
     #[tokio::test]

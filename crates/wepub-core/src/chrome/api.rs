@@ -951,10 +951,22 @@ mod tests {
             .await;
 
         let client = client_for(&server);
+        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |_| {})
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |p| {
+                progress.lock().unwrap().push(p);
+            })
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [
+                Progress::Uploading,
+                Progress::PollingUpload,
+                Progress::Publishing,
+                Progress::Succeeded,
+            ],
+        );
     }
 
     #[tokio::test]

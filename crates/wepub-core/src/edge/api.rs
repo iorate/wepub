@@ -783,10 +783,23 @@ mod tests {
         let options = PublishOptions {
             notes: Some("ship it".into()),
         };
+        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP".to_vec(), options, |_| {})
+            .publish(b"FAKE_ZIP".to_vec(), options, |p| {
+                progress.lock().unwrap().push(p);
+            })
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [
+                Progress::Uploading,
+                Progress::PollingUpload,
+                Progress::Publishing,
+                Progress::PollingPublish,
+                Progress::Succeeded,
+            ],
+        );
     }
 
     #[test]
