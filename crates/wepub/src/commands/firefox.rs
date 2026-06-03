@@ -9,7 +9,7 @@ use wepub_core::firefox::{
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
+pub(crate) async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
         && is_stdin_path(args.release_notes_file.as_deref())
     {

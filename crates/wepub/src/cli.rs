@@ -10,14 +10,14 @@ use url::Url;
     version,
     about = "Publish browser extensions to web stores"
 )]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Suppress progress messages.
     #[arg(long = "no-progress", global = true, help_heading = "Global Options")]
-    pub no_progress: bool,
+    pub(crate) no_progress: bool,
 
     #[command(flatten)]
     #[command(next_help_heading = "Global Options")]
-    pub verbosity: Verbosity<WarnLevel>,
+    pub(crate) verbosity: Verbosity<WarnLevel>,
 
     /// Show additional debug logs.
     #[arg(
@@ -30,11 +30,11 @@ pub struct Cli {
     pub verbose: bool,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub(crate) command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Publish to Chrome Web Store.
     Chrome(ChromeArgs),
     /// Publish to Firefox Add-ons.
@@ -44,50 +44,50 @@ pub enum Commands {
 }
 
 #[derive(Debug, Args)]
-pub struct ChromeArgs {
+pub(crate) struct ChromeArgs {
     /// Path to the extension archive (zip).
     #[arg(value_name = "ZIP")]
-    pub zip: PathBuf,
+    pub(crate) zip: PathBuf,
 
     /// Publisher ID (UUID).
     #[arg(long, env = "WEPUB_CHROME_PUBLISHER_ID")]
-    pub publisher_id: String,
+    pub(crate) publisher_id: String,
 
     /// Item ID (32-character string).
     #[arg(long, env = "WEPUB_CHROME_ITEM_ID")]
-    pub item_id: String,
+    pub(crate) item_id: String,
 
     /// OAuth client ID. Use together with --client-secret and --refresh-token.
     #[arg(long, env = "WEPUB_CHROME_CLIENT_ID")]
-    pub client_id: Option<String>,
+    pub(crate) client_id: Option<String>,
 
     /// OAuth client secret. Use together with --client-id and --refresh-token.
     #[arg(long, env = "WEPUB_CHROME_CLIENT_SECRET")]
-    pub client_secret: Option<String>,
+    pub(crate) client_secret: Option<String>,
 
     /// OAuth refresh token. Use together with --client-id and --client-secret.
     #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
-    pub refresh_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
 
     /// Pre-fetched OAuth access token.
     #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
-    pub access_token: Option<String>,
+    pub(crate) access_token: Option<String>,
 
     /// Whether to publish immediately on approval or stage for later publishing.
     #[arg(long, value_enum)]
-    pub publish_type: Option<ChromePublishTypeArg>,
+    pub(crate) publish_type: Option<ChromePublishTypeArg>,
 
     /// Initial deploy percentage (0-100). Omit to use the Developer Dashboard default.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=100))]
-    pub deploy_percentage: Option<u8>,
+    pub(crate) deploy_percentage: Option<u8>,
 
     /// Attempt to skip item review.
     #[arg(long)]
-    pub skip_review: Option<bool>,
+    pub(crate) skip_review: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ChromePublishTypeArg {
+pub(crate) enum ChromePublishTypeArg {
     Default,
     Staged,
 }
@@ -103,46 +103,46 @@ pub enum ChromePublishTypeArg {
         .multiple(false)
         .args(["approval_notes", "approval_notes_file"]),
 ))]
-pub struct FirefoxArgs {
+pub(crate) struct FirefoxArgs {
     /// Path to the add-on archive (zip).
     #[arg(value_name = "ZIP")]
-    pub zip: PathBuf,
+    pub(crate) zip: PathBuf,
 
     /// Add-on ID (slug or GUID).
     #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
-    pub addon_id: String,
+    pub(crate) addon_id: String,
 
     /// API key (JWT issuer).
     #[arg(long, env = "WEPUB_FIREFOX_API_KEY")]
-    pub api_key: String,
+    pub(crate) api_key: String,
 
     /// API secret (JWT secret).
     #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
-    pub api_secret: String,
+    pub(crate) api_secret: String,
 
     /// Version channel. Determines visibility on the site.
     #[arg(long, value_enum)]
-    pub channel: FirefoxChannelArg,
+    pub(crate) channel: FirefoxChannelArg,
 
     /// Compatible applications, comma-separated (e.g. "firefox,android").
     #[arg(long, value_delimiter = ',')]
-    pub compatibility: Vec<FirefoxApplicationArg>,
+    pub(crate) compatibility: Vec<FirefoxApplicationArg>,
 
     /// Information for Mozilla reviewers. Mutually exclusive with --approval-notes-file.
     #[arg(long)]
-    pub approval_notes: Option<String>,
+    pub(crate) approval_notes: Option<String>,
 
     /// Path to a file containing approval notes. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
-    pub approval_notes_file: Option<PathBuf>,
+    pub(crate) approval_notes_file: Option<PathBuf>,
 
     /// Release notes. Mutually exclusive with --release-notes-file.
     #[arg(long)]
-    pub release_notes: Option<String>,
+    pub(crate) release_notes: Option<String>,
 
     /// Path to a file containing release notes. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
-    pub release_notes_file: Option<PathBuf>,
+    pub(crate) release_notes_file: Option<PathBuf>,
 
     /// Locale code for the release notes (e.g. "en-US", "ja").
     #[arg(
@@ -151,24 +151,24 @@ pub struct FirefoxArgs {
         default_value = "en-US",
         requires = "release_notes_input"
     )]
-    pub release_notes_lang: String,
+    pub(crate) release_notes_lang: String,
 
     /// Path to a source archive to attach to the version.
     #[arg(long, value_name = "PATH")]
-    pub source: Option<PathBuf>,
+    pub(crate) source: Option<PathBuf>,
 
     #[arg(long, hide = true)]
-    pub internal_root_url: Option<Url>,
+    pub(crate) internal_root_url: Option<Url>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum FirefoxChannelArg {
+pub(crate) enum FirefoxChannelArg {
     Listed,
     Unlisted,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum FirefoxApplicationArg {
+pub(crate) enum FirefoxApplicationArg {
     Firefox,
     Android,
 }
@@ -179,28 +179,28 @@ pub enum FirefoxApplicationArg {
         .multiple(false)
         .args(["notes", "notes_file"]),
 ))]
-pub struct EdgeArgs {
+pub(crate) struct EdgeArgs {
     /// Path to the add-on archive (zip).
     #[arg(value_name = "ZIP")]
-    pub zip: PathBuf,
+    pub(crate) zip: PathBuf,
 
     /// Product ID (GUID).
     #[arg(long, env = "WEPUB_EDGE_PRODUCT_ID")]
-    pub product_id: String,
+    pub(crate) product_id: String,
 
     /// Client ID.
     #[arg(long, env = "WEPUB_EDGE_CLIENT_ID")]
-    pub client_id: String,
+    pub(crate) client_id: String,
 
     /// API key.
     #[arg(long, env = "WEPUB_EDGE_API_KEY")]
-    pub api_key: String,
+    pub(crate) api_key: String,
 
     /// Notes for certification. Mutually exclusive with --notes-file.
     #[arg(long)]
-    pub notes: Option<String>,
+    pub(crate) notes: Option<String>,
 
     /// Path to a file containing notes for certification. Use "-" for stdin.
     #[arg(long, value_name = "PATH")]
-    pub notes_file: Option<PathBuf>,
+    pub(crate) notes_file: Option<PathBuf>,
 }

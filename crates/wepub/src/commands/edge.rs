@@ -4,7 +4,7 @@ use wepub_core::edge::{Client, Credentials, Progress, PublishOptions};
 use crate::cli::EdgeArgs;
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub async fn run(args: EdgeArgs, no_progress: bool) -> Result<()> {
+pub(crate) async fn run(args: EdgeArgs, no_progress: bool) -> Result<()> {
     let client = Client::new(
         args.product_id,
         Credentials {

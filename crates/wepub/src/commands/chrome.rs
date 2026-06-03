@@ -4,7 +4,7 @@ use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishT
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
-pub async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
+pub(crate) async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
     let client = build_client(
         args.publisher_id,
         args.item_id,
