@@ -25,10 +25,6 @@ pub async fn run(args: EdgeArgs, no_progress: bool) -> Result<()> {
         .await
         .context("Edge Add-ons")?;
 
-    if !no_progress {
-        eprintln!("Published to Edge Add-ons.");
-    }
-
     Ok(())
 }
 

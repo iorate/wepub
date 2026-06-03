@@ -29,11 +29,16 @@ pub async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
         .await
         .context("Chrome Web Store")?;
 
-    if !no_progress {
-        eprintln!("Published to Chrome Web Store.");
-    }
-
     Ok(())
+}
+
+impl From<ChromePublishTypeArg> for PublishType {
+    fn from(value: ChromePublishTypeArg) -> Self {
+        match value {
+            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
+            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
+        }
+    }
 }
 
 fn build_client(
@@ -81,20 +86,11 @@ fn build_client(
     }
 }
 
-impl From<ChromePublishTypeArg> for PublishType {
-    fn from(value: ChromePublishTypeArg) -> Self {
-        match value {
-            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
-            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
-        }
-    }
-}
-
 fn report(progress: Progress) {
     match progress {
         Progress::StartUpload => eprintln!("Uploading the package archive..."),
         Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publish => eprintln!("Publishing the draft..."),
+        Progress::Submit => eprintln!("Submitting the draft..."),
         _ => {}
     }
 }

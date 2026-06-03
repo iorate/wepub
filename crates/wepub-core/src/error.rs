@@ -46,21 +46,17 @@ pub enum WepubError {
     },
 
     /// Chrome Web Store reported the upload as failed.
-    #[error("upload failed for item {item_id}: {reason}")]
+    #[error("upload failed: {upload_state}")]
     ChromeUploadFailed {
-        /// Item id.
-        item_id: String,
-        /// Short human-readable cause.
-        reason: String,
+        /// Upload state.
+        upload_state: String,
     },
 
     /// Chrome Web Store reported the publish as failed.
-    #[error("publish failed for item {item_id}: {reason}")]
+    #[error("publish failed: {item_state}")]
     ChromePublishFailed {
-        /// Item id.
-        item_id: String,
-        /// Short human-readable cause.
-        reason: String,
+        /// Item state.
+        item_state: String,
     },
 
     /// Firefox Add-ons reported the upload as having failed validation.

@@ -63,29 +63,7 @@ pub async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
         .await
         .context("Firefox Add-ons")?;
 
-    if !no_progress {
-        eprintln!("Published to Firefox Add-ons.");
-    }
-
     Ok(())
-}
-
-fn is_stdin_path(path: Option<&Path>) -> bool {
-    path.is_some_and(|p| p.as_os_str() == "-")
-}
-
-fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
-    if apps.is_empty() {
-        return None;
-    }
-    let mut seen = std::collections::HashSet::new();
-    let unique: Vec<Application> = apps
-        .iter()
-        .copied()
-        .map(Into::into)
-        .filter(|app| seen.insert(*app))
-        .collect();
-    Some(Compatibility::Shorthand(unique))
 }
 
 impl From<FirefoxChannelArg> for Channel {
@@ -104,6 +82,24 @@ impl From<FirefoxApplicationArg> for Application {
             FirefoxApplicationArg::Android => Application::Android,
         }
     }
+}
+
+fn is_stdin_path(path: Option<&Path>) -> bool {
+    path.is_some_and(|p| p.as_os_str() == "-")
+}
+
+fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
+    if apps.is_empty() {
+        return None;
+    }
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<Application> = apps
+        .iter()
+        .copied()
+        .map(Into::into)
+        .filter(|app| seen.insert(*app))
+        .collect();
+    Some(Compatibility::Shorthand(unique))
 }
 
 fn report(progress: Progress) {
