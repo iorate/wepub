@@ -32,8 +32,8 @@ fn report(progress: Progress) {
     match progress {
         Progress::StartUpload => eprintln!("Uploading the package archive..."),
         Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::StartPublish => eprintln!("Publishing the draft..."),
-        Progress::AwaitPublish => eprintln!("Waiting for the draft to be published..."),
+        Progress::StartSubmit => eprintln!("Submitting the draft..."),
+        Progress::AwaitSubmit => eprintln!("Waiting for the submission to be processed..."),
         _ => {}
     }
 }

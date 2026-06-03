@@ -332,7 +332,7 @@ impl Client {
 
         let publish: PublishResponse = decode_response(resp).await?;
         if let ItemState::Rejected | ItemState::Cancelled = publish.state {
-            return Err(WepubError::ChromePublishFailed {
+            return Err(WepubError::ChromeSubmissionFailed {
                 item_state: publish.state.as_str().to_string(),
             });
         }
@@ -346,20 +346,20 @@ impl Client {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadResponse {
     upload_state: UploadState,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FetchStatusResponse {
     #[serde(default)]
     last_async_upload_state: Option<UploadState>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UploadState {
     Succeeded,
@@ -396,13 +396,13 @@ struct DeployInfo {
     deploy_percentage: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishResponse {
     state: ItemState,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ItemState {
     PendingReview,
@@ -856,10 +856,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_state } => {
+            WepubError::ChromeSubmissionFailed { item_state } => {
                 assert_eq!(item_state, "REJECTED");
             }
-            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
         }
     }
 
@@ -881,10 +881,10 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_state } => {
+            WepubError::ChromeSubmissionFailed { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
             }
-            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
         }
     }
 

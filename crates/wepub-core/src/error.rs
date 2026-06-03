@@ -52,9 +52,9 @@ pub enum WepubError {
         upload_state: String,
     },
 
-    /// Chrome Web Store reported the publish as failed.
-    #[error("publish failed: {item_state}")]
-    ChromePublishFailed {
+    /// Chrome Web Store reported the submission as failed.
+    #[error("submission failed: {item_state}")]
+    ChromeSubmissionFailed {
         /// Item state.
         item_state: String,
     },
@@ -69,20 +69,16 @@ pub enum WepubError {
     },
 
     /// Edge Add-ons reported the upload as failed.
-    #[error("upload failed for product {product_id}: {operation}")]
+    #[error("upload failed: {error}")]
     EdgeUploadFailed {
-        /// Product id.
-        product_id: String,
-        /// Operation status response, pretty-printed.
-        operation: String,
+        /// Operation error, pretty-printed.
+        error: String,
     },
 
-    /// Edge Add-ons reported the publish as failed.
-    #[error("publish failed for product {product_id}: {operation}")]
-    EdgePublishFailed {
-        /// Product id.
-        product_id: String,
-        /// Operation status response, pretty-printed.
-        operation: String,
+    /// Edge Add-ons reported the submission as failed.
+    #[error("submission failed: {error}")]
+    EdgeSubmissionFailed {
+        /// Operation error, pretty-printed.
+        error: String,
     },
 }
