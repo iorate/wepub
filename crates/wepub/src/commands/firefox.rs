@@ -104,10 +104,9 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
 
 fn report(progress: Progress) {
     match progress {
-        Progress::StartUpload => eprintln!("Uploading the package archive..."),
-        Progress::AwaitUpload => eprintln!("Waiting for the upload to be validated..."),
-        Progress::CreateVersion => eprintln!("Creating a new version..."),
-        Progress::UploadSource => eprintln!("Uploading the source archive..."),
+        Progress::Upload => eprintln!("Uploading the package archive..."),
+        Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
+        Progress::Submit => eprintln!("Submitting the new version..."),
         _ => {}
     }
 }

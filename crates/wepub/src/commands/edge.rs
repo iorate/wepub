@@ -30,9 +30,9 @@ pub(crate) async fn run(args: EdgeArgs, no_progress: bool) -> Result<()> {
 
 fn report(progress: Progress) {
     match progress {
-        Progress::StartUpload => eprintln!("Uploading the package archive..."),
+        Progress::Upload => eprintln!("Uploading the package archive..."),
         Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::StartSubmit => eprintln!("Submitting the draft..."),
+        Progress::Submit => eprintln!("Submitting the draft..."),
         Progress::AwaitSubmit => eprintln!("Waiting for the submission to be processed..."),
         _ => {}
     }

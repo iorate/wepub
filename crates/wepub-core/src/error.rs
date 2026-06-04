@@ -59,11 +59,9 @@ pub enum WepubError {
         item_state: String,
     },
 
-    /// Firefox Add-ons reported the upload as having failed validation.
-    #[error("validation failed for upload {upload_uuid}: {validation}")]
-    FirefoxValidationFailed {
-        /// Upload UUID.
-        upload_uuid: String,
+    /// Firefox Add-ons reported the upload as failed.
+    #[error("upload failed: {validation}")]
+    FirefoxUploadFailed {
         /// Validation results, pretty-printed.
         validation: String,
     },

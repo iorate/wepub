@@ -53,11 +53,11 @@ impl PublishOptions {
 #[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
-    StartUpload,
+    Upload,
     /// Waiting for the upload to be processed.
     AwaitUpload,
     /// Submitting the draft.
-    StartSubmit,
+    Submit,
     /// Waiting for the submission to be processed.
     AwaitSubmit,
 }
@@ -132,23 +132,23 @@ impl Client {
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
 
-        let operation_id = self.start_upload(zip, on_progress).await?;
-        self.await_upload(&operation_id, on_progress).await?;
+        let upload_operation_id = self.upload(zip, on_progress).await?;
+        self.await_upload(&upload_operation_id, on_progress).await?;
 
-        let operation_id = self.start_submit(options.notes, on_progress).await?;
-        self.await_submit(&operation_id, on_progress).await?;
+        let submit_operation_id = self.submit(options.notes, on_progress).await?;
+        self.await_submit(&submit_operation_id, on_progress).await?;
 
         Ok(())
     }
 
     #[tracing::instrument(skip_all)]
-    async fn start_upload(
+    async fn upload(
         &self,
         zip: Vec<u8>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
-        on_progress(Progress::StartUpload);
         tracing::info!("uploading the package archive");
+        on_progress(Progress::Upload);
 
         let req = self
             .http
@@ -165,18 +165,18 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(operation_id = %operation_id, "the package archive uploaded");
+        tracing::info!(upload_operation_id = %operation_id, "the package archive uploaded");
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(operation_id))]
+    #[tracing::instrument(skip_all, fields(upload_operation_id = %upload_operation_id))]
     async fn await_upload(
         &self,
-        operation_id: &str,
+        upload_operation_id: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        on_progress(Progress::AwaitUpload);
         tracing::info!("waiting for the upload to be processed");
+        on_progress(Progress::AwaitUpload);
 
         let started = Instant::now();
 
@@ -190,7 +190,7 @@ impl Client {
             let req = self
                 .http
                 .get(self.endpoint(&format!(
-                    "v1/products/{}/submissions/draft/package/operations/{operation_id}",
+                    "v1/products/{}/submissions/draft/package/operations/{upload_operation_id}",
                     self.product_id
                 ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
@@ -220,13 +220,13 @@ impl Client {
     }
 
     #[tracing::instrument(skip_all)]
-    async fn start_submit(
+    async fn submit(
         &self,
         notes: Option<String>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
-        on_progress(Progress::StartSubmit);
         tracing::info!("submitting the draft");
+        on_progress(Progress::Submit);
 
         let mut req = self
             .http
@@ -244,18 +244,18 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(operation_id = %operation_id, "the draft submitted");
+        tracing::info!(submit_operation_id = %operation_id, "the draft submitted");
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(operation_id))]
+    #[tracing::instrument(skip_all, fields(submit_operation_id = %submit_operation_id))]
     async fn await_submit(
         &self,
-        operation_id: &str,
+        submit_operation_id: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        on_progress(Progress::AwaitSubmit);
         tracing::info!("waiting for the submission to be processed");
+        on_progress(Progress::AwaitSubmit);
 
         let started = Instant::now();
 
@@ -269,7 +269,7 @@ impl Client {
             let req = self
                 .http
                 .get(self.endpoint(&format!(
-                    "v1/products/{}/submissions/operations/{operation_id}",
+                    "v1/products/{}/submissions/operations/{submit_operation_id}",
                     self.product_id
                 ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
@@ -408,10 +408,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client
-            .start_upload(b"FAKE_ZIP".to_vec(), &|_| {})
-            .await
-            .unwrap();
+        let op_id = client.upload(b"FAKE_ZIP".to_vec(), &|_| {}).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -424,10 +421,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .start_upload(b"FAKE".to_vec(), &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -446,10 +440,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .start_upload(b"FAKE".to_vec(), &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -573,7 +564,7 @@ mod tests {
 
         let client = client_for(&server);
         let op_id = client
-            .start_submit(Some("for reviewers".to_string()), &|_| {})
+            .submit(Some("for reviewers".to_string()), &|_| {})
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
@@ -599,7 +590,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client.start_submit(None, &|_| {}).await.unwrap();
+        let op_id = client.submit(None, &|_| {}).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -780,9 +771,9 @@ mod tests {
         assert_eq!(
             progress.into_inner().unwrap(),
             [
-                Progress::StartUpload,
+                Progress::Upload,
                 Progress::AwaitUpload,
-                Progress::StartSubmit,
+                Progress::Submit,
                 Progress::AwaitSubmit,
             ],
         );

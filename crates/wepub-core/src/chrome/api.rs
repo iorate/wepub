@@ -86,7 +86,7 @@ pub enum PublishType {
 #[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
-    StartUpload,
+    Upload,
     /// Waiting for the upload to be processed.
     AwaitUpload,
     /// Submitting the draft.
@@ -196,7 +196,7 @@ impl Client {
 
         let token = self.resolve_access_token().await?;
 
-        if !self.start_upload(&token, zip, on_progress).await? {
+        if !self.upload(&token, zip, on_progress).await? {
             self.await_upload(&token, on_progress).await?;
         }
 
@@ -227,14 +227,14 @@ impl Client {
     }
 
     #[tracing::instrument(skip_all)]
-    async fn start_upload(
+    async fn upload(
         &self,
         token: &str,
         zip: Vec<u8>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<bool> {
-        on_progress(Progress::StartUpload);
         tracing::info!("uploading the package archive");
+        on_progress(Progress::Upload);
 
         let req = self
             .http
@@ -265,8 +265,8 @@ impl Client {
         token: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        on_progress(Progress::AwaitUpload);
         tracing::info!("waiting for the upload to be processed");
+        on_progress(Progress::AwaitUpload);
 
         let started = Instant::now();
 
@@ -306,8 +306,8 @@ impl Client {
         options: &PublishOptions,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
-        on_progress(Progress::Submit);
         tracing::info!("submitting the draft");
+        on_progress(Progress::Submit);
 
         let body = PublishRequestBody {
             publish_type: options.publish_type,
@@ -515,7 +515,7 @@ mod tests {
         let token = client.resolve_access_token().await.unwrap();
         assert_eq!(token, "fresh-token");
         client
-            .start_upload(&token, b"FAKE".to_vec(), &|_| {})
+            .upload(&token, b"FAKE".to_vec(), &|_| {})
             .await
             .unwrap();
     }
@@ -540,7 +540,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .start_upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
             .await
             .unwrap();
     }
@@ -562,7 +562,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .start_upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
             .await
             .unwrap();
 
@@ -590,7 +590,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .start_upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
             .await
             .unwrap();
         assert!(!resp);
@@ -606,7 +606,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .start_upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
             .await
             .unwrap_err();
         match err {
@@ -630,7 +630,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .start_upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
             .await
             .unwrap_err();
         match err {
@@ -957,11 +957,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             progress.into_inner().unwrap(),
-            [
-                Progress::StartUpload,
-                Progress::AwaitUpload,
-                Progress::Submit,
-            ],
+            [Progress::Upload, Progress::AwaitUpload, Progress::Submit,],
         );
     }
 
@@ -1008,7 +1004,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             progress.into_inner().unwrap(),
-            [Progress::StartUpload, Progress::Submit],
+            [Progress::Upload, Progress::Submit],
         );
     }
 

@@ -88,7 +88,7 @@ fn build_client(
 
 fn report(progress: Progress) {
     match progress {
-        Progress::StartUpload => eprintln!("Uploading the package archive..."),
+        Progress::Upload => eprintln!("Uploading the package archive..."),
         Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
         Progress::Submit => eprintln!("Submitting the draft..."),
         _ => {}
