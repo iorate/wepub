@@ -15,16 +15,6 @@ pub(crate) struct Cli {
     #[command(next_help_heading = "Logging")]
     pub(crate) verbosity: Verbosity<InfoLevel>,
 
-    /// Show additional debug logs.
-    #[arg(
-        short = 'v',
-        long = "verbose",
-        global = true,
-        conflicts_with = "quiet",
-        help_heading = "Global Options"
-    )]
-    pub verbose: bool,
-
     #[command(subcommand)]
     pub(crate) command: Commands,
 }
