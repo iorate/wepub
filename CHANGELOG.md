@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/iorate/wepub/compare/v0.7.1...v0.8.0)
+
+### ⛰️ Features
+
+
+- [**breaking**] Redesign progress and error output around tracing ([#72](https://github.com/iorate/wepub/pull/72)) - ([98ab89e](https://github.com/iorate/wepub/commit/98ab89e241acbac30156db5150b41769364274dc))
+
+### 📚 Documentation
+
+
+- Align the Edge with_poll_config doc comment with the other stores ([#74](https://github.com/iorate/wepub/pull/74)) - ([1a44d5e](https://github.com/iorate/wepub/commit/1a44d5ed9d5f6aec4053f7e404944506daff73d7))
+
+
 ## [0.7.1](https://github.com/iorate/wepub/compare/v0.7.0...v0.7.1)
 
 ### 🐛 Bug Fixes
