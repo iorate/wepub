@@ -153,7 +153,7 @@ pub(crate) struct FirefoxArgs {
     #[arg(long, value_name = "PATH")]
     pub(crate) source: Option<PathBuf>,
 
-    #[arg(long, hide = true)]
+    #[arg(long, hide = true, env = "WEPUB_FIREFOX_INTERNAL_ROOT_URL")]
     pub(crate) internal_root_url: Option<Url>,
 }
 
