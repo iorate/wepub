@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request},
+    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -199,25 +199,37 @@ impl Client {
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
 
-        let (upload_uuid, processed) = self.upload(zip, channel, on_progress).await?;
+        let (upload_uuid, processed) = instrument_step(
+            tracing::info_span!("upload"),
+            self.upload(zip, channel, on_progress),
+        )
+        .await?;
         if !processed {
-            self.await_upload(&upload_uuid, on_progress).await?;
+            instrument_step(
+                tracing::info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
+                self.await_upload(&upload_uuid, on_progress),
+            )
+            .await?;
         }
 
-        let version_id = self
-            .create_version(
+        let version_id = instrument_step(
+            tracing::info_span!("create_version", upload_uuid = upload_uuid.as_str()),
+            self.create_version(
                 upload_uuid,
                 options.compatibility,
                 options.approval_notes,
                 options.release_notes,
                 on_progress,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         if let Some(source) = options.source
-            && self
-                .update_version_source(version_id, source, on_progress)
-                .await
-                .is_err()
+            && instrument_step(
+                tracing::info_span!("update_version_source", version_id = version_id),
+                self.update_version_source(version_id, source, on_progress),
+            )
+            .await
+            .is_err()
         {
             // The version is already created, so don't fail the publish.
             tracing::error!(version_id, "failed to update the source archive");
@@ -225,7 +237,6 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         zip: Vec<u8>,
@@ -263,7 +274,6 @@ impl Client {
         Ok((upload.uuid, processed))
     }
 
-    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid), err)]
     async fn await_upload(
         &self,
         upload_uuid: &str,
@@ -300,7 +310,6 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid.as_str()), err)]
     async fn create_version(
         &self,
         upload_uuid: String,
@@ -333,7 +342,6 @@ impl Client {
         Ok(version.id)
     }
 
-    #[tracing::instrument(skip_all, fields(version_id = version_id), err)]
     async fn update_version_source(
         &self,
         version_id: u64,

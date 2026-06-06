@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request},
+    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -204,24 +204,38 @@ impl Client {
                 client_secret,
                 refresh_token,
             } => {
-                let token = self
-                    .refresh_access_token(client_id, client_secret, refresh_token, on_progress)
-                    .await?;
+                let token = instrument_step(
+                    tracing::info_span!("refresh_access_token"),
+                    self.refresh_access_token(client_id, client_secret, refresh_token, on_progress),
+                )
+                .await?;
                 Cow::Owned(token)
             }
             Credentials::AccessToken(token) => Cow::Borrowed(token),
         };
 
-        if !self.upload(&token, zip, on_progress).await? {
-            self.await_upload(&token, on_progress).await?;
+        if !instrument_step(
+            tracing::info_span!("upload"),
+            self.upload(&token, zip, on_progress),
+        )
+        .await?
+        {
+            instrument_step(
+                tracing::info_span!("await_upload"),
+                self.await_upload(&token, on_progress),
+            )
+            .await?;
         }
 
-        self.submit(&token, &options, on_progress).await?;
+        instrument_step(
+            tracing::info_span!("submit"),
+            self.submit(&token, &options, on_progress),
+        )
+        .await?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn refresh_access_token(
         &self,
         client_id: &str,
@@ -245,7 +259,6 @@ impl Client {
         Ok(token)
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         token: &str,
@@ -278,7 +291,6 @@ impl Client {
         Ok(processed)
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn await_upload(
         &self,
         token: &str,
@@ -318,7 +330,6 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn submit(
         &self,
         token: &str,

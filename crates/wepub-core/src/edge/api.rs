@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request},
+    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -132,17 +132,34 @@ impl Client {
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
 
-        let upload_operation_id = self.upload(zip, on_progress).await?;
-        self.await_upload(&upload_operation_id, on_progress).await?;
+        let upload_operation_id =
+            instrument_step(tracing::info_span!("upload"), self.upload(zip, on_progress)).await?;
+        instrument_step(
+            tracing::info_span!(
+                "await_upload",
+                upload_operation_id = upload_operation_id.as_str()
+            ),
+            self.await_upload(&upload_operation_id, on_progress),
+        )
+        .await?;
 
-        let publish_operation_id = self.submit(options.notes, on_progress).await?;
-        self.await_submit(&publish_operation_id, on_progress)
-            .await?;
+        let publish_operation_id = instrument_step(
+            tracing::info_span!("submit"),
+            self.submit(options.notes, on_progress),
+        )
+        .await?;
+        instrument_step(
+            tracing::info_span!(
+                "await_submit",
+                publish_operation_id = publish_operation_id.as_str()
+            ),
+            self.await_submit(&publish_operation_id, on_progress),
+        )
+        .await?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         zip: Vec<u8>,
@@ -173,7 +190,6 @@ impl Client {
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(upload_operation_id = upload_operation_id), err)]
     async fn await_upload(
         &self,
         upload_operation_id: &str,
@@ -221,7 +237,6 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, err)]
     async fn submit(
         &self,
         notes: Option<String>,
@@ -253,7 +268,6 @@ impl Client {
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(publish_operation_id = publish_operation_id), err)]
     async fn await_submit(
         &self,
         publish_operation_id: &str,

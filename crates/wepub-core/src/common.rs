@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::{Result, WepubError};
+use crate::{Result, WepubError, error::tracing_error};
 
 /// Polling interval and timeout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -11,6 +11,16 @@ pub struct PollConfig {
     pub interval: Duration,
     /// Maximum total time to wait before giving up.
     pub timeout: Duration,
+}
+
+pub(crate) async fn instrument_step<T>(
+    span: tracing::Span,
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    use tracing::Instrument;
+    async move { fut.await.inspect_err(tracing_error) }
+        .instrument(span)
+        .await
 }
 
 pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {

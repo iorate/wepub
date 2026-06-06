@@ -1,24 +1,24 @@
-use std::fmt;
 use std::time::Duration;
 
-use serde::{Serialize, Serializer};
+use thiserror::Error;
 
 /// Convenience alias for [`std::result::Result`] specialized to [`WepubError`].
 pub type Result<T> = std::result::Result<T, WepubError>;
 
 /// Error type returned by every fallible call in this crate.
-#[derive(Debug, Serialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum WepubError {
     /// The underlying HTTP request failed.
+    #[error("the underlying HTTP request failed")]
     Http {
         /// The underlying HTTP error.
-        #[serde(serialize_with = "serialize_display")]
+        #[from]
         source: reqwest::Error,
     },
 
     /// The server returned a non-2xx HTTP status.
+    #[error("the server returned a non-2xx HTTP status")]
     HttpStatus {
         /// HTTP status code.
         status: u16,
@@ -27,6 +27,7 @@ pub enum WepubError {
     },
 
     /// The token endpoint of an OAuth server reported the request as failed.
+    #[error("the OAuth token endpoint reported the request as failed")]
     OAuthToken {
         /// The error code.
         error: String,
@@ -37,45 +38,51 @@ pub enum WepubError {
     },
 
     /// A polling loop timed out.
+    #[error("a polling loop timed out")]
     PollTimeout {
         /// Total elapsed time before giving up.
         elapsed: Duration,
     },
 
     /// The server's response did not match the expected format.
+    #[error("the server's response did not match the expected format")]
     UnexpectedResponse {
         /// Short description of how the response was unexpected.
         reason: String,
     },
 
     /// A URL could not be parsed.
+    #[error("a URL could not be parsed")]
     Url {
         /// The URL that failed to parse.
         url: String,
         /// The underlying URL parsing error.
-        #[serde(serialize_with = "serialize_display")]
         source: url::ParseError,
     },
 
     /// The upload endpoint of Chrome Web Store reported the upload as failed.
+    #[error("the upload endpoint of Chrome Web Store reported the upload as failed")]
     ChromeUpload {
         /// Upload state.
         upload_state: String,
     },
 
     /// The publish endpoint of Chrome Web Store reported the publish as failed.
+    #[error("the publish endpoint of Chrome Web Store reported the publish as failed")]
     ChromePublish {
         /// Item state.
         item_state: String,
     },
 
     /// The upload endpoint of Firefox Add-ons reported the upload as failed.
+    #[error("the upload endpoint of Firefox Add-ons reported the upload as failed")]
     FirefoxUpload {
         /// Validation results.
         validation: serde_json::Value,
     },
 
     /// Edge Add-ons reported the operation as failed.
+    #[error("Edge Add-ons reported the operation as failed")]
     EdgeApi {
         /// Operation message, if any.
         message: Option<String>,
@@ -86,37 +93,63 @@ pub enum WepubError {
     },
 }
 
-impl fmt::Display for WepubError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match serde_json::to_string(self) {
-            Ok(json) => f.write_str(&json),
-            Err(_) => f.write_str("null"),
+pub(crate) fn tracing_error(err: &WepubError) {
+    match err {
+        WepubError::Http { source } => {
+            let source = source.to_string();
+            tracing::error!(source = source.as_str(), "{err}");
+        }
+        WepubError::HttpStatus { status, body } => {
+            tracing::error!(status = *status, body = body.as_str(), "{err}");
+        }
+        WepubError::OAuthToken {
+            error,
+            error_description,
+            error_uri,
+        } => {
+            tracing::error!(
+                error = error.as_str(),
+                error_description = error_description.as_deref(),
+                error_uri = error_uri.as_deref(),
+                "{err}",
+            );
+        }
+        WepubError::PollTimeout { elapsed } => {
+            tracing::error!(elapsed_secs = elapsed.as_secs_f64(), "{err}");
+        }
+        WepubError::UnexpectedResponse { reason } => {
+            tracing::error!(reason = reason.as_str(), "{err}");
+        }
+        WepubError::Url { url, source } => {
+            let source = source.to_string();
+            tracing::error!(url = url.as_str(), source = source.as_str(), "{err}");
+        }
+        WepubError::ChromeUpload { upload_state } => {
+            tracing::error!(upload_state = upload_state.as_str(), "{err}");
+        }
+        WepubError::ChromePublish { item_state } => {
+            tracing::error!(item_state = item_state.as_str(), "{err}");
+        }
+        WepubError::FirefoxUpload { validation } => {
+            let validation = serde_json::to_string(validation).unwrap_or_default();
+            tracing::error!(validation = validation.as_str(), "{err}");
+        }
+        WepubError::EdgeApi {
+            message,
+            error_code,
+            errors,
+        } => {
+            let errors = errors
+                .as_ref()
+                .map(|errors| serde_json::to_string(errors).unwrap_or_default());
+            tracing::error!(
+                message = message.as_deref(),
+                error_code = error_code.as_deref(),
+                errors = errors.as_deref(),
+                "{err}",
+            );
         }
     }
-}
-
-impl std::error::Error for WepubError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            WepubError::Http { source } => Some(source),
-            WepubError::Url { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<reqwest::Error> for WepubError {
-    fn from(source: reqwest::Error) -> Self {
-        WepubError::Http { source }
-    }
-}
-
-fn serialize_display<T, S>(value: &T, serializer: S) -> std::result::Result<S::Ok, S::Error>
-where
-    T: fmt::Display,
-    S: Serializer,
-{
-    serializer.serialize_str(&value.to_string())
 }
 
 #[cfg(test)]
@@ -124,65 +157,37 @@ mod tests {
     use std::error::Error;
 
     use super::*;
-    use serde_json::json;
 
-    // `Display` is the machine-readable contract (one compact JSON object per
-    // error, tagged by `type`); pin its shape so renames or field changes that
-    // alter the output are caught here.
+    // `Display` is a static per-variant summary that carries no field values;
+    // detail lives in the variant's fields and in `tracing_error`.
     #[test]
-    fn display_tags_by_type_with_numeric_status() {
-        let err = WepubError::HttpStatus {
-            status: 404,
-            body: "<html>".to_string(),
-        };
+    fn display_is_a_static_summary_without_field_values() {
         assert_eq!(
-            err.to_string(),
-            r#"{"type":"HttpStatus","status":404,"body":"<html>"}"#,
+            WepubError::HttpStatus {
+                status: 404,
+                body: "<html>".to_string(),
+            }
+            .to_string(),
+            "the server returned a non-2xx HTTP status",
+        );
+        assert_eq!(
+            WepubError::ChromeUpload {
+                upload_state: "FAILED".to_string(),
+            }
+            .to_string(),
+            "the upload endpoint of Chrome Web Store reported the upload as failed",
         );
     }
 
+    // The underlying error is reachable through `source()` but not embedded in
+    // `Display`, so the CLI's `{:#}` chain prints it exactly once.
     #[test]
-    fn display_renders_optional_fields_as_null() {
-        let err = WepubError::OAuthToken {
-            error: "invalid_grant".to_string(),
-            error_description: Some("revoked".to_string()),
-            error_uri: None,
-        };
-        assert_eq!(
-            err.to_string(),
-            r#"{"type":"OAuthToken","error":"invalid_grant","error_description":"revoked","error_uri":null}"#,
-        );
-    }
-
-    #[test]
-    fn display_stringifies_the_underlying_source() {
+    fn url_keeps_the_parse_error_as_source_only() {
         let err = WepubError::Url {
             url: "not a url".to_string(),
             source: url::ParseError::RelativeUrlWithoutBase,
         };
-        assert_eq!(
-            err.to_string(),
-            r#"{"type":"Url","url":"not a url","source":"relative URL without a base"}"#,
-        );
-    }
-
-    #[test]
-    fn display_embeds_nested_json_values() {
-        let err = WepubError::FirefoxUpload {
-            validation: json!({ "messages": ["manifest broken"] }),
-        };
-        assert_eq!(
-            err.to_string(),
-            r#"{"type":"FirefoxUpload","validation":{"messages":["manifest broken"]}}"#,
-        );
-    }
-
-    #[test]
-    fn source_exposes_the_underlying_error() {
-        let err = WepubError::Url {
-            url: "not a url".to_string(),
-            source: url::ParseError::RelativeUrlWithoutBase,
-        };
+        assert_eq!(err.to_string(), "a URL could not be parsed");
         assert!(err.source().is_some());
 
         let err = WepubError::PollTimeout {
