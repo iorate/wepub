@@ -7,11 +7,6 @@
 
 - [**breaking**] Redesign progress and error output around tracing ([#72](https://github.com/iorate/wepub/pull/72)) - ([98ab89e](https://github.com/iorate/wepub/commit/98ab89e241acbac30156db5150b41769364274dc))
 
-### 🐛 Bug Fixes
-
-
-- Order quiet before verbose in logging flags ([#70](https://github.com/iorate/wepub/pull/70)) - ([eec29db](https://github.com/iorate/wepub/commit/eec29db18e5b56f1b9d295fda211af82979ab6d4))
-
 ### 📚 Documentation
 
 
