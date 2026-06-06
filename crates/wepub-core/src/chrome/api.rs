@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tracing::{Level, info, info_span, instrument};
 use url::Url;
 
 use crate::{
@@ -167,7 +168,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(
+    #[instrument(
         skip_all,
         fields(
             store = "chrome",
@@ -183,7 +184,8 @@ impl Client {
                 refresh_token,
             } => {
                 let token = instrument_step(
-                    tracing::info_span!("refresh_access_token"),
+                    info_span!("refresh_access_token"),
+                    Level::ERROR,
                     self.refresh_access_token(client_id, client_secret, refresh_token),
                 )
                 .await?;
@@ -193,16 +195,22 @@ impl Client {
         };
 
         let processed =
-            instrument_step(tracing::info_span!("upload"), self.upload(&token, zip)).await?;
+            instrument_step(info_span!("upload"), Level::ERROR, self.upload(&token, zip)).await?;
         if !processed {
             instrument_step(
-                tracing::info_span!("await_upload"),
+                info_span!("await_upload"),
+                Level::ERROR,
                 self.await_upload(&token),
             )
             .await?;
         }
 
-        instrument_step(tracing::info_span!("submit"), self.submit(&token, &options)).await?;
+        instrument_step(
+            info_span!("submit"),
+            Level::ERROR,
+            self.submit(&token, &options),
+        )
+        .await?;
 
         Ok(())
     }
@@ -213,7 +221,7 @@ impl Client {
         client_secret: &str,
         refresh_token: &str,
     ) -> Result<String> {
-        tracing::info!("refreshing the access token");
+        info!("refreshing the access token");
 
         let token = auth::refresh_access_token(
             &self.http,
@@ -224,12 +232,12 @@ impl Client {
         )
         .await?;
 
-        tracing::info!("the access token refreshed");
+        info!("the access token refreshed");
         Ok(token)
     }
 
     async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<bool> {
-        tracing::info!("uploading the package archive");
+        info!("uploading the package archive");
 
         let req = self
             .http
@@ -247,7 +255,7 @@ impl Client {
         let upload: UploadResponse = decode_response(resp).await?;
         let processed = upload_processed(Some(upload.upload_state))?;
 
-        tracing::info!(
+        info!(
             upload_state = upload.upload_state.as_str(),
             "the package archive uploaded",
         );
@@ -255,7 +263,7 @@ impl Client {
     }
 
     async fn await_upload(&self, token: &str) -> Result<()> {
-        tracing::info!("waiting for the upload to be processed");
+        info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
@@ -284,12 +292,12 @@ impl Client {
             }
         }
 
-        tracing::info!("the upload processed");
+        info!("the upload processed");
         Ok(())
     }
 
     async fn submit(&self, token: &str, options: &PublishOptions) -> Result<()> {
-        tracing::info!("submitting the draft");
+        info!("submitting the draft");
 
         let body = PublishRequestBody {
             publish_type: options.publish_type,
@@ -319,7 +327,7 @@ impl Client {
             });
         }
 
-        tracing::info!(item_state = publish.state.as_str(), "the draft submitted");
+        info!(item_state = publish.state.as_str(), "the draft submitted");
         Ok(())
     }
 

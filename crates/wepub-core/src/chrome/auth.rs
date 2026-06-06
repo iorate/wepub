@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use tracing::debug;
 use url::Url;
 
 use crate::{Result, WepubError, common::send_request};
@@ -27,7 +28,7 @@ pub(crate) async fn refresh_access_token(
     let status = resp.status();
     let body = resp.text().await?;
     if !status.is_success() {
-        tracing::debug!(
+        debug!(
             status = status.as_u16(),
             body = body.as_str(),
             "received response"
@@ -47,7 +48,7 @@ pub(crate) async fn refresh_access_token(
         });
     }
     // The success body carries the access token, so mask it in logs.
-    tracing::debug!(status = status.as_u16(), body = "***", "received response");
+    debug!(status = status.as_u16(), body = "***", "received response");
     let token: TokenResponse =
         serde_json::from_str(&body).map_err(|err| WepubError::UnexpectedResponse {
             reason: format!("failed to decode response: {err}"),

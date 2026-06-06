@@ -2,6 +2,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
+use tracing::{Level, debug, info, info_span, instrument};
 use url::Url;
 
 use crate::{
@@ -109,26 +110,32 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
+    #[instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
     pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload_operation_id =
-            instrument_step(tracing::info_span!("upload"), self.upload(zip)).await?;
+            instrument_step(info_span!("upload"), Level::ERROR, self.upload(zip)).await?;
         instrument_step(
-            tracing::info_span!(
+            info_span!(
                 "await_upload",
                 upload_operation_id = upload_operation_id.as_str()
             ),
+            Level::ERROR,
             self.await_upload(&upload_operation_id),
         )
         .await?;
 
-        let publish_operation_id =
-            instrument_step(tracing::info_span!("submit"), self.submit(options.notes)).await?;
+        let publish_operation_id = instrument_step(
+            info_span!("submit"),
+            Level::ERROR,
+            self.submit(options.notes),
+        )
+        .await?;
         instrument_step(
-            tracing::info_span!(
+            info_span!(
                 "await_submit",
                 publish_operation_id = publish_operation_id.as_str()
             ),
+            Level::ERROR,
             self.await_submit(&publish_operation_id),
         )
         .await?;
@@ -137,7 +144,7 @@ impl Client {
     }
 
     async fn upload(&self, zip: Vec<u8>) -> Result<String> {
-        tracing::info!("uploading the package archive");
+        info!("uploading the package archive");
 
         let req = self
             .http
@@ -154,7 +161,7 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(
+        info!(
             upload_operation_id = operation_id.as_str(),
             "the package archive uploaded"
         );
@@ -162,7 +169,7 @@ impl Client {
     }
 
     async fn await_upload(&self, upload_operation_id: &str) -> Result<()> {
-        tracing::info!("waiting for the upload to be processed");
+        info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
@@ -199,12 +206,12 @@ impl Client {
             }
         }
 
-        tracing::info!("the upload processed");
+        info!("the upload processed");
         Ok(())
     }
 
     async fn submit(&self, notes: Option<String>) -> Result<String> {
-        tracing::info!("submitting the draft");
+        info!("submitting the draft");
 
         let mut req = self
             .http
@@ -222,7 +229,7 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(
+        info!(
             publish_operation_id = operation_id.as_str(),
             "the draft submitted"
         );
@@ -230,7 +237,7 @@ impl Client {
     }
 
     async fn await_submit(&self, publish_operation_id: &str) -> Result<()> {
-        tracing::info!("waiting for the submission to be processed");
+        info!("waiting for the submission to be processed");
 
         let started = Instant::now();
 
@@ -267,7 +274,7 @@ impl Client {
             }
         }
 
-        tracing::info!("the submission processed");
+        info!("the submission processed");
         Ok(())
     }
 
@@ -305,7 +312,7 @@ async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
     let status = resp.status();
     let location = resp.headers().get(reqwest::header::LOCATION).cloned();
     let body = resp.text().await?;
-    tracing::debug!(
+    debug!(
         status = status.as_u16(),
         body = body.as_str(),
         "received response"
