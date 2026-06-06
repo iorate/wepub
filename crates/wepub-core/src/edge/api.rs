@@ -83,7 +83,7 @@ impl Client {
         Ok(self)
     }
 
-    /// Override the poll config used.
+    /// Override the poll config.
     #[must_use]
     pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
         self.poll_config = poll_config;
