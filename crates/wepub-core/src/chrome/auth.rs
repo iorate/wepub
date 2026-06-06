@@ -41,7 +41,10 @@ pub(crate) async fn refresh_access_token(
                 error_uri: token_error.error_uri,
             });
         }
-        return Err(WepubError::HttpStatus { status, body });
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
     }
     // The success body carries the access token, so mask it in logs.
     tracing::debug!(status = status.as_u16(), body = "***", "received response");

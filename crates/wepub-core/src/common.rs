@@ -57,7 +57,10 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
         "received response"
     );
     if !status.is_success() {
-        return Err(WepubError::HttpStatus { status, body });
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
     }
     serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
         reason: format!("failed to decode response: {e}"),

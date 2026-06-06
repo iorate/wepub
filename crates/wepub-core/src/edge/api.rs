@@ -341,7 +341,10 @@ async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
         "received response"
     );
     if !status.is_success() {
-        return Err(WepubError::HttpStatus { status, body });
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
     }
     let location = location.ok_or_else(|| WepubError::UnexpectedResponse {
         reason: "missing Location header".to_string(),
