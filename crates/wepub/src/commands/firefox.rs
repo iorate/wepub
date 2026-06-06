@@ -106,7 +106,8 @@ fn report(progress: Progress) {
     match progress {
         Progress::Upload => eprintln!("Uploading the package archive..."),
         Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Submit => eprintln!("Submitting the new version..."),
+        Progress::CreateVersion => eprintln!("Creating the new version..."),
+        Progress::UpdateVersionSource => eprintln!("Updating the source archive..."),
         _ => {}
     }
 }

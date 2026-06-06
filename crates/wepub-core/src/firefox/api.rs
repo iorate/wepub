@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request, to_pretty_string},
+    common::{decode_response, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -119,8 +119,10 @@ pub enum Progress {
     Upload,
     /// Waiting for the upload to be processed.
     AwaitUpload,
-    /// Submitting the new version.
-    Submit,
+    /// Creating the new version.
+    CreateVersion,
+    /// Updating the source archive.
+    UpdateVersionSource,
 }
 
 /// Client for the Firefox Add-ons API (v5).
@@ -169,7 +171,7 @@ impl Client {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn run() -> wepub_core::Result<()> {
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
@@ -186,7 +188,7 @@ impl Client {
     /// ```
     #[tracing::instrument(
         skip_all,
-        fields(store = "Firefox Add-ons", addon_id = %self.addon_id, channel = channel.as_str())
+        fields(store = "firefox", addon_id = self.addon_id.as_str(), channel = channel.as_str())
     )]
     pub async fn publish(
         &self,
@@ -202,12 +204,28 @@ impl Client {
             self.await_upload(&upload_uuid, on_progress).await?;
         }
 
-        self.submit(upload_uuid, options, on_progress).await?;
-
+        let version_id = self
+            .create_version(
+                upload_uuid,
+                options.compatibility,
+                options.approval_notes,
+                options.release_notes,
+                on_progress,
+            )
+            .await?;
+        if let Some(source) = options.source
+            && self
+                .update_version_source(version_id, source, on_progress)
+                .await
+                .is_err()
+        {
+            // The version is already created, so don't fail the publish.
+            tracing::error!(version_id, "failed to update the source archive");
+        }
         Ok(())
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         zip: Vec<u8>,
@@ -238,14 +256,14 @@ impl Client {
         let processed = upload_processed(&upload)?;
 
         tracing::info!(
-            upload_uuid = %upload.uuid,
+            upload_uuid = upload.uuid.as_str(),
             upload_processed = processed,
             "the package archive uploaded",
         );
         Ok((upload.uuid, processed))
     }
 
-    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid))]
+    #[tracing::instrument(skip_all, fields(upload_uuid), err)]
     async fn await_upload(
         &self,
         upload_uuid: &str,
@@ -282,42 +300,18 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid))]
-    async fn submit(
-        &self,
-        upload_uuid: String,
-        options: PublishOptions,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
-        tracing::info!("submitting the new version");
-        on_progress(Progress::Submit);
-
-        let version_id = self
-            .create_version(
-                upload_uuid,
-                options.compatibility,
-                options.approval_notes,
-                options.release_notes,
-            )
-            .await?;
-        if let Some(source) = options.source
-            && let Err(err) = self.patch_version_source(version_id, source).await
-        {
-            // The version is already created, so don't fail the publish.
-            tracing::error!(version_id, error = %err, "failed to submit the source archive");
-        }
-
-        tracing::info!(version_id, "the new version submitted");
-        Ok(())
-    }
-
+    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid.as_str()), err)]
     async fn create_version(
         &self,
         upload_uuid: String,
         compatibility: Option<Compatibility>,
         approval_notes: Option<String>,
         release_notes: Option<HashMap<String, String>>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<u64> {
+        tracing::info!("creating the new version");
+        on_progress(Progress::CreateVersion);
+
         let body = VersionCreateBody {
             upload: upload_uuid,
             compatibility,
@@ -335,10 +329,20 @@ impl Client {
 
         let version: VersionResponse = decode_response(resp).await?;
 
+        tracing::info!(version_id = version.id, "the new version created");
         Ok(version.id)
     }
 
-    async fn patch_version_source(&self, version_id: u64, source: Vec<u8>) -> Result<()> {
+    #[tracing::instrument(skip_all, fields(version_id), err)]
+    async fn update_version_source(
+        &self,
+        version_id: u64,
+        source: Vec<u8>,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<()> {
+        tracing::info!("updating the source archive");
+        on_progress(Progress::UpdateVersionSource);
+
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
             .file_name("source.zip")
@@ -359,6 +363,7 @@ impl Client {
 
         let _: VersionResponse = decode_response(resp).await?;
 
+        tracing::info!("the source archive updated");
         Ok(())
     }
 
@@ -402,12 +407,12 @@ fn upload_processed(upload: &UploadResponse) -> Result<bool> {
         if upload.valid {
             Ok(true)
         } else if let Some(validation) = upload.validation.as_ref() {
-            Err(WepubError::FirefoxUploadFailed {
-                validation: to_pretty_string(validation),
+            Err(WepubError::FirefoxUpload {
+                validation: validation.clone(),
             })
         } else {
             Err(WepubError::UnexpectedResponse {
-                detail: "missing validation field".to_string(),
+                reason: "missing validation field".to_string(),
             })
         }
     } else {
@@ -505,10 +510,10 @@ mod tests {
         let err = client.await_upload("uuid-2", &|_| {}).await.unwrap_err();
 
         match err {
-            WepubError::FirefoxUploadFailed { validation } => {
-                assert!(validation.contains("manifest broken"));
+            WepubError::FirefoxUpload { validation } => {
+                assert!(validation.to_string().contains("manifest broken"));
             }
-            other => panic!("expected WepubError::FirefoxUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxUpload, got {other:?}"),
         }
     }
 
@@ -557,10 +562,10 @@ mod tests {
             validation: Some(json!({ "messages": ["manifest broken"] })),
         };
         match upload_processed(&processed_invalid).unwrap_err() {
-            WepubError::FirefoxUploadFailed { validation } => {
-                assert!(validation.contains("manifest broken"));
+            WepubError::FirefoxUpload { validation } => {
+                assert!(validation.to_string().contains("manifest broken"));
             }
-            other => panic!("expected WepubError::FirefoxUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::FirefoxUpload, got {other:?}"),
         }
 
         let invalid_without_validation = UploadResponse {
@@ -588,7 +593,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .create_version("uuid-x".to_string(), None, None, None)
+            .create_version("uuid-x".to_string(), None, None, None, &|_| {})
             .await
             .unwrap();
 
@@ -608,7 +613,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .patch_version_source(4242, b"source-zip".to_vec())
+            .update_version_source(4242, b"source-zip".to_vec(), &|_| {})
             .await
             .unwrap();
     }
@@ -662,7 +667,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             progress.into_inner().unwrap(),
-            [Progress::Upload, Progress::AwaitUpload, Progress::Submit],
+            [
+                Progress::Upload,
+                Progress::AwaitUpload,
+                Progress::CreateVersion,
+                Progress::UpdateVersionSource
+            ],
         );
     }
 
@@ -792,7 +802,7 @@ mod tests {
     #[test]
     fn version_create_body_minimal_only_has_upload() {
         let json = body_to_json("uuid-123".to_string(), None, None, None);
-        assert_eq!(json, serde_json::json!({ "upload": "uuid-123" }));
+        assert_eq!(json, json!({ "upload": "uuid-123" }));
     }
 
     #[test]
@@ -801,7 +811,7 @@ mod tests {
         let json = body_to_json("uuid-123".to_string(), Some(compat), None, None);
         assert_eq!(
             json,
-            serde_json::json!({
+            json!({
                 "upload": "uuid-123",
                 "compatibility": ["firefox", "android"],
             })
@@ -831,12 +841,9 @@ mod tests {
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(
             json["compatibility"]["firefox"],
-            serde_json::json!({ "min": "58.0", "max": "120.0" })
+            json!({ "min": "58.0", "max": "120.0" })
         );
-        assert_eq!(
-            json["compatibility"]["android"],
-            serde_json::json!({ "min": "58.0" })
-        );
+        assert_eq!(json["compatibility"]["android"], json!({ "min": "58.0" }));
     }
 
     #[test]
@@ -904,7 +911,7 @@ mod tests {
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {

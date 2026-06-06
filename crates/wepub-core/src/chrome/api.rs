@@ -11,7 +11,7 @@ use crate::{
     http::build_client,
 };
 
-use super::auth::{DEFAULT_TOKEN_URL, refresh_access_token};
+use super::auth::{self, DEFAULT_TOKEN_URL};
 
 const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -85,6 +85,8 @@ pub enum PublishType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Progress {
+    /// Refreshing the access token.
+    RefreshAccessToken,
     /// Uploading the package archive.
     Upload,
     /// Waiting for the upload to be processed.
@@ -135,8 +137,10 @@ impl Client {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`.
     pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
-        self.token_url = Url::parse(token_url)
-            .map_err(|e| WepubError::InvalidUrl(format!("{token_url:?}: {e}")))?;
+        self.token_url = Url::parse(token_url).map_err(|e| WepubError::Url {
+            url: token_url.to_string(),
+            source: e,
+        })?;
         Ok(self)
     }
 
@@ -152,7 +156,7 @@ impl Client {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn run() -> wepub_core::Result<()> {
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
     ///
     /// let client = Client::new(
@@ -181,9 +185,9 @@ impl Client {
     #[tracing::instrument(
         skip_all,
         fields(
-            store = "Chrome Web Store",
-            publisher_id = %self.publisher_id,
-            item_id = %self.item_id
+            store = "chrome",
+            publisher_id = self.publisher_id.as_str(),
+            item_id = self.item_id.as_str(),
         )
     )]
     pub async fn publish(
@@ -194,7 +198,19 @@ impl Client {
     ) -> Result<()> {
         let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
 
-        let token = self.resolve_access_token().await?;
+        let token: Cow<'_, str> = match &self.credentials {
+            Credentials::RefreshToken {
+                client_id,
+                client_secret,
+                refresh_token,
+            } => {
+                let token = self
+                    .refresh_access_token(client_id, client_secret, refresh_token, on_progress)
+                    .await?;
+                Cow::Owned(token)
+            }
+            Credentials::AccessToken(token) => Cow::Borrowed(token),
+        };
 
         if !self.upload(&token, zip, on_progress).await? {
             self.await_upload(&token, on_progress).await?;
@@ -205,28 +221,31 @@ impl Client {
         Ok(())
     }
 
-    async fn resolve_access_token(&self) -> Result<Cow<'_, str>> {
-        match &self.credentials {
-            Credentials::RefreshToken {
-                client_id,
-                client_secret,
-                refresh_token,
-            } => {
-                let token = refresh_access_token(
-                    &self.http,
-                    self.token_url.clone(),
-                    client_id,
-                    client_secret,
-                    refresh_token,
-                )
-                .await?;
-                Ok(Cow::Owned(token))
-            }
-            Credentials::AccessToken(token) => Ok(Cow::Borrowed(token)),
-        }
+    #[tracing::instrument(skip_all, err)]
+    async fn refresh_access_token(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+    ) -> Result<String> {
+        tracing::info!("refreshing the access token");
+        on_progress(Progress::RefreshAccessToken);
+
+        let token = auth::refresh_access_token(
+            &self.http,
+            self.token_url.clone(),
+            client_id,
+            client_secret,
+            refresh_token,
+        )
+        .await?;
+
+        tracing::info!("the access token refreshed");
+        Ok(token)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         token: &str,
@@ -259,7 +278,7 @@ impl Client {
         Ok(processed)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn await_upload(
         &self,
         token: &str,
@@ -299,7 +318,7 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn submit(
         &self,
         token: &str,
@@ -332,7 +351,7 @@ impl Client {
 
         let publish: PublishResponse = decode_response(resp).await?;
         if let ItemState::Rejected | ItemState::Cancelled = publish.state {
-            return Err(WepubError::ChromeSubmissionFailed {
+            return Err(WepubError::ChromePublish {
                 item_state: publish.state.as_str().to_string(),
             });
         }
@@ -430,10 +449,10 @@ fn upload_processed(state: Option<UploadState>) -> Result<bool> {
     match state {
         Some(UploadState::Succeeded) => Ok(true),
         Some(UploadState::InProgress) => Ok(false),
-        Some(state) => Err(WepubError::ChromeUploadFailed {
+        Some(state) => Err(WepubError::ChromeUpload {
             upload_state: state.as_str().to_string(),
         }),
-        None => Err(WepubError::ChromeUploadFailed {
+        None => Err(WepubError::ChromeUpload {
             upload_state: "UPLOAD_STATE_UNSPECIFIED".to_string(),
         }),
     }
@@ -447,14 +466,17 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    const CLIENT_ID: &str = "client-id";
+    const CLIENT_SECRET: &str = "client-secret";
+    const REFRESH_TOKEN: &str = "refresh-token";
     const TEST_TOKEN: &str = "test-access-token";
 
     #[test]
     fn debug_redacts_secrets() {
         let credentials = Credentials::RefreshToken {
-            client_id: "client-id".to_string(),
-            client_secret: "secret-client".to_string(),
-            refresh_token: "secret-refresh".to_string(),
+            client_id: CLIENT_ID.to_string(),
+            client_secret: CLIENT_SECRET.to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
         };
         let credentials_debug = format!("{credentials:?}");
         assert!(!credentials_debug.contains("secret-client"));
@@ -501,9 +523,9 @@ mod tests {
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::RefreshToken {
-                client_id: "client-id".to_string(),
-                client_secret: "client-secret".to_string(),
-                refresh_token: "refresh-token".to_string(),
+                client_id: CLIENT_ID.to_string(),
+                client_secret: CLIENT_SECRET.to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
             },
         )
         .unwrap()
@@ -512,7 +534,10 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.resolve_access_token().await.unwrap();
+        let token = client
+            .refresh_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN, &|_| {})
+            .await
+            .unwrap();
         assert_eq!(token, "fresh-token");
         client
             .upload(&token, b"FAKE".to_vec(), &|_| {})
@@ -634,7 +659,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { upload_state } => {
+            WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
@@ -671,7 +696,7 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { upload_state } => {
+            WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
@@ -692,7 +717,7 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { upload_state } => {
+            WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
@@ -712,7 +737,7 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { upload_state } => {
+            WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
             }
             other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
@@ -749,7 +774,7 @@ mod tests {
             (None, "UPLOAD_STATE_UNSPECIFIED"),
         ] {
             match upload_processed(state).unwrap_err() {
-                WepubError::ChromeUploadFailed { upload_state } => {
+                WepubError::ChromeUpload { upload_state } => {
                     assert_eq!(upload_state, expected);
                 }
                 other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
@@ -856,7 +881,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeSubmissionFailed { item_state } => {
+            WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "REJECTED");
             }
             other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
@@ -881,7 +906,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeSubmissionFailed { item_state } => {
+            WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
             }
             other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
@@ -1019,7 +1044,7 @@ mod tests {
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     #[test]
@@ -1033,7 +1058,7 @@ mod tests {
         let Err(err) = client.with_token_url("not a url") else {
             panic!("expected with_token_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {

@@ -26,22 +26,28 @@ pub(crate) async fn refresh_access_token(
 
     let status = resp.status();
     let body = resp.text().await?;
-    // The success body carries the access token, so mask it in logs.
-    let logged_body: &str = if status.is_success() { "***" } else { &body };
-    tracing::debug!(
-        status = status.as_u16(),
-        body = %logged_body,
-        "received response",
-    );
     if !status.is_success() {
-        return Err(WepubError::HttpStatus {
-            status: status.as_u16(),
-            body,
-        });
+        tracing::debug!(
+            status = status.as_u16(),
+            body = body.as_str(),
+            "received response"
+        );
+        if (status == 400 || status == 401)
+            && let Ok(token_error) = serde_json::from_str::<TokenErrorResponse>(&body)
+        {
+            return Err(WepubError::OAuthToken {
+                error: token_error.error,
+                error_description: token_error.error_description,
+                error_uri: token_error.error_uri,
+            });
+        }
+        return Err(WepubError::HttpStatus { status, body });
     }
+    // The success body carries the access token, so mask it in logs.
+    tracing::debug!(status = status.as_u16(), body = "***", "received response");
     let token: TokenResponse =
         serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-            detail: format!("failed to decode token response: {e}"),
+            reason: format!("failed to decode response: {e}"),
         })?;
     Ok(token.access_token)
 }
@@ -49,6 +55,13 @@ pub(crate) async fn refresh_access_token(
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
+}
+
+#[derive(Deserialize)]
+struct TokenErrorResponse {
+    error: String,
+    error_description: Option<String>,
+    error_uri: Option<String>,
 }
 
 #[cfg(test)]
@@ -111,7 +124,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_error_preserves_response_body_verbatim() {
+    async fn status_400_parses_into_oauth_token_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(400).set_body_json(json!({
@@ -123,20 +136,23 @@ mod tests {
 
         let err = refresh(&server, "client-secret").await.unwrap_err();
         match err {
-            WepubError::HttpStatus { status, body } => {
-                assert_eq!(status, 400);
-                assert!(body.contains("invalid_grant"), "body: {body}");
-                assert!(
-                    body.contains("Token has been expired or revoked."),
-                    "body: {body}",
+            WepubError::OAuthToken {
+                error,
+                error_description,
+                ..
+            } => {
+                assert_eq!(error, "invalid_grant");
+                assert_eq!(
+                    error_description.unwrap(),
+                    "Token has been expired or revoked."
                 );
             }
-            other => panic!("expected HttpStatus, got {other:?}"),
+            other => panic!("expected OAuthToken, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn non_json_error_body_is_passed_through() {
+    async fn non_400_status_is_passed_through() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(
@@ -168,10 +184,10 @@ mod tests {
 
         let err = refresh(&server, "client-secret").await.unwrap_err();
         match err {
-            WepubError::UnexpectedResponse { detail } => {
+            WepubError::UnexpectedResponse { reason } => {
                 assert!(
-                    detail.contains("access_token"),
-                    "expected detail to mention the missing field, got: {detail}",
+                    reason.contains("access_token"),
+                    "expected reason to mention the missing field, got: {reason}",
                 );
             }
             other => panic!("expected UnexpectedResponse, got {other:?}"),

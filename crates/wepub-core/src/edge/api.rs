@@ -1,12 +1,12 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request, to_pretty_string},
+    common::{decode_response, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
@@ -108,7 +108,7 @@ impl Client {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn run() -> wepub_core::Result<()> {
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use wepub_core::edge::{Client, Credentials, PublishOptions};
     ///
     /// let client = Client::new(
@@ -118,12 +118,12 @@ impl Client {
     ///         api_key: "api-key".into(),
     ///     },
     /// )?;
-    /// let zip = std::fs::read("./extension.zip")?;
+    /// let zip = std::fs::read("./addon.zip")?;
     /// client.publish(zip, PublishOptions::new(), |_progress| {}).await?;
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(skip_all, fields(store = "Edge Add-ons", product_id = %self.product_id))]
+    #[tracing::instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
     pub async fn publish(
         &self,
         zip: Vec<u8>,
@@ -135,13 +135,14 @@ impl Client {
         let upload_operation_id = self.upload(zip, on_progress).await?;
         self.await_upload(&upload_operation_id, on_progress).await?;
 
-        let submit_operation_id = self.submit(options.notes, on_progress).await?;
-        self.await_submit(&submit_operation_id, on_progress).await?;
+        let publish_operation_id = self.submit(options.notes, on_progress).await?;
+        self.await_submit(&publish_operation_id, on_progress)
+            .await?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn upload(
         &self,
         zip: Vec<u8>,
@@ -165,11 +166,14 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(upload_operation_id = %operation_id, "the package archive uploaded");
+        tracing::info!(
+            upload_operation_id = operation_id.as_str(),
+            "the package archive uploaded"
+        );
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(upload_operation_id = %upload_operation_id))]
+    #[tracing::instrument(skip_all, fields(upload_operation_id), err)]
     async fn await_upload(
         &self,
         upload_operation_id: &str,
@@ -204,12 +208,10 @@ impl Client {
                 Some(OperationStatus::Succeeded) => break,
                 Some(OperationStatus::InProgress) => {}
                 Some(OperationStatus::Failed) | None => {
-                    return Err(WepubError::EdgeUploadFailed {
-                        error: to_pretty_string(&OperationError {
-                            error_code: operation.error_code,
-                            message: operation.message,
-                            errors: operation.errors,
-                        }),
+                    return Err(WepubError::EdgeApi {
+                        message: operation.message,
+                        error_code: operation.error_code,
+                        errors: operation.errors,
                     });
                 }
             }
@@ -219,7 +221,7 @@ impl Client {
         Ok(())
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, err)]
     async fn submit(
         &self,
         notes: Option<String>,
@@ -244,14 +246,17 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
-        tracing::info!(submit_operation_id = %operation_id, "the draft submitted");
+        tracing::info!(
+            publish_operation_id = operation_id.as_str(),
+            "the draft submitted"
+        );
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(submit_operation_id = %submit_operation_id))]
+    #[tracing::instrument(skip_all, fields(publish_operation_id), err)]
     async fn await_submit(
         &self,
-        submit_operation_id: &str,
+        publish_operation_id: &str,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<()> {
         tracing::info!("waiting for the submission to be processed");
@@ -269,8 +274,8 @@ impl Client {
             let req = self
                 .http
                 .get(self.endpoint(&format!(
-                    "v1/products/{}/submissions/operations/{submit_operation_id}",
-                    self.product_id
+                    "v1/products/{}/submissions/operations/{}",
+                    self.product_id, publish_operation_id
                 ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.credentials.client_id)
@@ -283,12 +288,10 @@ impl Client {
                 Some(OperationStatus::Succeeded) => break,
                 Some(OperationStatus::InProgress) => {}
                 Some(OperationStatus::Failed) | None => {
-                    return Err(WepubError::EdgeSubmissionFailed {
-                        error: to_pretty_string(&OperationError {
-                            error_code: operation.error_code,
-                            message: operation.message,
-                            errors: operation.errors,
-                        }),
+                    return Err(WepubError::EdgeApi {
+                        message: operation.message,
+                        error_code: operation.error_code,
+                        errors: operation.errors,
                     });
                 }
             }
@@ -328,39 +331,25 @@ struct OperationResponse {
     errors: Option<Vec<serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OperationError {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    errors: Option<Vec<serde_json::Value>>,
-}
-
 async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
     let status = resp.status();
     let location = resp.headers().get(reqwest::header::LOCATION).cloned();
     let body = resp.text().await?;
     tracing::debug!(
         status = status.as_u16(),
-        body = %body,
-        "received response",
+        body = body.as_str(),
+        "received response"
     );
     if !status.is_success() {
-        return Err(WepubError::HttpStatus {
-            status: status.as_u16(),
-            body,
-        });
+        return Err(WepubError::HttpStatus { status, body });
     }
     let location = location.ok_or_else(|| WepubError::UnexpectedResponse {
-        detail: "missing Location header".to_string(),
+        reason: "missing Location header".to_string(),
     })?;
     let operation_id = location
         .to_str()
         .map_err(|_| WepubError::UnexpectedResponse {
-            detail: "non-ASCII Location header".to_string(),
+            reason: "non-ASCII Location header".to_string(),
         })?
         .to_string();
     Ok(operation_id)
@@ -494,15 +483,21 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_upload("op-2", &|_| {}).await.unwrap_err();
         match err {
-            WepubError::EdgeUploadFailed { error } => {
+            WepubError::EdgeApi {
+                message,
+                error_code,
+                errors,
+            } => {
+                assert_eq!(message.unwrap(), "Package validation failed.");
+                assert_eq!(error_code.unwrap(), "InvalidPackage");
                 assert!(
-                    error.contains("Package validation failed"),
-                    "error: {error}"
+                    errors.as_ref().unwrap()[0]
+                        .to_string()
+                        .contains("manifest broken"),
+                    "errors: {errors:?}",
                 );
-                assert!(error.contains("InvalidPackage"), "error: {error}");
-                assert!(error.contains("manifest broken"), "error: {error}");
             }
-            other => panic!("expected WepubError::EdgeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::EdgeApi, got {other:?}"),
         }
     }
 
@@ -520,10 +515,13 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_upload("up-u", &|_| {}).await.unwrap_err();
         match err {
-            WepubError::EdgeUploadFailed { error } => {
-                assert!(error.contains("contact support"), "error: {error}");
+            WepubError::EdgeApi { message, .. } => {
+                assert!(
+                    message.as_ref().unwrap().contains("contact support"),
+                    "message: {message:?}"
+                );
             }
-            other => panic!("expected WepubError::EdgeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::EdgeApi, got {other:?}"),
         }
     }
 
@@ -672,18 +670,16 @@ mod tests {
             let client = client_for(&server);
             let err = client.await_submit("pub-x", &|_| {}).await.unwrap_err();
             match err {
-                WepubError::EdgeSubmissionFailed { error } => {
-                    assert!(
-                        error.contains(message),
-                        "error missing message for {code}: {error}"
-                    );
-                    assert!(
-                        error.contains(code),
-                        "error missing errorCode {code}: {error}"
-                    );
+                WepubError::EdgeApi {
+                    message: actual_message,
+                    error_code: actual_code,
+                    ..
+                } => {
+                    assert_eq!(actual_message.unwrap(), message);
+                    assert_eq!(actual_code.unwrap(), code);
                 }
                 other => {
-                    panic!("expected WepubError::EdgeSubmissionFailed for {code}, got {other:?}")
+                    panic!("expected WepubError::EdgeApi for {code}, got {other:?}")
                 }
             }
         }
@@ -703,10 +699,13 @@ mod tests {
         let client = client_for(&server);
         let err = client.await_submit("pub-u", &|_| {}).await.unwrap_err();
         match err {
-            WepubError::EdgeSubmissionFailed { error } => {
-                assert!(error.contains("contact support"), "error: {error}");
+            WepubError::EdgeApi { message, .. } => {
+                assert!(
+                    message.as_ref().unwrap().contains("contact support"),
+                    "message: {message:?}"
+                );
             }
-            other => panic!("expected WepubError::EdgeSubmissionFailed, got {other:?}"),
+            other => panic!("expected WepubError::EdgeApi, got {other:?}"),
         }
     }
 
@@ -828,7 +827,7 @@ mod tests {
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {
