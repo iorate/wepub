@@ -86,13 +86,11 @@ pub enum PublishType {
 #[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
-    Uploading,
-    /// Polling the upload status.
-    PollingUpload,
-    /// Publishing the item.
-    Publishing,
-    /// Publishing succeeded.
-    Succeeded,
+    StartUpload,
+    /// Waiting for the upload to be processed.
+    AwaitUpload,
+    /// Publishing the draft.
+    Publish,
 }
 
 /// Client for the Chrome Web Store API (v2).
@@ -149,7 +147,7 @@ impl Client {
         self
     }
 
-    /// Upload `zip` and publish the item.
+    /// Upload `zip` and publish the draft.
     ///
     /// # Examples
     ///
@@ -196,7 +194,6 @@ impl Client {
 
         self.do_publish(&token, &options, on_progress).await?;
 
-        on_progress(Progress::Succeeded);
         Ok(())
     }
 
@@ -227,7 +224,7 @@ impl Client {
         zip: Vec<u8>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadState> {
-        on_progress(Progress::Uploading);
+        on_progress(Progress::StartUpload);
 
         let req = self
             .http
@@ -260,7 +257,7 @@ impl Client {
                 initial = false;
                 Some(initial_state)
             } else {
-                on_progress(Progress::PollingUpload);
+                on_progress(Progress::AwaitUpload);
 
                 let req = self
                     .http
@@ -305,7 +302,7 @@ impl Client {
         options: &PublishOptions,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<PublishResponse> {
-        on_progress(Progress::Publishing);
+        on_progress(Progress::Publish);
 
         let body = PublishRequestBody {
             publish_type: options.publish_type,
@@ -958,10 +955,9 @@ mod tests {
         assert_eq!(
             progress.into_inner().unwrap(),
             [
-                Progress::Uploading,
-                Progress::PollingUpload,
-                Progress::Publishing,
-                Progress::Succeeded,
+                Progress::StartUpload,
+                Progress::AwaitUpload,
+                Progress::Publish,
             ],
         );
     }

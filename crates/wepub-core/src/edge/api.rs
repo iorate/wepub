@@ -53,15 +53,13 @@ impl PublishOptions {
 #[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
-    Uploading,
-    /// Polling the upload status.
-    PollingUpload,
+    StartUpload,
+    /// Waiting for the upload to be processed.
+    AwaitUpload,
     /// Publishing the draft.
-    Publishing,
-    /// Polling the publish status.
-    PollingPublish,
-    /// Publishing succeeded.
-    Succeeded,
+    StartPublish,
+    /// Waiting for the draft to be published.
+    AwaitPublish,
 }
 
 /// Client for the Edge Add-ons API (v1.1).
@@ -141,7 +139,6 @@ impl Client {
         self.wait_until_published(&publish_operation_id, on_progress)
             .await?;
 
-        on_progress(Progress::Succeeded);
         Ok(())
     }
 
@@ -150,7 +147,7 @@ impl Client {
         zip: Vec<u8>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
-        on_progress(Progress::Uploading);
+        on_progress(Progress::StartUpload);
 
         let req = self
             .http
@@ -177,7 +174,7 @@ impl Client {
         let started = Instant::now();
 
         loop {
-            on_progress(Progress::PollingUpload);
+            on_progress(Progress::AwaitUpload);
 
             let req = self
                 .http
@@ -216,7 +213,7 @@ impl Client {
         notes: Option<String>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
-        on_progress(Progress::Publishing);
+        on_progress(Progress::StartPublish);
 
         let mut req = self
             .http
@@ -244,7 +241,7 @@ impl Client {
         let started = Instant::now();
 
         loop {
-            on_progress(Progress::PollingPublish);
+            on_progress(Progress::AwaitPublish);
 
             let req = self
                 .http
@@ -786,11 +783,10 @@ mod tests {
         assert_eq!(
             progress.into_inner().unwrap(),
             [
-                Progress::Uploading,
-                Progress::PollingUpload,
-                Progress::Publishing,
-                Progress::PollingPublish,
-                Progress::Succeeded,
+                Progress::StartUpload,
+                Progress::AwaitUpload,
+                Progress::StartPublish,
+                Progress::AwaitPublish,
             ],
         );
     }

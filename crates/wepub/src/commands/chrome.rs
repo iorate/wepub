@@ -4,7 +4,7 @@ use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishT
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
-pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
+pub async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
     let client = build_client(
         args.publisher_id,
         args.item_id,
@@ -22,10 +22,17 @@ pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
         skip_review: args.skip_review,
     };
 
+    let on_progress: fn(Progress) = if no_progress { |_| {} } else { report };
+
     client
-        .publish(zip, options, |progress| report(progress, quiet))
+        .publish(zip, options, on_progress)
         .await
         .context("Chrome Web Store")?;
+
+    if !no_progress {
+        eprintln!("Published to Chrome Web Store.");
+    }
+
     Ok(())
 }
 
@@ -83,15 +90,11 @@ impl From<ChromePublishTypeArg> for PublishType {
     }
 }
 
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
-    }
+fn report(progress: Progress) {
     match progress {
-        Progress::Uploading => eprintln!("Uploading the package archive..."),
-        Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publishing => eprintln!("Publishing the item..."),
-        Progress::Succeeded => eprintln!("Published to Chrome Web Store."),
+        Progress::StartUpload => eprintln!("Uploading the package archive..."),
+        Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
+        Progress::Publish => eprintln!("Publishing the draft..."),
         _ => {}
     }
 }

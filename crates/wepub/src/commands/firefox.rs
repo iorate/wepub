@@ -9,7 +9,7 @@ use wepub_core::firefox::{
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
+pub async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
         && is_stdin_path(args.release_notes_file.as_deref())
     {
@@ -56,10 +56,17 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         source,
     };
 
+    let on_progress: fn(Progress) = if no_progress { |_| {} } else { report };
+
     client
-        .publish(zip, channel, options, |progress| report(progress, quiet))
+        .publish(zip, channel, options, on_progress)
         .await
         .context("Firefox Add-ons")?;
+
+    if !no_progress {
+        eprintln!("Published to Firefox Add-ons.");
+    }
+
     Ok(())
 }
 
@@ -99,16 +106,12 @@ impl From<FirefoxApplicationArg> for Application {
     }
 }
 
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
-    }
+fn report(progress: Progress) {
     match progress {
-        Progress::Uploading => eprintln!("Uploading the package archive..."),
-        Progress::PollingValidation => eprintln!("Waiting for the upload to be validated..."),
-        Progress::CreatingVersion => eprintln!("Creating the new version..."),
-        Progress::UploadingSource => eprintln!("Uploading the source archive..."),
-        Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
+        Progress::StartUpload => eprintln!("Uploading the package archive..."),
+        Progress::AwaitUpload => eprintln!("Waiting for the upload to be validated..."),
+        Progress::CreateVersion => eprintln!("Creating a new version..."),
+        Progress::UploadSource => eprintln!("Uploading the source archive..."),
         _ => {}
     }
 }

@@ -4,7 +4,7 @@ use wepub_core::edge::{Client, Credentials, Progress, PublishOptions};
 use crate::cli::EdgeArgs;
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
+pub async fn run(args: EdgeArgs, no_progress: bool) -> Result<()> {
     let client = Client::new(
         args.product_id,
         Credentials {
@@ -18,23 +18,26 @@ pub async fn run(args: EdgeArgs, quiet: bool) -> Result<()> {
     let notes = resolve_text_input(args.notes, args.notes_file.as_deref(), "notes").await?;
     let options = PublishOptions { notes };
 
+    let on_progress: fn(Progress) = if no_progress { |_| {} } else { report };
+
     client
-        .publish(zip, options, |progress| report(progress, quiet))
+        .publish(zip, options, on_progress)
         .await
         .context("Edge Add-ons")?;
+
+    if !no_progress {
+        eprintln!("Published to Edge Add-ons.");
+    }
+
     Ok(())
 }
 
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
-    }
+fn report(progress: Progress) {
     match progress {
-        Progress::Uploading => eprintln!("Uploading the package archive..."),
-        Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publishing => eprintln!("Publishing the draft..."),
-        Progress::PollingPublish => eprintln!("Waiting for the draft to be published..."),
-        Progress::Succeeded => eprintln!("Published to Edge Add-ons."),
+        Progress::StartUpload => eprintln!("Uploading the package archive..."),
+        Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
+        Progress::StartPublish => eprintln!("Publishing the draft..."),
+        Progress::AwaitPublish => eprintln!("Waiting for the draft to be published..."),
         _ => {}
     }
 }

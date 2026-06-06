@@ -15,6 +15,7 @@ authors.workspace = true
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive", "env"] }
+clap-verbosity-flag = { version = "3.0.4", default-features = false, features = ["tracing"] }
 dotenvy = "0.15.7"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "fs", "io-std"] }
 tracing = "0.1.44"

@@ -18,8 +18,20 @@ async fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
-    init_tracing(cli.verbose, cli.quiet);
-    match dispatch(cli.command, cli.quiet).await {
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "wepub_core={}",
+            cli.verbosity.tracing_level_filter()
+        ))
+    });
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .init();
+
+    match dispatch(cli.command, cli.no_progress).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err:#}");
@@ -28,28 +40,10 @@ async fn main() -> ExitCode {
     }
 }
 
-fn init_tracing(verbose: bool, quiet: bool) {
-    let default_level = if quiet {
-        "warn"
-    } else if verbose {
-        "debug"
-    } else {
-        "info"
-    };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(format!("wepub_core={default_level}")));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .without_time()
-        .init();
-}
-
-async fn dispatch(command: Commands, quiet: bool) -> Result<()> {
+async fn dispatch(command: Commands, no_progress: bool) -> Result<()> {
     match command {
-        Commands::Chrome(args) => commands::chrome::run(args, quiet).await,
-        Commands::Firefox(args) => commands::firefox::run(args, quiet).await,
-        Commands::Edge(args) => commands::edge::run(args, quiet).await,
+        Commands::Chrome(args) => commands::chrome::run(args, no_progress).await,
+        Commands::Firefox(args) => commands::firefox::run(args, no_progress).await,
+        Commands::Edge(args) => commands::edge::run(args, no_progress).await,
     }
 }

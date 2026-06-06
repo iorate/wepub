@@ -116,15 +116,13 @@ pub struct VersionRange {
 #[non_exhaustive]
 pub enum Progress {
     /// Uploading the package archive.
-    Uploading,
-    /// Polling the validation status.
-    PollingValidation,
-    /// Creating the new version.
-    CreatingVersion,
+    StartUpload,
+    /// Waiting for the upload to be validated.
+    AwaitUpload,
+    /// Creating a new version.
+    CreateVersion,
     /// Uploading the source archive.
-    UploadingSource,
-    /// Publishing succeeded.
-    Succeeded,
+    UploadSource,
 }
 
 /// Client for the Firefox Add-ons API (v5).
@@ -214,7 +212,6 @@ impl Client {
                 .await?;
         }
 
-        on_progress(Progress::Succeeded);
         Ok(())
     }
 
@@ -224,7 +221,7 @@ impl Client {
         channel: Channel,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<UploadResponse> {
-        on_progress(Progress::Uploading);
+        on_progress(Progress::StartUpload);
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
@@ -254,7 +251,7 @@ impl Client {
         let started = Instant::now();
 
         loop {
-            on_progress(Progress::PollingValidation);
+            on_progress(Progress::AwaitUpload);
 
             let req = self
                 .http
@@ -296,7 +293,7 @@ impl Client {
         release_notes: Option<&HashMap<String, String>>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<VersionResponse> {
-        on_progress(Progress::CreatingVersion);
+        on_progress(Progress::CreateVersion);
 
         let body = VersionCreateBody {
             upload: upload_uuid,
@@ -322,7 +319,7 @@ impl Client {
         source: Vec<u8>,
         on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<VersionResponse> {
-        on_progress(Progress::UploadingSource);
+        on_progress(Progress::UploadSource);
 
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
@@ -604,11 +601,10 @@ mod tests {
         assert_eq!(
             progress.into_inner().unwrap(),
             [
-                Progress::Uploading,
-                Progress::PollingValidation,
-                Progress::CreatingVersion,
-                Progress::UploadingSource,
-                Progress::Succeeded,
+                Progress::StartUpload,
+                Progress::AwaitUpload,
+                Progress::CreateVersion,
+                Progress::UploadSource,
             ],
         );
     }
