@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
+use tracing::{Level, info, info_span, instrument, warn};
 use url::Url;
 
 use crate::{
@@ -172,7 +173,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    #[tracing::instrument(
+    #[instrument(
         skip_all,
         fields(store = "firefox", addon_id = self.addon_id.as_str(), channel = channel.as_str())
     )]
@@ -182,18 +183,24 @@ impl Client {
         channel: Channel,
         options: PublishOptions,
     ) -> Result<()> {
-        let (upload_uuid, processed) =
-            instrument_step(tracing::info_span!("upload"), self.upload(zip, channel)).await?;
+        let (upload_uuid, processed) = instrument_step(
+            info_span!("upload"),
+            Level::ERROR,
+            self.upload(zip, channel),
+        )
+        .await?;
         if !processed {
             instrument_step(
-                tracing::info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
+                info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
+                Level::ERROR,
                 self.await_upload(&upload_uuid),
             )
             .await?;
         }
 
         let version_id = instrument_step(
-            tracing::info_span!("create_version", upload_uuid = upload_uuid.as_str()),
+            info_span!("create_version", upload_uuid = upload_uuid.as_str()),
+            Level::ERROR,
             self.create_version(
                 upload_uuid,
                 options.compatibility,
@@ -204,20 +211,22 @@ impl Client {
         .await?;
         if let Some(source) = options.source
             && instrument_step(
-                tracing::info_span!("update_version_source", version_id = version_id),
+                info_span!("update_version_source", version_id = version_id),
+                // The version is already created, so a source failure doesn't
+                // fail the publish; record it as a warning, not an error.
+                Level::WARN,
                 self.update_version_source(version_id, source),
             )
             .await
             .is_err()
         {
-            // The version is already created, so don't fail the publish.
-            tracing::error!(version_id, "failed to update the source archive");
+            warn!(version_id, "failed to update the source archive");
         }
         Ok(())
     }
 
     async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<(String, bool)> {
-        tracing::info!("uploading the package archive");
+        info!("uploading the package archive");
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
@@ -239,7 +248,7 @@ impl Client {
         let upload = decode_response(resp).await?;
         let processed = upload_processed(&upload)?;
 
-        tracing::info!(
+        info!(
             upload_uuid = upload.uuid.as_str(),
             upload_processed = processed,
             "the package archive uploaded",
@@ -248,7 +257,7 @@ impl Client {
     }
 
     async fn await_upload(&self, upload_uuid: &str) -> Result<()> {
-        tracing::info!("waiting for the upload to be processed");
+        info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
@@ -274,7 +283,7 @@ impl Client {
             }
         }
 
-        tracing::info!("the upload processed");
+        info!("the upload processed");
         Ok(())
     }
 
@@ -285,7 +294,7 @@ impl Client {
         approval_notes: Option<String>,
         release_notes: Option<HashMap<String, String>>,
     ) -> Result<u64> {
-        tracing::info!("creating the new version");
+        info!("creating the new version");
 
         let body = VersionCreateBody {
             upload: upload_uuid,
@@ -304,12 +313,12 @@ impl Client {
 
         let version: VersionResponse = decode_response(resp).await?;
 
-        tracing::info!(version_id = version.id, "the new version created");
+        info!(version_id = version.id, "the new version created");
         Ok(version.id)
     }
 
     async fn update_version_source(&self, version_id: u64, source: Vec<u8>) -> Result<()> {
-        tracing::info!("updating the source archive");
+        info!("updating the source archive");
 
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
@@ -331,7 +340,7 @@ impl Client {
 
         let _: VersionResponse = decode_response(resp).await?;
 
-        tracing::info!("the source archive updated");
+        info!("the source archive updated");
         Ok(())
     }
 

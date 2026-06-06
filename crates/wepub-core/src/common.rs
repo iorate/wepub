@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use tracing::{Instrument, Level, Span, debug};
 use url::Url;
 
-use crate::{Result, WepubError, error::tracing_error};
+use crate::{Result, WepubError, error::record_error};
 
 /// Polling interval and timeout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -14,11 +15,11 @@ pub struct PollConfig {
 }
 
 pub(crate) async fn instrument_step<T>(
-    span: tracing::Span,
+    span: Span,
+    error_level: Level,
     fut: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
-    use tracing::Instrument;
-    async move { fut.await.inspect_err(tracing_error) }
+    async move { fut.await.inspect_err(|err| record_error(error_level, err)) }
         .instrument(span)
         .await
 }
@@ -47,7 +48,7 @@ pub(crate) async fn send_request(
     client: &reqwest::Client,
     req: reqwest::Request,
 ) -> Result<reqwest::Response> {
-    tracing::debug!(
+    debug!(
         method = req.method().as_str(),
         url = req.url().as_str(),
         "sending request"
@@ -61,7 +62,7 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     let status = resp.status();
     let body = resp.text().await?;
-    tracing::debug!(
+    debug!(
         status = status.as_u16(),
         body = body.as_str(),
         "received response"
