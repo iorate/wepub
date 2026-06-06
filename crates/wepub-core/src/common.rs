@@ -24,9 +24,9 @@ pub(crate) async fn instrument_step<T>(
 }
 
 pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
-    let mut parsed = Url::parse(root_url).map_err(|e| WepubError::Url {
+    let mut parsed = Url::parse(root_url).map_err(|err| WepubError::Url {
         url: root_url.to_string(),
-        source: e,
+        source: err,
     })?;
     // A trailing slash makes `Url::join` append rather than replace the last segment.
     if !parsed.path().ends_with('/') {
@@ -37,9 +37,9 @@ pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
 }
 
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
-    root.join(path).map_err(|e| WepubError::Url {
+    root.join(path).map_err(|err| WepubError::Url {
         url: path.to_string(),
-        source: e,
+        source: err,
     })
 }
 
@@ -72,8 +72,8 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
             body,
         });
     }
-    serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-        reason: format!("failed to decode response: {e}"),
+    serde_json::from_str(&body).map_err(|err| WepubError::UnexpectedResponse {
+        reason: format!("failed to decode response: {err}"),
     })
 }
 

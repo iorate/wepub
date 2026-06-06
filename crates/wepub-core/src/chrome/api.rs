@@ -123,9 +123,9 @@ impl Client {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`.
     pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
-        self.token_url = Url::parse(token_url).map_err(|e| WepubError::Url {
+        self.token_url = Url::parse(token_url).map_err(|err| WepubError::Url {
             url: token_url.to_string(),
-            source: e,
+            source: err,
         })?;
         Ok(self)
     }
@@ -891,7 +891,7 @@ mod tests {
             client
                 .submit(TEST_TOKEN, &PublishOptions::new())
                 .await
-                .unwrap_or_else(|e| panic!("wire value {wire} should succeed, got {e:?}"));
+                .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
     }
 

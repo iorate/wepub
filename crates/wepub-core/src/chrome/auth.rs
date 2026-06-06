@@ -49,8 +49,8 @@ pub(crate) async fn refresh_access_token(
     // The success body carries the access token, so mask it in logs.
     tracing::debug!(status = status.as_u16(), body = "***", "received response");
     let token: TokenResponse =
-        serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-            reason: format!("failed to decode response: {e}"),
+        serde_json::from_str(&body).map_err(|err| WepubError::UnexpectedResponse {
+            reason: format!("failed to decode response: {err}"),
         })?;
     Ok(token.access_token)
 }
