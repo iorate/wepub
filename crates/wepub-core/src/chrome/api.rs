@@ -662,7 +662,7 @@ mod tests {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -699,7 +699,7 @@ mod tests {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -720,7 +720,7 @@ mod tests {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -740,7 +740,7 @@ mod tests {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
@@ -777,7 +777,7 @@ mod tests {
                 WepubError::ChromeUpload { upload_state } => {
                     assert_eq!(upload_state, expected);
                 }
-                other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+                other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
             }
         }
     }
@@ -884,7 +884,7 @@ mod tests {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "REJECTED");
             }
-            other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 
@@ -909,7 +909,7 @@ mod tests {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
             }
-            other => panic!("expected WepubError::ChromeSubmissionFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 

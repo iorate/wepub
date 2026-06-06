@@ -173,7 +173,7 @@ impl Client {
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(upload_operation_id), err)]
+    #[tracing::instrument(skip_all, fields(upload_operation_id = upload_operation_id), err)]
     async fn await_upload(
         &self,
         upload_operation_id: &str,
@@ -253,7 +253,7 @@ impl Client {
         Ok(operation_id)
     }
 
-    #[tracing::instrument(skip_all, fields(publish_operation_id), err)]
+    #[tracing::instrument(skip_all, fields(publish_operation_id = publish_operation_id), err)]
     async fn await_submit(
         &self,
         publish_operation_id: &str,

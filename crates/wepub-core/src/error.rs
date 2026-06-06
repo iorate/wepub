@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn source_exposes_the_underlying_url_error() {
+    fn source_exposes_the_underlying_error() {
         let err = WepubError::Url {
             url: "not a url".to_string(),
             source: url::ParseError::RelativeUrlWithoutBase,

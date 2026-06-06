@@ -155,6 +155,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_401_parses_into_oauth_token_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": "invalid_client",
+            })))
+            .mount(&server)
+            .await;
+
+        let err = refresh(&server, "client-secret").await.unwrap_err();
+        match err {
+            WepubError::OAuthToken { error, .. } => {
+                assert_eq!(error, "invalid_client");
+            }
+            other => panic!("expected OAuthToken, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn status_400_with_unparseable_body_falls_back_to_http_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("<html>Bad Request</html>"))
+            .mount(&server)
+            .await;
+
+        let err = refresh(&server, "client-secret").await.unwrap_err();
+        match err {
+            WepubError::HttpStatus { status, body } => {
+                assert_eq!(status, 400);
+                assert!(body.contains("<html>Bad Request</html>"), "got: {body}");
+            }
+            other => panic!("expected HttpStatus, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn non_400_status_is_passed_through() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

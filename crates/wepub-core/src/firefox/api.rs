@@ -263,7 +263,7 @@ impl Client {
         Ok((upload.uuid, processed))
     }
 
-    #[tracing::instrument(skip_all, fields(upload_uuid), err)]
+    #[tracing::instrument(skip_all, fields(upload_uuid = upload_uuid), err)]
     async fn await_upload(
         &self,
         upload_uuid: &str,
@@ -333,7 +333,7 @@ impl Client {
         Ok(version.id)
     }
 
-    #[tracing::instrument(skip_all, fields(version_id), err)]
+    #[tracing::instrument(skip_all, fields(version_id = version_id), err)]
     async fn update_version_source(
         &self,
         version_id: u64,
@@ -689,11 +689,14 @@ mod tests {
             .mount(&server)
             .await;
 
+        // The upload POST already reported the archive processed and valid, so
+        // the polling GET must not run.
         Mock::given(method("GET"))
             .and(path("/api/v5/addons/upload/uuid-ns/"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(upload_json("uuid-ns", true, true)),
             )
+            .expect(0)
             .mount(&server)
             .await;
 
@@ -712,15 +715,20 @@ mod tests {
             .await;
 
         let client = client_for(&server);
+        let progress = std::sync::Mutex::new(Vec::new());
         client
             .publish(
                 b"zip".to_vec(),
                 Channel::Listed,
                 PublishOptions::new(),
-                |_| {},
+                |p| progress.lock().unwrap().push(p),
             )
             .await
             .unwrap();
+        assert_eq!(
+            progress.into_inner().unwrap(),
+            [Progress::Upload, Progress::CreateVersion],
+        );
     }
 
     #[tokio::test]
