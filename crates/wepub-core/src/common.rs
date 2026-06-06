@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::{Result, WepubError};
+use crate::{Result, WepubError, error::tracing_error};
 
 /// Polling interval and timeout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -13,9 +13,21 @@ pub struct PollConfig {
     pub timeout: Duration,
 }
 
+pub(crate) async fn instrument_step<T>(
+    span: tracing::Span,
+    fut: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    use tracing::Instrument;
+    async move { fut.await.inspect_err(tracing_error) }
+        .instrument(span)
+        .await
+}
+
 pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
-    let mut parsed =
-        Url::parse(root_url).map_err(|e| WepubError::InvalidUrl(format!("{root_url:?}: {e}")))?;
+    let mut parsed = Url::parse(root_url).map_err(|err| WepubError::Url {
+        url: root_url.to_string(),
+        source: err,
+    })?;
     // A trailing slash makes `Url::join` append rather than replace the last segment.
     if !parsed.path().ends_with('/') {
         let new_path = format!("{}/", parsed.path());
@@ -25,8 +37,10 @@ pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
 }
 
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
-    root.join(path)
-        .map_err(|e| WepubError::InvalidUrl(format!("{path:?}: {e}")))
+    root.join(path).map_err(|err| WepubError::Url {
+        url: path.to_string(),
+        source: err,
+    })
 }
 
 pub(crate) async fn send_request(
@@ -34,9 +48,9 @@ pub(crate) async fn send_request(
     req: reqwest::Request,
 ) -> Result<reqwest::Response> {
     tracing::debug!(
-        method = %req.method(),
-        url = %req.url(),
-        "sending request",
+        method = req.method().as_str(),
+        url = req.url().as_str(),
+        "sending request"
     );
     let resp = client.execute(req).await?;
     Ok(resp)
@@ -49,8 +63,8 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     let body = resp.text().await?;
     tracing::debug!(
         status = status.as_u16(),
-        body = %body,
-        "received response",
+        body = body.as_str(),
+        "received response"
     );
     if !status.is_success() {
         return Err(WepubError::HttpStatus {
@@ -58,13 +72,9 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
             body,
         });
     }
-    serde_json::from_str(&body).map_err(|e| WepubError::UnexpectedResponse {
-        detail: format!("failed to decode response: {e}"),
+    serde_json::from_str(&body).map_err(|err| WepubError::UnexpectedResponse {
+        reason: format!("failed to decode response: {err}"),
     })
-}
-
-pub(crate) fn to_pretty_string<T: serde::Serialize + std::fmt::Debug>(value: &T) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
 #[cfg(test)]
@@ -86,7 +96,7 @@ mod tests {
     #[test]
     fn parse_root_url_rejects_garbage() {
         let err = parse_root_url("not a url").unwrap_err();
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     #[test]

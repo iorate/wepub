@@ -1,10 +1,10 @@
-use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishType};
+use anyhow::{Result, bail};
+use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
-pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
+pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
     let client = build_client(
         args.publisher_id,
         args.item_id,
@@ -22,11 +22,18 @@ pub async fn run(args: ChromeArgs, quiet: bool) -> Result<()> {
         skip_review: args.skip_review,
     };
 
-    client
-        .publish(zip, options, |progress| report(progress, quiet))
-        .await
-        .context("Chrome Web Store")?;
+    client.publish(zip, options).await?;
+
     Ok(())
+}
+
+impl From<ChromePublishTypeArg> for PublishType {
+    fn from(value: ChromePublishTypeArg) -> Self {
+        match value {
+            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
+            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
+        }
+    }
 }
 
 fn build_client(
@@ -71,27 +78,5 @@ fn build_client(
             item_id,
             Credentials::AccessToken(access_token),
         )?),
-    }
-}
-
-impl From<ChromePublishTypeArg> for PublishType {
-    fn from(value: ChromePublishTypeArg) -> Self {
-        match value {
-            ChromePublishTypeArg::Default => PublishType::DefaultPublish,
-            ChromePublishTypeArg::Staged => PublishType::StagedPublish,
-        }
-    }
-}
-
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
-    }
-    match progress {
-        Progress::Uploading => eprintln!("Uploading the package archive..."),
-        Progress::PollingUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Publishing => eprintln!("Publishing the item..."),
-        Progress::Succeeded => eprintln!("Published to Chrome Web Store."),
-        _ => {}
     }
 }

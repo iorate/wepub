@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use wepub_core::firefox::{
-    Application, Channel, Client, Compatibility, Credentials, Progress, PublishOptions,
+    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
 };
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
+pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
         && is_stdin_path(args.release_notes_file.as_deref())
     {
@@ -56,29 +56,9 @@ pub async fn run(args: FirefoxArgs, quiet: bool) -> Result<()> {
         source,
     };
 
-    client
-        .publish(zip, channel, options, |progress| report(progress, quiet))
-        .await
-        .context("Firefox Add-ons")?;
+    client.publish(zip, channel, options).await?;
+
     Ok(())
-}
-
-fn is_stdin_path(path: Option<&Path>) -> bool {
-    path.is_some_and(|p| p.as_os_str() == "-")
-}
-
-fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
-    if apps.is_empty() {
-        return None;
-    }
-    let mut seen = std::collections::HashSet::new();
-    let unique: Vec<Application> = apps
-        .iter()
-        .copied()
-        .map(Into::into)
-        .filter(|app| seen.insert(*app))
-        .collect();
-    Some(Compatibility::Shorthand(unique))
 }
 
 impl From<FirefoxChannelArg> for Channel {
@@ -99,16 +79,20 @@ impl From<FirefoxApplicationArg> for Application {
     }
 }
 
-fn report(progress: Progress, quiet: bool) {
-    if quiet {
-        return;
+fn is_stdin_path(path: Option<&Path>) -> bool {
+    path.is_some_and(|p| p.as_os_str() == "-")
+}
+
+fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> {
+    if apps.is_empty() {
+        return None;
     }
-    match progress {
-        Progress::Uploading => eprintln!("Uploading the package archive..."),
-        Progress::PollingValidation => eprintln!("Waiting for the upload to be validated..."),
-        Progress::CreatingVersion => eprintln!("Creating the new version..."),
-        Progress::UploadingSource => eprintln!("Uploading the source archive..."),
-        Progress::Succeeded => eprintln!("Published to Firefox Add-ons."),
-        _ => {}
-    }
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<Application> = apps
+        .iter()
+        .copied()
+        .map(Into::into)
+        .filter(|app| seen.insert(*app))
+        .collect();
+    Some(Compatibility::Shorthand(unique))
 }

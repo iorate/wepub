@@ -159,16 +159,6 @@ Other flags:
 
 `wepub` reads a `.env` file from the current working directory at startup, so the `WEPUB_*` variables above can live there. Existing shell environment values take precedence over `.env` entries.
 
-### Logging
-
-| Flag                | Log level |
-| ------------------- | --------- |
-| (none)              | `INFO`    |
-| `-q` / `--quiet`    | `WARN`    |
-| `-v` / `--verbose`  | `DEBUG`   |
-
-`RUST_LOG` overrides the above (e.g. `RUST_LOG=trace`).
-
 ## License
 
 Licensed under either of MIT or Apache-2.0, at your option.

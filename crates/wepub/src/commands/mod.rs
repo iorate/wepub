@@ -1,5 +1,5 @@
 mod common;
 
-pub mod chrome;
-pub mod edge;
-pub mod firefox;
+pub(crate) mod chrome;
+pub(crate) mod edge;
+pub(crate) mod firefox;

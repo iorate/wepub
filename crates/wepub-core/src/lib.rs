@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```no_run
-//! # async fn run() -> wepub_core::Result<()> {
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
 //!
 //! let client = Client::new(
@@ -26,7 +26,7 @@
 //!     },
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! client.publish(zip, Channel::Listed, PublishOptions::new(), |_progress| {}).await?;
+//! client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
 //! # Ok(())
 //! # }
 //! ```

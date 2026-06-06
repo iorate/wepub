@@ -7,11 +7,11 @@ use url::Url;
 
 use crate::{
     PollConfig, Result, WepubError,
-    common::{decode_response, join_endpoint, parse_root_url, send_request},
+    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
     http::build_client,
 };
 
-use super::auth::{DEFAULT_TOKEN_URL, refresh_access_token};
+use super::auth::{self, DEFAULT_TOKEN_URL};
 
 const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -81,20 +81,6 @@ pub enum PublishType {
     StagedPublish,
 }
 
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Progress {
-    /// Uploading the package archive.
-    Uploading,
-    /// Polling the upload status.
-    PollingUpload,
-    /// Publishing the item.
-    Publishing,
-    /// Publishing succeeded.
-    Succeeded,
-}
-
 /// Client for the Chrome Web Store API (v2).
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -137,8 +123,10 @@ impl Client {
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`.
     pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
-        self.token_url = Url::parse(token_url)
-            .map_err(|e| WepubError::InvalidUrl(format!("{token_url:?}: {e}")))?;
+        self.token_url = Url::parse(token_url).map_err(|err| WepubError::Url {
+            url: token_url.to_string(),
+            source: err,
+        })?;
         Ok(self)
     }
 
@@ -149,12 +137,12 @@ impl Client {
         self
     }
 
-    /// Upload `zip` and publish the item.
+    /// Upload `zip` and submit the draft.
     ///
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn run() -> wepub_core::Result<()> {
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
     ///
     /// let client = Client::new(
@@ -174,60 +162,74 @@ impl Client {
     ///             publish_type: Some(PublishType::StagedPublish),
     ///             ..PublishOptions::new()
     ///         },
-    ///         |_progress| {},
     ///     )
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish(
-        &self,
-        zip: Vec<u8>,
-        options: PublishOptions,
-        on_progress: impl Fn(Progress) + Send + Sync,
-    ) -> Result<()> {
-        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-
-        let token = self.resolve_access_token().await?;
-
-        let initial_upload_state = self.upload(&token, zip, on_progress).await?;
-        self.wait_until_uploaded(&token, initial_upload_state, on_progress)
-            .await?;
-
-        self.do_publish(&token, &options, on_progress).await?;
-
-        on_progress(Progress::Succeeded);
-        Ok(())
-    }
-
-    async fn resolve_access_token(&self) -> Result<Cow<'_, str>> {
-        match &self.credentials {
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            store = "chrome",
+            publisher_id = self.publisher_id.as_str(),
+            item_id = self.item_id.as_str(),
+        )
+    )]
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+        let token: Cow<'_, str> = match &self.credentials {
             Credentials::RefreshToken {
                 client_id,
                 client_secret,
                 refresh_token,
             } => {
-                let token = refresh_access_token(
-                    &self.http,
-                    self.token_url.clone(),
-                    client_id,
-                    client_secret,
-                    refresh_token,
+                let token = instrument_step(
+                    tracing::info_span!("refresh_access_token"),
+                    self.refresh_access_token(client_id, client_secret, refresh_token),
                 )
                 .await?;
-                Ok(Cow::Owned(token))
+                Cow::Owned(token)
             }
-            Credentials::AccessToken(token) => Ok(Cow::Borrowed(token)),
+            Credentials::AccessToken(token) => Cow::Borrowed(token),
+        };
+
+        let processed =
+            instrument_step(tracing::info_span!("upload"), self.upload(&token, zip)).await?;
+        if !processed {
+            instrument_step(
+                tracing::info_span!("await_upload"),
+                self.await_upload(&token),
+            )
+            .await?;
         }
+
+        instrument_step(tracing::info_span!("submit"), self.submit(&token, &options)).await?;
+
+        Ok(())
     }
 
-    async fn upload(
+    async fn refresh_access_token(
         &self,
-        token: &str,
-        zip: Vec<u8>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<UploadState> {
-        on_progress(Progress::Uploading);
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+    ) -> Result<String> {
+        tracing::info!("refreshing the access token");
+
+        let token = auth::refresh_access_token(
+            &self.http,
+            self.token_url.clone(),
+            client_id,
+            client_secret,
+            refresh_token,
+        )
+        .await?;
+
+        tracing::info!("the access token refreshed");
+        Ok(token)
+    }
+
+    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<bool> {
+        tracing::info!("uploading the package archive");
 
         let req = self
             .http
@@ -243,69 +245,51 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
 
         let upload: UploadResponse = decode_response(resp).await?;
-        Ok(upload.upload_state)
+        let processed = upload_processed(Some(upload.upload_state))?;
+
+        tracing::info!(
+            upload_state = upload.upload_state.as_str(),
+            "the package archive uploaded",
+        );
+        Ok(processed)
     }
 
-    async fn wait_until_uploaded(
-        &self,
-        token: &str,
-        initial_state: UploadState,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<UploadState> {
+    async fn await_upload(&self, token: &str) -> Result<()> {
+        tracing::info!("waiting for the upload to be processed");
+
         let started = Instant::now();
-        let mut initial = true;
 
         loop {
-            let state: Option<UploadState> = if initial {
-                initial = false;
-                Some(initial_state)
-            } else {
-                on_progress(Progress::PollingUpload);
-
-                let req = self
-                    .http
-                    .get(self.endpoint(&format!(
-                        "v2/publishers/{}/items/{}:fetchStatus",
-                        self.publisher_id, self.item_id
-                    ))?)
-                    .bearer_auth(token)
-                    .build()?;
-
-                let resp = send_request(&self.http, req).await?;
-
-                let status: FetchStatusResponse = decode_response(resp).await?;
-                status.last_async_upload_state
-            };
-
-            let reason = match state {
-                Some(UploadState::Succeeded) => return Ok(UploadState::Succeeded),
-                Some(UploadState::InProgress) => None,
-                Some(UploadState::Failed) => Some("failed"),
-                Some(UploadState::NotFound) => Some("not found"),
-                None => Some("no upload state"),
-            };
-            if let Some(reason) = reason {
-                return Err(WepubError::ChromeUploadFailed {
-                    item_id: self.item_id.clone(),
-                    reason: reason.to_string(),
-                });
-            }
-
             let elapsed = started.elapsed();
             if elapsed >= self.poll_config.timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
             tokio::time::sleep(self.poll_config.interval).await;
+
+            let req = self
+                .http
+                .get(self.endpoint(&format!(
+                    "v2/publishers/{}/items/{}:fetchStatus",
+                    self.publisher_id, self.item_id
+                ))?)
+                .bearer_auth(token)
+                .build()?;
+
+            let resp = send_request(&self.http, req).await?;
+
+            let status: FetchStatusResponse = decode_response(resp).await?;
+            let processed = upload_processed(status.last_async_upload_state)?;
+            if processed {
+                break;
+            }
         }
+
+        tracing::info!("the upload processed");
+        Ok(())
     }
 
-    async fn do_publish(
-        &self,
-        token: &str,
-        options: &PublishOptions,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<PublishResponse> {
-        on_progress(Progress::Publishing);
+    async fn submit(&self, token: &str, options: &PublishOptions) -> Result<()> {
+        tracing::info!("submitting the draft");
 
         let body = PublishRequestBody {
             publish_type: options.publish_type,
@@ -329,21 +313,14 @@ impl Client {
         let resp = send_request(&self.http, req).await?;
 
         let publish: PublishResponse = decode_response(resp).await?;
-        let reason = match publish.state {
-            ItemState::PendingReview
-            | ItemState::Staged
-            | ItemState::Published
-            | ItemState::PublishedToTesters => None,
-            ItemState::Rejected => Some("rejected"),
-            ItemState::Cancelled => Some("cancelled"),
-        };
-        if let Some(reason) = reason {
-            return Err(WepubError::ChromePublishFailed {
-                item_id: publish.item_id,
-                reason: reason.to_string(),
+        if let ItemState::Rejected | ItemState::Cancelled = publish.state {
+            return Err(WepubError::ChromePublish {
+                item_state: publish.state.as_str().to_string(),
             });
         }
-        Ok(publish)
+
+        tracing::info!(item_state = publish.state.as_str(), "the draft submitted");
+        Ok(())
     }
 
     fn endpoint(&self, path: &str) -> Result<Url> {
@@ -351,26 +328,37 @@ impl Client {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadResponse {
     upload_state: UploadState,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FetchStatusResponse {
     #[serde(default)]
     last_async_upload_state: Option<UploadState>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UploadState {
     Succeeded,
     InProgress,
     Failed,
     NotFound,
+}
+
+impl UploadState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "SUCCEEDED",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Failed => "FAILED",
+            Self::NotFound => "NOT_FOUND",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -390,14 +378,13 @@ struct DeployInfo {
     deploy_percentage: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PublishResponse {
-    item_id: String,
     state: ItemState,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ItemState {
     PendingReview,
@@ -408,6 +395,32 @@ enum ItemState {
     Cancelled,
 }
 
+impl ItemState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PendingReview => "PENDING_REVIEW",
+            Self::Staged => "STAGED",
+            Self::Published => "PUBLISHED",
+            Self::PublishedToTesters => "PUBLISHED_TO_TESTERS",
+            Self::Rejected => "REJECTED",
+            Self::Cancelled => "CANCELLED",
+        }
+    }
+}
+
+fn upload_processed(state: Option<UploadState>) -> Result<bool> {
+    match state {
+        Some(UploadState::Succeeded) => Ok(true),
+        Some(UploadState::InProgress) => Ok(false),
+        Some(state) => Err(WepubError::ChromeUpload {
+            upload_state: state.as_str().to_string(),
+        }),
+        None => Err(WepubError::ChromeUpload {
+            upload_state: "UPLOAD_STATE_UNSPECIFIED".to_string(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,14 +429,17 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    const CLIENT_ID: &str = "client-id";
+    const CLIENT_SECRET: &str = "client-secret";
+    const REFRESH_TOKEN: &str = "refresh-token";
     const TEST_TOKEN: &str = "test-access-token";
 
     #[test]
     fn debug_redacts_secrets() {
         let credentials = Credentials::RefreshToken {
-            client_id: "client-id".to_string(),
-            client_secret: "secret-client".to_string(),
-            refresh_token: "secret-refresh".to_string(),
+            client_id: CLIENT_ID.to_string(),
+            client_secret: CLIENT_SECRET.to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
         };
         let credentials_debug = format!("{credentials:?}");
         assert!(!credentials_debug.contains("secret-client"));
@@ -470,9 +486,9 @@ mod tests {
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::RefreshToken {
-                client_id: "client-id".to_string(),
-                client_secret: "client-secret".to_string(),
-                refresh_token: "refresh-token".to_string(),
+                client_id: CLIENT_ID.to_string(),
+                client_secret: CLIENT_SECRET.to_string(),
+                refresh_token: REFRESH_TOKEN.to_string(),
             },
         )
         .unwrap()
@@ -481,16 +497,16 @@ mod tests {
         .with_token_url(base.as_str())
         .unwrap();
 
-        let token = client.resolve_access_token().await.unwrap();
-        assert_eq!(token, "fresh-token");
-        client
-            .upload(&token, b"FAKE".to_vec(), &|_| {})
+        let token = client
+            .refresh_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
             .await
             .unwrap();
+        assert_eq!(token, "fresh-token");
+        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
-    async fn upload_posts_to_correct_url_with_auth_and_octet_stream() {
+    async fn start_upload_posts_to_correct_url_with_auth_and_octet_stream() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(
@@ -509,7 +525,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
     }
@@ -517,7 +533,7 @@ mod tests {
     // Regression guard: official V2 curl example sends neither X-Goog-Upload-Protocol
     // nor X-Goog-Upload-File-Name. fregante does, but we follow the official example.
     #[tokio::test]
-    async fn upload_does_not_send_x_goog_upload_headers() {
+    async fn start_upload_does_not_send_x_goog_upload_headers() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(
@@ -531,7 +547,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
 
@@ -548,7 +564,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upload_returns_upload_state_from_response() {
+    async fn start_upload_returns_upload_state_from_response() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -558,15 +574,12 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
-            .await
-            .unwrap();
-        assert!(matches!(resp, UploadState::InProgress));
+        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        assert!(!resp);
     }
 
     #[tokio::test]
-    async fn upload_propagates_http_error() {
+    async fn start_upload_propagates_http_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
@@ -575,7 +588,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
@@ -588,49 +601,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_returns_immediately_when_initial_is_succeeded() {
+    async fn start_upload_errors_when_initial_state_is_failed() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
+        Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "lastAsyncUploadState": "SUCCEEDED",
+                "uploadState": "FAILED",
             })))
-            .expect(0)
-            .mount(&server)
-            .await;
-
-        let client = client_for(&server);
-        let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Succeeded, &|_| {})
-            .await
-            .unwrap();
-        assert!(matches!(state, UploadState::Succeeded));
-    }
-
-    #[tokio::test]
-    async fn wait_until_uploaded_errors_immediately_when_initial_is_failed() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200))
-            .expect(0)
             .mount(&server)
             .await;
 
         let client = client_for(&server);
         let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::Failed, &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "failed");
+            WepubError::ChromeUpload { upload_state } => {
+                assert_eq!(upload_state, "FAILED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_polls_until_succeeded() {
+    async fn await_upload_polls_until_succeeded() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v2/publishers/publisher-1/items/item-1:fetchStatus"))
@@ -643,15 +637,11 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let state = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
-            .await
-            .unwrap();
-        assert!(matches!(state, UploadState::Succeeded));
+        client.await_upload(TEST_TOKEN).await.unwrap();
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_errors_when_polling_returns_failed() {
+    async fn await_upload_errors_when_polling_returns_failed() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -661,21 +651,17 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "failed");
+            WepubError::ChromeUpload { upload_state } => {
+                assert_eq!(upload_state, "FAILED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_errors_when_polling_response_omits_state() {
+    async fn await_upload_errors_when_polling_response_omits_state() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -686,21 +672,17 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "no upload state");
+            WepubError::ChromeUpload { upload_state } => {
+                assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_errors_when_polling_returns_not_found() {
+    async fn await_upload_errors_when_polling_returns_not_found() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -710,21 +692,17 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
-            WepubError::ChromeUploadFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "not found");
+            WepubError::ChromeUpload { upload_state } => {
+                assert_eq!(upload_state, "NOT_FOUND");
             }
-            other => panic!("expected WepubError::ChromeUploadFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn wait_until_uploaded_times_out() {
+    async fn await_upload_times_out() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -734,10 +712,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client
-            .wait_until_uploaded(TEST_TOKEN, UploadState::InProgress, &|_| {})
-            .await
-            .unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -745,8 +720,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn upload_processed_classifies_states() {
+        assert!(upload_processed(Some(UploadState::Succeeded)).unwrap());
+        assert!(!upload_processed(Some(UploadState::InProgress)).unwrap());
+
+        for (state, expected) in [
+            (Some(UploadState::Failed), "FAILED"),
+            (Some(UploadState::NotFound), "NOT_FOUND"),
+            (None, "UPLOAD_STATE_UNSPECIFIED"),
+        ] {
+            match upload_processed(state).unwrap_err() {
+                WepubError::ChromeUpload { upload_state } => {
+                    assert_eq!(upload_state, expected);
+                }
+                other => panic!("expected WepubError::ChromeUpload, got {other:?}"),
+            }
+        }
+    }
+
     #[tokio::test]
-    async fn do_publish_default_sends_minimal_body() {
+    async fn submit_default_sends_minimal_body() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -761,12 +755,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client
-            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+        client
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap();
-        assert_eq!(resp.item_id, "item-1");
-        assert!(matches!(resp.state, ItemState::PendingReview));
 
         let received = server.received_requests().await.unwrap();
         let body_str = std::str::from_utf8(&received[0].body).unwrap();
@@ -785,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn do_publish_staged_sends_publish_type() {
+    async fn submit_staged_sends_publish_type() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -802,12 +794,11 @@ mod tests {
         opts.publish_type = Some(PublishType::StagedPublish);
 
         let client = client_for(&server);
-        let resp = client.do_publish(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
-        assert!(matches!(resp.state, ItemState::Staged));
+        client.submit(TEST_TOKEN, &opts).await.unwrap();
     }
 
     #[tokio::test]
-    async fn do_publish_with_skip_review_and_deploy_percentage() {
+    async fn submit_with_skip_review_and_deploy_percentage() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(body_string_contains("\"skipReview\":true"))
@@ -826,12 +817,11 @@ mod tests {
         opts.deploy_percentage = Some(50);
 
         let client = client_for(&server);
-        let resp = client.do_publish(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
-        assert!(matches!(resp.state, ItemState::Published));
+        client.submit(TEST_TOKEN, &opts).await.unwrap();
     }
 
     #[tokio::test]
-    async fn do_publish_errors_on_rejected_state() {
+    async fn submit_errors_on_rejected_state() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -844,20 +834,19 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "rejected");
+            WepubError::ChromePublish { item_state } => {
+                assert_eq!(item_state, "REJECTED");
             }
-            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn do_publish_errors_on_cancelled_state() {
+    async fn submit_errors_on_cancelled_state() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v2/publishers/publisher-1/items/item-1:publish"))
@@ -870,28 +859,25 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
-            WepubError::ChromePublishFailed { item_id, reason } => {
-                assert_eq!(item_id, "item-1");
-                assert_eq!(reason, "cancelled");
+            WepubError::ChromePublish { item_state } => {
+                assert_eq!(item_state, "CANCELLED");
             }
-            other => panic!("expected WepubError::ChromePublishFailed, got {other:?}"),
+            other => panic!("expected WepubError::ChromePublish, got {other:?}"),
         }
     }
 
     #[tokio::test]
-    async fn do_publish_decodes_non_terminal_item_states() {
-        let cases = [
-            ("PENDING_REVIEW", ItemState::PendingReview),
-            ("STAGED", ItemState::Staged),
-            ("PUBLISHED", ItemState::Published),
-            ("PUBLISHED_TO_TESTERS", ItemState::PublishedToTesters),
-        ];
-
-        for (wire, expected) in cases {
+    async fn submit_accepts_non_terminal_item_states() {
+        for wire in [
+            "PENDING_REVIEW",
+            "STAGED",
+            "PUBLISHED",
+            "PUBLISHED_TO_TESTERS",
+        ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -902,14 +888,10 @@ mod tests {
                 .await;
 
             let client = client_for(&server);
-            let resp = client
-                .do_publish(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            client
+                .submit(TEST_TOKEN, &PublishOptions::new())
                 .await
-                .unwrap();
-            assert!(
-                std::mem::discriminant(&resp.state) == std::mem::discriminant(&expected),
-                "wire value {wire} should decode to expected variant",
-            );
+                .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
     }
 
@@ -948,22 +930,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |p| {
-                progress.lock().unwrap().push(p);
-            })
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [
-                Progress::Uploading,
-                Progress::PollingUpload,
-                Progress::Publishing,
-                Progress::Succeeded,
-            ],
-        );
     }
 
     #[tokio::test]
@@ -1001,7 +971,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |_| {})
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
     }
@@ -1017,7 +987,7 @@ mod tests {
         let Err(err) = client.with_root_url("not a url") else {
             panic!("expected with_root_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     #[test]
@@ -1031,7 +1001,7 @@ mod tests {
         let Err(err) = client.with_token_url("not a url") else {
             panic!("expected with_token_url to reject");
         };
-        assert!(matches!(err, WepubError::InvalidUrl(_)), "got {err:?}");
+        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {
