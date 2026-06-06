@@ -26,7 +26,7 @@
 //!     },
 //! )?;
 //! let zip = std::fs::read("./addon.zip")?;
-//! client.publish(zip, Channel::Listed, PublishOptions::new(), |_progress| {}).await?;
+//! client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
 //! # Ok(())
 //! # }
 //! ```

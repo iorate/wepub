@@ -111,20 +111,6 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Progress {
-    /// Uploading the package archive.
-    Upload,
-    /// Waiting for the upload to be processed.
-    AwaitUpload,
-    /// Creating the new version.
-    CreateVersion,
-    /// Updating the source archive.
-    UpdateVersionSource,
-}
-
 /// Client for the Firefox Add-ons API (v5).
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -182,7 +168,7 @@ impl Client {
     ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, Channel::Listed, PublishOptions::new(), |_progress| {}).await?;
+    /// client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -195,19 +181,13 @@ impl Client {
         zip: Vec<u8>,
         channel: Channel,
         options: PublishOptions,
-        on_progress: impl Fn(Progress) + Send + Sync,
     ) -> Result<()> {
-        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-
-        let (upload_uuid, processed) = instrument_step(
-            tracing::info_span!("upload"),
-            self.upload(zip, channel, on_progress),
-        )
-        .await?;
+        let (upload_uuid, processed) =
+            instrument_step(tracing::info_span!("upload"), self.upload(zip, channel)).await?;
         if !processed {
             instrument_step(
                 tracing::info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
-                self.await_upload(&upload_uuid, on_progress),
+                self.await_upload(&upload_uuid),
             )
             .await?;
         }
@@ -219,14 +199,13 @@ impl Client {
                 options.compatibility,
                 options.approval_notes,
                 options.release_notes,
-                on_progress,
             ),
         )
         .await?;
         if let Some(source) = options.source
             && instrument_step(
                 tracing::info_span!("update_version_source", version_id = version_id),
-                self.update_version_source(version_id, source, on_progress),
+                self.update_version_source(version_id, source),
             )
             .await
             .is_err()
@@ -237,14 +216,8 @@ impl Client {
         Ok(())
     }
 
-    async fn upload(
-        &self,
-        zip: Vec<u8>,
-        channel: Channel,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<(String, bool)> {
+    async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<(String, bool)> {
         tracing::info!("uploading the package archive");
-        on_progress(Progress::Upload);
 
         let len = zip.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(zip), len)
@@ -274,13 +247,8 @@ impl Client {
         Ok((upload.uuid, processed))
     }
 
-    async fn await_upload(
-        &self,
-        upload_uuid: &str,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn await_upload(&self, upload_uuid: &str) -> Result<()> {
         tracing::info!("waiting for the upload to be processed");
-        on_progress(Progress::AwaitUpload);
 
         let started = Instant::now();
 
@@ -316,10 +284,8 @@ impl Client {
         compatibility: Option<Compatibility>,
         approval_notes: Option<String>,
         release_notes: Option<HashMap<String, String>>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<u64> {
         tracing::info!("creating the new version");
-        on_progress(Progress::CreateVersion);
 
         let body = VersionCreateBody {
             upload: upload_uuid,
@@ -342,14 +308,8 @@ impl Client {
         Ok(version.id)
     }
 
-    async fn update_version_source(
-        &self,
-        version_id: u64,
-        source: Vec<u8>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn update_version_source(&self, version_id: u64, source: Vec<u8>) -> Result<()> {
         tracing::info!("updating the source archive");
-        on_progress(Progress::UpdateVersionSource);
 
         let len = source.len() as u64;
         let part = Part::stream_with_length(reqwest::Body::from(source), len)
@@ -462,7 +422,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .upload(b"fake-zip".to_vec(), Channel::Listed, &|_| {})
+            .upload(b"fake-zip".to_vec(), Channel::Listed)
             .await
             .unwrap();
 
@@ -492,7 +452,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.await_upload("uuid-1", &|_| {}).await.unwrap();
+        client.await_upload("uuid-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -515,7 +475,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload("uuid-2", &|_| {}).await.unwrap_err();
+        let err = client.await_upload("uuid-2").await.unwrap_err();
 
         match err {
             WepubError::FirefoxUpload { validation } => {
@@ -537,7 +497,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload("uuid-3", &|_| {}).await.unwrap_err();
+        let err = client.await_upload("uuid-3").await.unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -601,7 +561,7 @@ mod tests {
 
         let client = client_for(&server);
         let resp = client
-            .create_version("uuid-x".to_string(), None, None, None, &|_| {})
+            .create_version("uuid-x".to_string(), None, None, None)
             .await
             .unwrap();
 
@@ -621,7 +581,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .update_version_source(4242, b"source-zip".to_vec(), &|_| {})
+            .update_version_source(4242, b"source-zip".to_vec())
             .await
             .unwrap();
     }
@@ -666,22 +626,10 @@ mod tests {
             source: Some(b"source-zip".to_vec()),
             ..PublishOptions::new()
         };
-        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options, |p| {
-                progress.lock().unwrap().push(p);
-            })
+            .publish(b"zip".to_vec(), Channel::Listed, options)
             .await
             .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [
-                Progress::Upload,
-                Progress::AwaitUpload,
-                Progress::CreateVersion,
-                Progress::UpdateVersionSource
-            ],
-        );
     }
 
     #[tokio::test]
@@ -723,20 +671,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(
-                b"zip".to_vec(),
-                Channel::Listed,
-                PublishOptions::new(),
-                |p| progress.lock().unwrap().push(p),
-            )
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
             .await
             .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [Progress::Upload, Progress::CreateVersion],
-        );
     }
 
     #[tokio::test]
@@ -774,7 +712,7 @@ mod tests {
             ..PublishOptions::new()
         };
         client
-            .publish(b"zip".to_vec(), Channel::Listed, options, |_| {})
+            .publish(b"zip".to_vec(), Channel::Listed, options)
             .await
             .unwrap();
     }
@@ -791,12 +729,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .publish(
-                b"zip".to_vec(),
-                Channel::Listed,
-                PublishOptions::new(),
-                |_| {},
-            )
+            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
             .await
             .unwrap_err();
 

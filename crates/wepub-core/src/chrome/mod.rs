@@ -6,4 +6,4 @@
 mod api;
 mod auth;
 
-pub use api::{Client, Credentials, Progress, PublishOptions, PublishType};
+pub use api::{Client, Credentials, PublishOptions, PublishType};

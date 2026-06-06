@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use wepub_core::firefox::{
-    Application, Channel, Client, Compatibility, Credentials, Progress, PublishOptions,
+    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
 };
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
 
-pub(crate) async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
+pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
         && is_stdin_path(args.release_notes_file.as_deref())
     {
@@ -56,12 +56,7 @@ pub(crate) async fn run(args: FirefoxArgs, no_progress: bool) -> Result<()> {
         source,
     };
 
-    let on_progress: fn(Progress) = if no_progress { |_| {} } else { report };
-
-    client
-        .publish(zip, channel, options, on_progress)
-        .await
-        .context("Firefox Add-ons")?;
+    client.publish(zip, channel, options).await?;
 
     Ok(())
 }
@@ -100,14 +95,4 @@ fn build_compatibility(apps: &[FirefoxApplicationArg]) -> Option<Compatibility> 
         .filter(|app| seen.insert(*app))
         .collect();
     Some(Compatibility::Shorthand(unique))
-}
-
-fn report(progress: Progress) {
-    match progress {
-        Progress::Upload => eprintln!("Uploading the package archive..."),
-        Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::CreateVersion => eprintln!("Creating the new version..."),
-        Progress::UpdateVersionSource => eprintln!("Updating the source archive..."),
-        _ => {}
-    }
 }

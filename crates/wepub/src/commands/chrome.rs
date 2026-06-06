@@ -1,10 +1,10 @@
-use anyhow::{Context, Result, bail};
-use wepub_core::chrome::{Client, Credentials, Progress, PublishOptions, PublishType};
+use anyhow::{Result, bail};
+use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
-pub(crate) async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
+pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
     let client = build_client(
         args.publisher_id,
         args.item_id,
@@ -22,12 +22,7 @@ pub(crate) async fn run(args: ChromeArgs, no_progress: bool) -> Result<()> {
         skip_review: args.skip_review,
     };
 
-    let on_progress: fn(Progress) = if no_progress { |_| {} } else { report };
-
-    client
-        .publish(zip, options, on_progress)
-        .await
-        .context("Chrome Web Store")?;
+    client.publish(zip, options).await?;
 
     Ok(())
 }
@@ -83,15 +78,5 @@ fn build_client(
             item_id,
             Credentials::AccessToken(access_token),
         )?),
-    }
-}
-
-fn report(progress: Progress) {
-    match progress {
-        Progress::RefreshAccessToken => eprintln!("Refreshing the access token..."),
-        Progress::Upload => eprintln!("Uploading the package archive..."),
-        Progress::AwaitUpload => eprintln!("Waiting for the upload to be processed..."),
-        Progress::Submit => eprintln!("Submitting the draft..."),
-        _ => {}
     }
 }

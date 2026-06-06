@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use clap_verbosity_flag::{Verbosity, WarnLevel};
+use clap_verbosity_flag::{InfoLevel, Verbosity};
 use url::Url;
 
 #[derive(Debug, Parser)]
@@ -11,13 +11,9 @@ use url::Url;
     about = "Publish browser extensions to web stores"
 )]
 pub(crate) struct Cli {
-    /// Suppress progress messages.
-    #[arg(long = "no-progress", global = true, help_heading = "Global Options")]
-    pub(crate) no_progress: bool,
-
     #[command(flatten)]
-    #[command(next_help_heading = "Global Options")]
-    pub(crate) verbosity: Verbosity<WarnLevel>,
+    #[command(next_help_heading = "Logging")]
+    pub(crate) verbosity: Verbosity<InfoLevel>,
 
     /// Show additional debug logs.
     #[arg(

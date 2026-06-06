@@ -48,20 +48,6 @@ impl PublishOptions {
     }
 }
 
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Progress {
-    /// Uploading the package archive.
-    Upload,
-    /// Waiting for the upload to be processed.
-    AwaitUpload,
-    /// Submitting the draft.
-    Submit,
-    /// Waiting for the submission to be processed.
-    AwaitSubmit,
-}
-
 /// Client for the Edge Add-ons API (v1.1).
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -119,54 +105,39 @@ impl Client {
     ///     },
     /// )?;
     /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, PublishOptions::new(), |_progress| {}).await?;
+    /// client.publish(zip, PublishOptions::new()).await?;
     /// # Ok(())
     /// # }
     /// ```
     #[tracing::instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
-    pub async fn publish(
-        &self,
-        zip: Vec<u8>,
-        options: PublishOptions,
-        on_progress: impl Fn(Progress) + Send + Sync,
-    ) -> Result<()> {
-        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let upload_operation_id =
-            instrument_step(tracing::info_span!("upload"), self.upload(zip, on_progress)).await?;
+            instrument_step(tracing::info_span!("upload"), self.upload(zip)).await?;
         instrument_step(
             tracing::info_span!(
                 "await_upload",
                 upload_operation_id = upload_operation_id.as_str()
             ),
-            self.await_upload(&upload_operation_id, on_progress),
+            self.await_upload(&upload_operation_id),
         )
         .await?;
 
-        let publish_operation_id = instrument_step(
-            tracing::info_span!("submit"),
-            self.submit(options.notes, on_progress),
-        )
-        .await?;
+        let publish_operation_id =
+            instrument_step(tracing::info_span!("submit"), self.submit(options.notes)).await?;
         instrument_step(
             tracing::info_span!(
                 "await_submit",
                 publish_operation_id = publish_operation_id.as_str()
             ),
-            self.await_submit(&publish_operation_id, on_progress),
+            self.await_submit(&publish_operation_id),
         )
         .await?;
 
         Ok(())
     }
 
-    async fn upload(
-        &self,
-        zip: Vec<u8>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<String> {
+    async fn upload(&self, zip: Vec<u8>) -> Result<String> {
         tracing::info!("uploading the package archive");
-        on_progress(Progress::Upload);
 
         let req = self
             .http
@@ -190,13 +161,8 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_upload(
-        &self,
-        upload_operation_id: &str,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn await_upload(&self, upload_operation_id: &str) -> Result<()> {
         tracing::info!("waiting for the upload to be processed");
-        on_progress(Progress::AwaitUpload);
 
         let started = Instant::now();
 
@@ -237,13 +203,8 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(
-        &self,
-        notes: Option<String>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<String> {
+    async fn submit(&self, notes: Option<String>) -> Result<String> {
         tracing::info!("submitting the draft");
-        on_progress(Progress::Submit);
 
         let mut req = self
             .http
@@ -268,13 +229,8 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_submit(
-        &self,
-        publish_operation_id: &str,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn await_submit(&self, publish_operation_id: &str) -> Result<()> {
         tracing::info!("waiting for the submission to be processed");
-        on_progress(Progress::AwaitSubmit);
 
         let started = Instant::now();
 
@@ -414,7 +370,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client.upload(b"FAKE_ZIP".to_vec(), &|_| {}).await.unwrap();
+        let op_id = client.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -427,7 +383,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
+        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -446,7 +402,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec(), &|_| {}).await.unwrap_err();
+        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -480,7 +436,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.await_upload("op-1", &|_| {}).await.unwrap();
+        client.await_upload("op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -498,7 +454,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload("op-2", &|_| {}).await.unwrap_err();
+        let err = client.await_upload("op-2").await.unwrap_err();
         match err {
             WepubError::EdgeApi {
                 message,
@@ -530,7 +486,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload("up-u", &|_| {}).await.unwrap_err();
+        let err = client.await_upload("up-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -554,7 +510,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload("op-3", &|_| {}).await.unwrap_err();
+        let err = client.await_upload("op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -579,7 +535,7 @@ mod tests {
 
         let client = client_for(&server);
         let op_id = client
-            .submit(Some("for reviewers".to_string()), &|_| {})
+            .submit(Some("for reviewers".to_string()))
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
@@ -605,7 +561,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let op_id = client.submit(None, &|_| {}).await.unwrap();
+        let op_id = client.submit(None).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -643,7 +599,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.await_submit("pub-1", &|_| {}).await.unwrap();
+        client.await_submit("pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -685,7 +641,7 @@ mod tests {
                 .await;
 
             let client = client_for(&server);
-            let err = client.await_submit("pub-x", &|_| {}).await.unwrap_err();
+            let err = client.await_submit("pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgeApi {
                     message: actual_message,
@@ -714,7 +670,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_submit("pub-u", &|_| {}).await.unwrap_err();
+        let err = client.await_submit("pub-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -777,22 +733,7 @@ mod tests {
         let options = PublishOptions {
             notes: Some("ship it".into()),
         };
-        let progress = std::sync::Mutex::new(Vec::new());
-        client
-            .publish(b"FAKE_ZIP".to_vec(), options, |p| {
-                progress.lock().unwrap().push(p);
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [
-                Progress::Upload,
-                Progress::AwaitUpload,
-                Progress::Submit,
-                Progress::AwaitSubmit,
-            ],
-        );
+        client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
     }
 
     #[test]

@@ -31,7 +31,7 @@ async fn main() -> ExitCode {
         .without_time()
         .init();
 
-    match dispatch(cli.command, cli.no_progress).await {
+    match dispatch(cli.command).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("error: {err:#}");
@@ -40,10 +40,10 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn dispatch(command: Commands, no_progress: bool) -> Result<()> {
+async fn dispatch(command: Commands) -> Result<()> {
     match command {
-        Commands::Chrome(args) => commands::chrome::run(args, no_progress).await,
-        Commands::Firefox(args) => commands::firefox::run(args, no_progress).await,
-        Commands::Edge(args) => commands::edge::run(args, no_progress).await,
+        Commands::Chrome(args) => commands::chrome::run(args).await,
+        Commands::Firefox(args) => commands::firefox::run(args).await,
+        Commands::Edge(args) => commands::edge::run(args).await,
     }
 }

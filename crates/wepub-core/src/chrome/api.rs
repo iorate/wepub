@@ -81,20 +81,6 @@ pub enum PublishType {
     StagedPublish,
 }
 
-/// Progress events reported by [`Client::publish`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Progress {
-    /// Refreshing the access token.
-    RefreshAccessToken,
-    /// Uploading the package archive.
-    Upload,
-    /// Waiting for the upload to be processed.
-    AwaitUpload,
-    /// Submitting the draft.
-    Submit,
-}
-
 /// Client for the Chrome Web Store API (v2).
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -176,7 +162,6 @@ impl Client {
     ///             publish_type: Some(PublishType::StagedPublish),
     ///             ..PublishOptions::new()
     ///         },
-    ///         |_progress| {},
     ///     )
     ///     .await?;
     /// # Ok(())
@@ -190,14 +175,7 @@ impl Client {
             item_id = self.item_id.as_str(),
         )
     )]
-    pub async fn publish(
-        &self,
-        zip: Vec<u8>,
-        options: PublishOptions,
-        on_progress: impl Fn(Progress) + Send + Sync,
-    ) -> Result<()> {
-        let on_progress = &on_progress as &(dyn Fn(Progress) + Send + Sync);
-
+    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
         let token: Cow<'_, str> = match &self.credentials {
             Credentials::RefreshToken {
                 client_id,
@@ -206,7 +184,7 @@ impl Client {
             } => {
                 let token = instrument_step(
                     tracing::info_span!("refresh_access_token"),
-                    self.refresh_access_token(client_id, client_secret, refresh_token, on_progress),
+                    self.refresh_access_token(client_id, client_secret, refresh_token),
                 )
                 .await?;
                 Cow::Owned(token)
@@ -214,24 +192,17 @@ impl Client {
             Credentials::AccessToken(token) => Cow::Borrowed(token),
         };
 
-        if !instrument_step(
-            tracing::info_span!("upload"),
-            self.upload(&token, zip, on_progress),
-        )
-        .await?
-        {
+        let processed =
+            instrument_step(tracing::info_span!("upload"), self.upload(&token, zip)).await?;
+        if !processed {
             instrument_step(
                 tracing::info_span!("await_upload"),
-                self.await_upload(&token, on_progress),
+                self.await_upload(&token),
             )
             .await?;
         }
 
-        instrument_step(
-            tracing::info_span!("submit"),
-            self.submit(&token, &options, on_progress),
-        )
-        .await?;
+        instrument_step(tracing::info_span!("submit"), self.submit(&token, &options)).await?;
 
         Ok(())
     }
@@ -241,10 +212,8 @@ impl Client {
         client_id: &str,
         client_secret: &str,
         refresh_token: &str,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
     ) -> Result<String> {
         tracing::info!("refreshing the access token");
-        on_progress(Progress::RefreshAccessToken);
 
         let token = auth::refresh_access_token(
             &self.http,
@@ -259,14 +228,8 @@ impl Client {
         Ok(token)
     }
 
-    async fn upload(
-        &self,
-        token: &str,
-        zip: Vec<u8>,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<bool> {
+    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<bool> {
         tracing::info!("uploading the package archive");
-        on_progress(Progress::Upload);
 
         let req = self
             .http
@@ -291,13 +254,8 @@ impl Client {
         Ok(processed)
     }
 
-    async fn await_upload(
-        &self,
-        token: &str,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn await_upload(&self, token: &str) -> Result<()> {
         tracing::info!("waiting for the upload to be processed");
-        on_progress(Progress::AwaitUpload);
 
         let started = Instant::now();
 
@@ -330,14 +288,8 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(
-        &self,
-        token: &str,
-        options: &PublishOptions,
-        on_progress: &(dyn Fn(Progress) + Send + Sync),
-    ) -> Result<()> {
+    async fn submit(&self, token: &str, options: &PublishOptions) -> Result<()> {
         tracing::info!("submitting the draft");
-        on_progress(Progress::Submit);
 
         let body = PublishRequestBody {
             publish_type: options.publish_type,
@@ -546,14 +498,11 @@ mod tests {
         .unwrap();
 
         let token = client
-            .refresh_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN, &|_| {})
+            .refresh_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
             .await
             .unwrap();
         assert_eq!(token, "fresh-token");
-        client
-            .upload(&token, b"FAKE".to_vec(), &|_| {})
-            .await
-            .unwrap();
+        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
@@ -576,7 +525,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
     }
@@ -598,7 +547,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
 
@@ -625,10 +574,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let resp = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
-            .await
-            .unwrap();
+        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
         assert!(!resp);
     }
 
@@ -642,7 +588,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
@@ -666,7 +612,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec(), &|_| {})
+            .upload(TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
@@ -691,7 +637,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap();
+        client.await_upload(TEST_TOKEN).await.unwrap();
     }
 
     #[tokio::test]
@@ -705,7 +651,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -726,7 +672,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
@@ -746,7 +692,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
@@ -766,7 +712,7 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN, &|_| {}).await.unwrap_err();
+        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -810,7 +756,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .submit(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap();
 
@@ -848,7 +794,7 @@ mod tests {
         opts.publish_type = Some(PublishType::StagedPublish);
 
         let client = client_for(&server);
-        client.submit(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
+        client.submit(TEST_TOKEN, &opts).await.unwrap();
     }
 
     #[tokio::test]
@@ -871,7 +817,7 @@ mod tests {
         opts.deploy_percentage = Some(50);
 
         let client = client_for(&server);
-        client.submit(TEST_TOKEN, &opts, &|_| {}).await.unwrap();
+        client.submit(TEST_TOKEN, &opts).await.unwrap();
     }
 
     #[tokio::test]
@@ -888,7 +834,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -913,7 +859,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+            .submit(TEST_TOKEN, &PublishOptions::new())
             .await
             .unwrap_err();
         match err {
@@ -943,7 +889,7 @@ mod tests {
 
             let client = client_for(&server);
             client
-                .submit(TEST_TOKEN, &PublishOptions::new(), &|_| {})
+                .submit(TEST_TOKEN, &PublishOptions::new())
                 .await
                 .unwrap_or_else(|e| panic!("wire value {wire} should succeed, got {e:?}"));
         }
@@ -984,17 +930,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |p| {
-                progress.lock().unwrap().push(p);
-            })
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [Progress::Upload, Progress::AwaitUpload, Progress::Submit,],
-        );
     }
 
     #[tokio::test]
@@ -1031,17 +970,10 @@ mod tests {
             .await;
 
         let client = client_for(&server);
-        let progress = std::sync::Mutex::new(Vec::new());
         client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new(), |p| {
-                progress.lock().unwrap().push(p);
-            })
+            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
             .await
             .unwrap();
-        assert_eq!(
-            progress.into_inner().unwrap(),
-            [Progress::Upload, Progress::Submit],
-        );
     }
 
     #[test]
