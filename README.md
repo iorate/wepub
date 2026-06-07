@@ -6,7 +6,7 @@
 
 A CLI to publish browser extensions to web stores.
 
-Chrome Web Store, Firefox Add-ons, and Edge Add-ons are supported.
+Chrome Web Store API v2, Firefox Add-ons API v5, and Edge Add-ons API v1.1 are supported.
 
 It is used in [uBlacklist](https://github.com/iorate/ublacklist)'s release workflow to publish to all three stores.
 
