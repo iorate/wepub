@@ -298,13 +298,13 @@ enum OperationStatus {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OperationResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     status: Option<OperationStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     error_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     errors: Option<Vec<serde_json::Value>>,
 }
 
