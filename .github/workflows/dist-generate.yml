@@ -1,0 +1,58 @@
+name: Dist generate
+
+on:
+  pull_request:
+    paths:
+      - dist-workspace.toml
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  dist-generate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+    concurrency: dist-generate-${{ github.head_ref }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - name: Install dist
+        run: |
+          version=$(sed -nE 's/^[[:space:]]*cargo-dist-version[[:space:]]*=[[:space:]]*"([^"[:space:]]+)".*/\1/p' dist-workspace.toml)
+          if [[ -z "$version" ]]; then
+            echo "Failed to read cargo-dist-version from dist-workspace.toml" >&2
+            exit 1
+          fi
+          curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${version}/cargo-dist-installer.sh" | sh
+
+      - name: dist generate
+        run: dist generate
+
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
+      - name: Commit and push release.yml
+        uses: suzuki-shunsuke/commit-action@06e3b49d4706498d325d29bd85adc82ecf2f5d8f # v1.0.0
+        with:
+          github_token: ${{ steps.generate-token.outputs.token }}
+          commit_message: regenerate release.yml with dist generate
+          files: .github/workflows/release.yml
+          fail_on_self_push: false
