@@ -248,7 +248,8 @@ impl Client {
             .bearer_auth(token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(zip)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
 
@@ -281,7 +282,8 @@ impl Client {
                     self.publisher_id, self.item_id
                 ))?)
                 .bearer_auth(token)
-                .build()?;
+                .build()
+                .map_err(WepubError::http)?;
 
             let resp = send_request(&self.http, req).await?;
 
@@ -316,7 +318,8 @@ impl Client {
             ))?)
             .bearer_auth(token)
             .json(&body)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
 

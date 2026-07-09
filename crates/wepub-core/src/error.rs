@@ -14,8 +14,7 @@ pub enum WepubError {
     #[error("the underlying HTTP request failed")]
     Http {
         /// The underlying HTTP error.
-        #[from]
-        source: reqwest::Error,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// The server returned a non-2xx HTTP status.
@@ -92,6 +91,14 @@ pub enum WepubError {
         /// Operation errors, if any.
         errors: Option<Vec<serde_json::Value>>,
     },
+}
+
+impl WepubError {
+    pub(crate) fn http(source: reqwest::Error) -> Self {
+        Self::Http {
+            source: Box::new(source),
+        }
+    }
 }
 
 pub(crate) fn record_error(level: Level, err: &WepubError) {

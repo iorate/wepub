@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::Result;
+use crate::{Result, WepubError};
 
 const USER_AGENT: &str = concat!("wepub/", env!("CARGO_PKG_VERSION"));
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -11,6 +11,7 @@ pub(crate) fn build_client() -> Result<reqwest::Client> {
         .user_agent(USER_AGENT)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
-        .build()?;
+        .build()
+        .map_err(WepubError::http)?;
     Ok(client)
 }
