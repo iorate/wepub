@@ -1,6 +1,6 @@
 [package]
 name = "wepub"
-version = "0.8.0"
+version = "0.8.1"
 description = "CLI to publish browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons"
 readme = "../../README.md"
 keywords = ["browser-extension", "chrome", "firefox", "edge", "cli"]

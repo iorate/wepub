@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/iorate/wepub/compare/v0.8.0...v0.8.1)
+
+### 📚 Documentation
+
+
+- State the supported store API versions in the README ([#77](https://github.com/iorate/wepub/pull/77)) - ([d07a451](https://github.com/iorate/wepub/commit/d07a451a42369b3e2975d6217dfeaebb60f77402))
+- Mention uBlacklist's use in the README intro ([#75](https://github.com/iorate/wepub/pull/75)) - ([c3d211d](https://github.com/iorate/wepub/commit/c3d211d80edc43426f78df228f9e0a677ab26445))
+
+
 ## [0.8.0](https://github.com/iorate/wepub/compare/v0.7.1...v0.8.0)
 
 ### ⛰️ Features
