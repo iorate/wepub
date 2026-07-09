@@ -15,9 +15,13 @@ jobs:
   release-plz-release:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     permissions:
       contents: write
       pull-requests: read
+
+    concurrency: release-plz-release
 
     steps:
       - name: Checkout
@@ -42,13 +46,13 @@ jobs:
   release-plz-pr:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     permissions:
       contents: write
       pull-requests: write
 
-    concurrency:
-      group: release-plz-${{ github.ref }}
-      cancel-in-progress: false
+    concurrency: release-plz-pr
 
     steps:
       - name: Checkout
