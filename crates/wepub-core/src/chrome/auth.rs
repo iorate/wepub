@@ -21,12 +21,13 @@ pub(crate) async fn refresh_access_token(
             ("client_secret", client_secret),
             ("refresh_token", refresh_token),
         ])
-        .build()?;
+        .build()
+        .map_err(WepubError::http)?;
 
     let resp = send_request(client, req).await?;
 
     let status = resp.status();
-    let body = resp.text().await?;
+    let body = resp.text().await.map_err(WepubError::http)?;
     if !status.is_success() {
         debug!(
             status = status.as_u16(),

@@ -53,7 +53,7 @@ pub(crate) async fn send_request(
         url = req.url().as_str(),
         "sending request"
     );
-    let resp = client.execute(req).await?;
+    let resp = client.execute(req).await.map_err(WepubError::http)?;
     Ok(resp)
 }
 
@@ -61,7 +61,7 @@ pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::Response,
 ) -> Result<T> {
     let status = resp.status();
-    let body = resp.text().await?;
+    let body = resp.text().await.map_err(WepubError::http)?;
     debug!(
         status = status.as_u16(),
         body = body.as_str(),

@@ -241,7 +241,8 @@ impl Client {
             .post(self.endpoint("api/v5/addons/upload/")?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
 
@@ -272,7 +273,8 @@ impl Client {
                 .http
                 .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .build()?;
+                .build()
+                .map_err(WepubError::http)?;
 
             let resp = send_request(&self.http, req).await?;
 
@@ -307,7 +309,8 @@ impl Client {
             .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .json(&body)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
 
@@ -334,7 +337,8 @@ impl Client {
             ))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
 

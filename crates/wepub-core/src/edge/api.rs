@@ -156,7 +156,8 @@ impl Client {
             .header("X-ClientID", &self.credentials.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
             .body(zip)
-            .build()?;
+            .build()
+            .map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
@@ -188,7 +189,8 @@ impl Client {
                 ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.credentials.client_id)
-                .build()?;
+                .build()
+                .map_err(WepubError::http)?;
 
             let resp = send_request(&self.http, req).await?;
 
@@ -224,7 +226,7 @@ impl Client {
             // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
             req = req.body(notes);
         }
-        let req = req.build()?;
+        let req = req.build().map_err(WepubError::http)?;
 
         let resp = send_request(&self.http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
@@ -256,7 +258,8 @@ impl Client {
                 ))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.credentials.client_id)
-                .build()?;
+                .build()
+                .map_err(WepubError::http)?;
 
             let resp = send_request(&self.http, req).await?;
 
@@ -311,7 +314,7 @@ struct OperationResponse {
 async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
     let status = resp.status();
     let location = resp.headers().get(reqwest::header::LOCATION).cloned();
-    let body = resp.text().await?;
+    let body = resp.text().await.map_err(WepubError::http)?;
     debug!(
         status = status.as_u16(),
         body = body.as_str(),
