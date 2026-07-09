@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", "group:allNonMajor"],
+  "enabledManagers": ["cargo", "github-actions", "custom.regex"],
+  "dependencyDashboardApproval": true,
+  "vulnerabilityAlerts": {
+    "dependencyDashboardApproval": false
+  },
+  "minimumReleaseAge": "3 days",
+  "platformCommit": "enabled",
+  "ignorePaths": [".github/workflows/release.yml"],
+  "packageRules": [
+    {
+      "description": "Ungroup breaking 0.x updates from the non-major group",
+      "matchManagers": ["cargo"],
+      "matchCurrentVersion": "<1",
+      "matchUpdateTypes": ["minor"],
+      "groupName": null
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update cargo-dist-version in dist-workspace.toml",
+      "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
+      "matchStrings": ["(?m)^\\s*cargo-dist-version\\s*=\\s*\"(?<currentValue>[^\"\\s]+)\""],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "axodotdev/cargo-dist",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "autoReplaceStringTemplate": "cargo-dist-version = \"{{{newValue}}}\""
+    },
+    {
+      "customType": "regex",
+      "description": "Update the pinned GitHub Action commits in dist-workspace.toml",
+      "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
+      "matchStrings": ["(?m)^\\s*\"(?<depName>actions/[^\"\\s]+)\"\\s*=\\s*\"(?<currentDigest>[a-f0-9]{40})\"\\s*#\\s*(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+\\S*)"],
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "semver",
+      "autoReplaceStringTemplate": "\"{{{depName}}}\" = \"{{{newDigest}}}\" # {{{newValue}}}"
+    }
+  ]
+}
