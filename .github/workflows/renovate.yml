@@ -11,13 +11,14 @@ defaults:
   run:
     shell: bash
 
+concurrency:
+  group: ${{ github.workflow }}
+
 jobs:
   renovate:
     runs-on: ubuntu-latest
 
     timeout-minutes: 30
-
-    concurrency: renovate
 
     steps:
       - name: Checkout
