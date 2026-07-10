@@ -13,6 +13,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+bon = "3.9.3"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 reqwest = { version = "0.13.3", features = ["json", "multipart", "form"] }
 serde = { version = "1.0.228", features = ["derive"] }

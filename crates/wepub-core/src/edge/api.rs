@@ -1,13 +1,13 @@
-use std::fmt;
 use std::time::{Duration, Instant};
 
+use bon::builder;
 use serde::Deserialize;
 use tracing::{Level, debug, info, info_span, instrument};
 use url::Url;
 
 use crate::{
-    PollConfig, Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
+    Result, WepubError,
+    common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
 };
 
@@ -15,151 +15,136 @@ const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/"
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// API credentials passed to [`Client::new`].
+/// Publish a package to Edge Add-ons.
 ///
-/// Obtain them from the **Publish API** page of the
-/// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
-#[derive(Clone)]
-pub struct Credentials {
-    /// Client ID.
-    pub client_id: String,
-    /// API key.
-    pub api_key: String,
-}
-
-// Hand-written so secrets never reach `Debug` output.
-impl fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credentials").finish_non_exhaustive()
-    }
-}
-
-/// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    /// Notes for certification.
-    pub notes: Option<String>,
-}
-
-impl PublishOptions {
-    /// Build a `PublishOptions` with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-/// Client for the Edge Add-ons API (v1.1).
-#[derive(Debug, Clone)]
-pub struct Client {
+/// Returns a builder: set the required parameters and any options with the
+/// setter methods, then finish with `call()` to upload the package and
+/// submit the draft.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use wepub_core::edge::publish;
+///
+/// let package = std::fs::read("./addon.zip")?;
+/// publish()
+///     .product_id("d34f98f5-f9b7-42b1-bebb-98707202b21d")
+///     .client_id("client-id")
+///     .api_key("api-key")
+///     .package(package)
+///     .call()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[builder(on(String, into))]
+pub async fn publish(
+    /// Product ID (GUID).
     product_id: String,
-    credentials: Credentials,
-    root_url: Url,
-    poll_config: PollConfig,
-    http: reqwest::Client,
-}
-
-impl Client {
-    /// Build a client bound to `product_id`, authenticating with the
-    /// supplied `credentials`.
-    pub fn new(product_id: String, credentials: Credentials) -> Result<Self> {
-        Ok(Self {
-            product_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            poll_config: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-            http: build_client()?,
-        })
-    }
-
+    /// Client ID.
+    ///
+    /// Obtain it from the **Publish API** page of the
+    /// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
+    client_id: String,
+    /// API key.
+    ///
+    /// Obtain it from the **Publish API** page of the
+    /// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
+    api_key: String,
+    /// Package archive (zip) to upload.
+    package: Vec<u8>,
+    /// Notes for certification.
+    notes: Option<String>,
     /// Override the Edge Add-ons API root URL.
     ///
-    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`.
-    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        self.root_url = parse_root_url(root_url)?;
-        Ok(self)
-    }
+    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`. A
+    /// trailing slash is appended to the path when missing.
+    #[builder(default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"))]
+    root_url: Url,
+    /// Override the delay between successive polls for operation results.
+    #[builder(default = DEFAULT_POLL_INTERVAL)]
+    poll_interval: Duration,
+    /// Override the maximum total time to wait for each operation result.
+    #[builder(default = DEFAULT_POLL_TIMEOUT)]
+    poll_timeout: Duration,
+) -> Result<()> {
+    let publish = Publish {
+        product_id,
+        client_id,
+        api_key,
+        root_url,
+        poll_interval,
+        poll_timeout,
+    };
+    let http = build_client()?;
+    publish.publish(&http, package, notes).await
+}
 
-    /// Override the poll config.
-    #[must_use]
-    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
-        self.poll_config = poll_config;
-        self
-    }
+struct Publish {
+    product_id: String,
+    client_id: String,
+    api_key: String,
+    root_url: Url,
+    poll_interval: Duration,
+    poll_timeout: Duration,
+}
 
-    /// Upload `zip` and submit the draft.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// use wepub_core::edge::{Client, Credentials, PublishOptions};
-    ///
-    /// let client = Client::new(
-    ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
-    ///     Credentials {
-    ///         client_id: "client-id".into(),
-    ///         api_key: "api-key".into(),
-    ///     },
-    /// )?;
-    /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, PublishOptions::new()).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+impl Publish {
     #[instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
-        let upload_operation_id =
-            instrument_step(info_span!("upload"), Level::ERROR, self.upload(zip)).await?;
+    async fn publish(
+        &self,
+        http: &reqwest::Client,
+        package: Vec<u8>,
+        notes: Option<String>,
+    ) -> Result<()> {
+        let upload_operation_id = instrument_step(
+            info_span!("upload"),
+            Level::ERROR,
+            self.upload(http, package),
+        )
+        .await?;
         instrument_step(
             info_span!(
                 "await_upload",
                 upload_operation_id = upload_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_upload(&upload_operation_id),
+            self.await_upload(http, &upload_operation_id),
         )
         .await?;
 
-        let publish_operation_id = instrument_step(
-            info_span!("submit"),
-            Level::ERROR,
-            self.submit(options.notes),
-        )
-        .await?;
+        let publish_operation_id =
+            instrument_step(info_span!("submit"), Level::ERROR, self.submit(http, notes)).await?;
         instrument_step(
             info_span!(
                 "await_submit",
                 publish_operation_id = publish_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_submit(&publish_operation_id),
+            self.await_submit(http, &publish_operation_id),
         )
         .await?;
 
         Ok(())
     }
 
-    async fn upload(&self, zip: Vec<u8>) -> Result<String> {
+    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<String> {
         info!("uploading the package archive");
 
-        let req = self
-            .http
+        let req = http
             .post(self.endpoint(&format!(
                 "v1/products/{}/submissions/draft/package",
                 self.product_id
-            ))?)
+            )))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.credentials.client_id)
+            .header("X-ClientID", &self.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
-            .body(zip)
+            .body(package)
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -169,30 +154,29 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_upload(&self, upload_operation_id: &str) -> Result<()> {
+    async fn await_upload(&self, http: &reqwest::Client, upload_operation_id: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/draft/package/operations/{upload_operation_id}",
                     self.product_id
-                ))?)
+                )))
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.credentials.client_id)
+                .header("X-ClientID", &self.client_id)
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -212,14 +196,13 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(&self, notes: Option<String>) -> Result<String> {
+    async fn submit(&self, http: &reqwest::Client, notes: Option<String>) -> Result<String> {
         info!("submitting the draft");
 
-        let mut req = self
-            .http
-            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?)
+        let mut req = http
+            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.credentials.client_id);
+            .header("X-ClientID", &self.client_id);
         if let Some(notes) = notes {
             // Docs disagree (reference page says plain text, using page says
             // JSON); wdzeng/edge-addon reports plain text "worked":
@@ -228,7 +211,7 @@ impl Client {
         }
         let req = req.build().map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -238,30 +221,29 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_submit(&self, publish_operation_id: &str) -> Result<()> {
+    async fn await_submit(&self, http: &reqwest::Client, publish_operation_id: &str) -> Result<()> {
         info!("waiting for the submission to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/operations/{}",
                     self.product_id, publish_operation_id
-                ))?)
+                )))
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.credentials.client_id)
+                .header("X-ClientID", &self.client_id)
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -281,12 +263,12 @@ impl Client {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Url {
         join_endpoint(&self.root_url, path)
     }
 
     fn auth_header(&self) -> String {
-        format!("ApiKey {}", self.credentials.api_key)
+        format!("ApiKey {}", self.api_key)
     }
 }
 
@@ -349,20 +331,8 @@ mod tests {
     const API_KEY: &str = "test-api-key";
     const CLIENT_ID: &str = "test-client-id";
 
-    #[test]
-    fn debug_redacts_secrets() {
-        let credentials = Credentials {
-            client_id: "client-id".to_string(),
-            api_key: "secret-key".to_string(),
-        };
-        assert!(!format!("{credentials:?}").contains("secret-key"));
-
-        let client = Client::new(PRODUCT_ID.to_string(), credentials).unwrap();
-        assert!(!format!("{client:?}").contains("secret-key"));
-    }
-
     #[tokio::test]
-    async fn upload_posts_zip_with_apikey_and_clientid_headers() {
+    async fn upload_posts_package_with_apikey_and_clientid_headers() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(format!(
@@ -379,8 +349,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
+        let p = publish_for(&server);
+        let http = http_client();
+        let op_id = p.upload(&http, b"FAKE_ZIP".to_vec()).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -392,8 +363,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -411,8 +383,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -445,8 +418,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_upload("op-1").await.unwrap();
+        let p = publish_for(&server);
+        let http = http_client();
+        p.await_upload(&http, "op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -463,8 +437,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("op-2").await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.await_upload(&http, "op-2").await.unwrap_err();
         match err {
             WepubError::EdgeApi {
                 message,
@@ -495,8 +470,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("up-u").await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.await_upload(&http, "up-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -519,8 +495,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("op-3").await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.await_upload(&http, "op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -543,9 +520,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client
-            .submit(Some("for reviewers".to_string()))
+        let p = publish_for(&server);
+        let http = http_client();
+        let op_id = p
+            .submit(&http, Some("for reviewers".to_string()))
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
@@ -570,8 +548,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client.submit(None).await.unwrap();
+        let p = publish_for(&server);
+        let http = http_client();
+        let op_id = p.submit(&http, None).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -608,8 +587,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_submit("pub-1").await.unwrap();
+        let p = publish_for(&server);
+        let http = http_client();
+        p.await_submit(&http, "pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -650,8 +630,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let client = client_for(&server);
-            let err = client.await_submit("pub-x").await.unwrap_err();
+            let p = publish_for(&server);
+            let http = http_client();
+            let err = p.await_submit(&http, "pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgeApi {
                     message: actual_message,
@@ -679,8 +660,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_submit("pub-u").await.unwrap_err();
+        let p = publish_for(&server);
+        let http = http_client();
+        let err = p.await_submit(&http, "pub-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -739,79 +721,48 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let options = PublishOptions {
-            notes: Some("ship it".into()),
-        };
-        client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
+        publish()
+            .product_id(PRODUCT_ID)
+            .client_id(CLIENT_ID)
+            .api_key(API_KEY)
+            .package(b"FAKE_ZIP".to_vec())
+            .notes("ship it")
+            .root_url(Url::parse(&server.uri()).unwrap())
+            .poll_interval(Duration::from_millis(10))
+            .poll_timeout(Duration::from_millis(200))
+            .call()
+            .await
+            .unwrap();
     }
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-        )
-        .unwrap();
-        let url = client.endpoint("v1/products/p/submissions").unwrap();
+        let p = publish_for_default_root();
+        let url = p.endpoint("v1/products/p/submissions");
         assert_eq!(
             url.as_str(),
             "https://api.addons.microsoftedge.microsoft.com/v1/products/p/submissions"
         );
     }
 
-    #[test]
-    fn with_root_url_overrides_default() {
-        let client = Client::new(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-        )
-        .unwrap()
-        .with_root_url("http://127.0.0.1:8000/")
-        .unwrap();
-        let url = client.endpoint("v1/products/p/submissions").unwrap();
-        assert_eq!(
-            url.as_str(),
-            "http://127.0.0.1:8000/v1/products/p/submissions"
-        );
+    fn http_client() -> reqwest::Client {
+        build_client().unwrap()
     }
 
-    #[test]
-    fn with_root_url_rejects_garbage() {
-        let client = Client::new(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-        )
-        .unwrap();
-        let Err(err) = client.with_root_url("not a url") else {
-            panic!("expected with_root_url to reject");
-        };
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
+    fn publish_for(server: &MockServer) -> Publish {
+        let mut p = publish_for_default_root();
+        p.root_url = Url::parse(&server.uri()).unwrap();
+        p
     }
 
-    fn client_for(server: &MockServer) -> Client {
-        Client::new(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-        )
-        .unwrap()
-        .with_root_url(&server.uri())
-        .unwrap()
-        .with_poll_config(PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        })
+    fn publish_for_default_root() -> Publish {
+        Publish {
+            product_id: PRODUCT_ID.to_string(),
+            client_id: CLIENT_ID.to_string(),
+            api_key: API_KEY.to_string(),
+            root_url: Url::parse(DEFAULT_ROOT_URL).unwrap(),
+            poll_interval: Duration::from_millis(10),
+            poll_timeout: Duration::from_millis(200),
+        }
     }
 }

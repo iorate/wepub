@@ -1,28 +1,45 @@
 use anyhow::{Result, bail};
-use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
+use wepub_core::chrome::{self, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
 pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
-    let client = build_client(
-        args.publisher_id,
-        args.item_id,
+    let auth = build_auth(
         args.client_id,
         args.client_secret,
         args.refresh_token,
         args.access_token,
     )?;
 
-    let zip = read_binary_input(&args.zip, "package").await?;
+    let package = read_binary_input(&args.package, "package").await?;
 
-    let options = PublishOptions {
-        publish_type: args.publish_type.map(Into::into),
-        deploy_percentage: args.deploy_percentage,
-        skip_review: args.skip_review,
+    let access_token = match auth {
+        Auth::AccessToken(access_token) => access_token,
+        Auth::RefreshToken {
+            client_id,
+            client_secret,
+            refresh_token,
+        } => {
+            chrome::fetch_access_token()
+                .client_id(client_id)
+                .client_secret(client_secret)
+                .refresh_token(refresh_token)
+                .call()
+                .await?
+        }
     };
 
-    client.publish(zip, options).await?;
+    chrome::publish()
+        .publisher_id(args.publisher_id)
+        .item_id(args.item_id)
+        .access_token(access_token)
+        .package(package)
+        .maybe_publish_type(args.publish_type.map(Into::into))
+        .maybe_deploy_percentage(args.deploy_percentage)
+        .maybe_skip_review(args.skip_review)
+        .call()
+        .await?;
 
     Ok(())
 }
@@ -36,14 +53,21 @@ impl From<ChromePublishTypeArg> for PublishType {
     }
 }
 
-fn build_client(
-    publisher_id: String,
-    item_id: String,
+enum Auth {
+    RefreshToken {
+        client_id: String,
+        client_secret: String,
+        refresh_token: String,
+    },
+    AccessToken(String),
+}
+
+fn build_auth(
     client_id: Option<String>,
     client_secret: Option<String>,
     refresh_token: Option<String>,
     access_token: Option<String>,
-) -> Result<Client> {
+) -> Result<Auth> {
     let any_refresh_token_arg =
         client_id.is_some() || client_secret.is_some() || refresh_token.is_some();
 
@@ -63,20 +87,12 @@ fn build_client(
                     "--client-id / --client-secret / --refresh-token must all be provided together"
                 );
             };
-            Ok(Client::new(
-                publisher_id,
-                item_id,
-                Credentials::RefreshToken {
-                    client_id,
-                    client_secret,
-                    refresh_token,
-                },
-            )?)
+            Ok(Auth::RefreshToken {
+                client_id,
+                client_secret,
+                refresh_token,
+            })
         }
-        (false, Some(access_token)) => Ok(Client::new(
-            publisher_id,
-            item_id,
-            Credentials::AccessToken(access_token),
-        )?),
+        (false, Some(access_token)) => Ok(Auth::AccessToken(access_token)),
     }
 }

@@ -32,8 +32,8 @@ pub(crate) enum Commands {
 #[derive(Debug, Args)]
 pub(crate) struct ChromeArgs {
     /// Path to the extension archive (zip).
-    #[arg(value_name = "ZIP")]
-    pub(crate) zip: PathBuf,
+    #[arg(value_name = "PACKAGE")]
+    pub(crate) package: PathBuf,
 
     /// Publisher ID (UUID).
     #[arg(long, env = "WEPUB_CHROME_PUBLISHER_ID")]
@@ -91,8 +91,8 @@ pub(crate) enum ChromePublishTypeArg {
 ))]
 pub(crate) struct FirefoxArgs {
     /// Path to the add-on archive (zip).
-    #[arg(value_name = "ZIP")]
-    pub(crate) zip: PathBuf,
+    #[arg(value_name = "PACKAGE")]
+    pub(crate) package: PathBuf,
 
     /// Add-on ID (slug or GUID).
     #[arg(long, env = "WEPUB_FIREFOX_ADDON_ID")]
@@ -167,8 +167,8 @@ pub(crate) enum FirefoxApplicationArg {
 ))]
 pub(crate) struct EdgeArgs {
     /// Path to the add-on archive (zip).
-    #[arg(value_name = "ZIP")]
-    pub(crate) zip: PathBuf,
+    #[arg(value_name = "PACKAGE")]
+    pub(crate) package: PathBuf,
 
     /// Product ID (GUID).
     #[arg(long, env = "WEPUB_EDGE_PRODUCT_ID")]

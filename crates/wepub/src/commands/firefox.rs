@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use wepub_core::firefox::{
-    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
-};
+use wepub_core::firefox::{self, Application, Channel, Compatibility};
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
@@ -16,22 +14,8 @@ pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
         bail!("--approval-notes-file and --release-notes-file cannot both read from stdin (\"-\")");
     }
 
-    let mut client = Client::new(
-        args.addon_id,
-        Credentials {
-            api_key: args.api_key,
-            api_secret: args.api_secret,
-        },
-    )?;
-    if let Some(root_url) = args.internal_root_url {
-        client = client.with_root_url(root_url.as_str())?;
-    }
+    let package = read_binary_input(&args.package, "package").await?;
 
-    let zip = read_binary_input(&args.zip, "package").await?;
-
-    let channel: Channel = args.channel.into();
-
-    let compatibility = build_compatibility(&args.compatibility);
     let approval_notes = resolve_text_input(
         args.approval_notes,
         args.approval_notes_file.as_deref(),
@@ -49,14 +33,20 @@ pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
         Some(path) => Some(read_binary_input(path, "source").await?),
         None => None,
     };
-    let options = PublishOptions {
-        compatibility,
-        approval_notes,
-        release_notes,
-        source,
-    };
 
-    client.publish(zip, channel, options).await?;
+    firefox::publish()
+        .addon_id(args.addon_id)
+        .api_key(args.api_key)
+        .api_secret(args.api_secret)
+        .package(package)
+        .channel(args.channel.into())
+        .maybe_compatibility(build_compatibility(&args.compatibility))
+        .maybe_approval_notes(approval_notes)
+        .maybe_release_notes(release_notes)
+        .maybe_source(source)
+        .maybe_root_url(args.internal_root_url)
+        .call()
+        .await?;
 
     Ok(())
 }
