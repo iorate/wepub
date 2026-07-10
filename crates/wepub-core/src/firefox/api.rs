@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::fmt;
-use std::future::{Future, IntoFuture};
-use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+use bon::builder;
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use tracing::{Level, info, info_span, instrument, warn};
@@ -22,25 +20,6 @@ use super::auth::generate_jwt;
 const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-/// API credentials passed to [`publish`].
-///
-/// Obtain them from the
-/// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
-#[derive(Clone)]
-pub struct Credentials {
-    /// API key (JWT issuer).
-    pub api_key: String,
-    /// API secret (JWT secret).
-    pub api_secret: String,
-}
-
-// Hand-written so secrets never reach `Debug` output.
-impl fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credentials").finish_non_exhaustive()
-    }
-}
 
 /// Version channel. Determines visibility on the site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,124 +74,102 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// Publish `zip` to the Firefox add-on `addon_id` under `channel`,
-/// authenticating with the supplied `credentials`.
+/// Publish a package to Firefox Add-ons.
 ///
-/// Returns a [`Publish`] builder: configure it with the setter methods,
-/// then `.await` it to upload the package and submit the new version.
+/// Returns a builder: set the required parameters and any options with the
+/// setter methods, then finish with `call()` to upload the package and
+/// submit the new version.
 ///
 /// # Examples
 ///
 /// ```no_run
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// use wepub_core::firefox::{Channel, Credentials, publish};
+/// use wepub_core::firefox::{Channel, publish};
 ///
-/// let zip = std::fs::read("./addon.zip")?;
-/// publish(
-///     "myaddon@example.com".into(),
-///     Credentials {
-///         api_key: "user:12345:6789".into(),
-///         api_secret: "jwt-secret".into(),
-///     },
-///     zip,
-///     Channel::Listed,
-/// )
-/// .await?;
+/// let package = std::fs::read("./addon.zip")?;
+/// publish()
+///     .addon_id("myaddon@example.com")
+///     .api_key("user:12345:6789")
+///     .api_secret("jwt-secret")
+///     .package(package)
+///     .channel(Channel::Listed)
+///     .call()
+///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-pub fn publish(
+#[builder(on(String, into))]
+pub async fn publish(
+    /// Add-on ID (slug or GUID).
     addon_id: String,
-    credentials: Credentials,
-    zip: Vec<u8>,
+    /// API key (JWT issuer).
+    ///
+    /// Obtain it from the
+    /// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
+    api_key: String,
+    /// API secret (JWT secret).
+    ///
+    /// Obtain it from the
+    /// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
+    api_secret: String,
+    /// Package archive (zip) to upload.
+    package: Vec<u8>,
+    /// Version channel. Determines visibility on the site.
     channel: Channel,
-) -> Publish {
-    Publish {
+    /// Application compatibility declarations.
+    compatibility: Option<Compatibility>,
+    /// Information for Mozilla reviewers.
+    approval_notes: Option<String>,
+    /// Release notes keyed by locale code.
+    release_notes: Option<HashMap<String, String>>,
+    /// Source archive to attach to the version.
+    source: Option<Vec<u8>>,
+    /// Override the Firefox Add-ons API root URL.
+    ///
+    /// Defaults to `https://addons.mozilla.org/`. A trailing slash is
+    /// appended to the path when missing.
+    #[builder(
+        default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+        with = |root_url: Url| ensure_trailing_slash(root_url),
+    )]
+    root_url: Url,
+    /// Override the delay between successive polls for the upload result.
+    #[builder(default = DEFAULT_POLL_INTERVAL)]
+    poll_interval: Duration,
+    /// Override the maximum total time to wait for the upload result.
+    #[builder(default = DEFAULT_POLL_TIMEOUT)]
+    poll_timeout: Duration,
+) -> Result<()> {
+    let publish = Publish {
         addon_id,
-        credentials,
-        zip,
+        api_key,
+        api_secret,
         channel,
-        compatibility: None,
-        approval_notes: None,
-        release_notes: None,
-        source: None,
-        root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-        poll_interval: DEFAULT_POLL_INTERVAL,
-        poll_timeout: DEFAULT_POLL_TIMEOUT,
-    }
+        compatibility,
+        approval_notes,
+        release_notes,
+        root_url,
+        poll_interval,
+        poll_timeout,
+    };
+    let http = build_client()?;
+    publish.publish(&http, package, source).await
 }
 
-/// A pending publish to Firefox Add-ons, created by [`publish`].
-///
-/// Runs when `.await`ed; nothing is sent until then.
-#[must_use = "a publish does nothing unless awaited"]
-pub struct Publish {
+struct Publish {
     addon_id: String,
-    credentials: Credentials,
-    zip: Vec<u8>,
+    api_key: String,
+    api_secret: String,
     channel: Channel,
     compatibility: Option<Compatibility>,
     approval_notes: Option<String>,
     release_notes: Option<HashMap<String, String>>,
-    source: Option<Vec<u8>>,
     root_url: Url,
     poll_interval: Duration,
     poll_timeout: Duration,
 }
 
 impl Publish {
-    /// Application compatibility declarations.
-    pub fn compatibility(mut self, compatibility: Compatibility) -> Self {
-        self.compatibility = Some(compatibility);
-        self
-    }
-
-    /// Information for Mozilla reviewers.
-    pub fn approval_notes(mut self, approval_notes: String) -> Self {
-        self.approval_notes = Some(approval_notes);
-        self
-    }
-
-    /// Release notes keyed by locale code.
-    pub fn release_notes(mut self, release_notes: HashMap<String, String>) -> Self {
-        self.release_notes = Some(release_notes);
-        self
-    }
-
-    /// Source archive to attach to the version.
-    pub fn source(mut self, source: Vec<u8>) -> Self {
-        self.source = Some(source);
-        self
-    }
-
-    /// Override the Firefox Add-ons API root URL.
-    ///
-    /// Defaults to `https://addons.mozilla.org/`. A trailing slash is
-    /// appended to the path when missing.
-    pub fn root_url(mut self, root_url: Url) -> Self {
-        self.root_url = ensure_trailing_slash(root_url);
-        self
-    }
-
-    /// Override the delay between successive polls for the upload result.
-    pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = poll_interval;
-        self
-    }
-
-    /// Override the maximum total time to wait for the upload result.
-    pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = poll_timeout;
-        self
-    }
-
-    async fn run(mut self) -> Result<()> {
-        let http = build_client()?;
-        let zip = std::mem::take(&mut self.zip);
-        let source = self.source.take();
-        self.publish(&http, zip, source).await
-    }
-
     #[instrument(
         skip_all,
         fields(
@@ -224,11 +181,15 @@ impl Publish {
     async fn publish(
         &self,
         http: &reqwest::Client,
-        zip: Vec<u8>,
+        package: Vec<u8>,
         source: Option<Vec<u8>>,
     ) -> Result<()> {
-        let (upload_uuid, processed) =
-            instrument_step(info_span!("upload"), Level::ERROR, self.upload(http, zip)).await?;
+        let (upload_uuid, processed) = instrument_step(
+            info_span!("upload"),
+            Level::ERROR,
+            self.upload(http, package),
+        )
+        .await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
@@ -260,11 +221,11 @@ impl Publish {
         Ok(())
     }
 
-    async fn upload(&self, http: &reqwest::Client, zip: Vec<u8>) -> Result<(String, bool)> {
+    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<(String, bool)> {
         info!("uploading the package archive");
 
-        let len = zip.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(zip), len)
+        let len = package.len() as u64;
+        let part = Part::stream_with_length(reqwest::Body::from(package), len)
             .file_name("addon.zip")
             .mime_str("application/zip")
             .expect("\"application/zip\" is a valid MIME type");
@@ -383,17 +344,8 @@ impl Publish {
     }
 
     fn auth_header(&self) -> String {
-        let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret);
+        let token = generate_jwt(&self.api_key, &self.api_secret);
         format!("JWT {token}")
-    }
-}
-
-impl IntoFuture for Publish {
-    type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
     }
 }
 
@@ -447,15 +399,6 @@ mod tests {
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[test]
-    fn debug_redacts_secrets() {
-        let credentials = Credentials {
-            api_key: "issuer".to_string(),
-            api_secret: "secret-jwt".to_string(),
-        };
-        assert!(!format!("{credentials:?}").contains("secret-jwt"));
-    }
-
     #[tokio::test]
     async fn start_upload_posts_multipart_and_parses_response() {
         let server = MockServer::start().await;
@@ -469,7 +412,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         let resp = p.upload(&http, b"fake-zip".to_vec()).await.unwrap();
 
@@ -498,7 +441,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         p.await_upload(&http, "uuid-1").await.unwrap();
     }
@@ -522,7 +465,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         let err = p.await_upload(&http, "uuid-2").await.unwrap_err();
 
@@ -545,7 +488,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         let err = p.await_upload(&http, "uuid-3").await.unwrap_err();
 
@@ -609,7 +552,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         let resp = p.create_version(&http, "uuid-x".to_string()).await.unwrap();
 
@@ -627,7 +570,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let p = publish_for(&server);
         let http = http_client();
         p.update_version_source(&http, 4242, b"source-zip".to_vec())
             .await
@@ -669,8 +612,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        publish_for(&server, b"zip".to_vec(), Channel::Listed)
-            .source(b"source-zip".to_vec())
+        run_publish(&server, Some(b"source-zip".to_vec()))
             .await
             .unwrap();
     }
@@ -713,9 +655,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        publish_for(&server, b"zip".to_vec(), Channel::Listed)
-            .await
-            .unwrap();
+        run_publish(&server, None).await.unwrap();
     }
 
     #[tokio::test]
@@ -747,8 +687,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        publish_for(&server, b"zip".to_vec(), Channel::Listed)
-            .source(b"source-zip".to_vec())
+        run_publish(&server, Some(b"source-zip".to_vec()))
             .await
             .unwrap();
     }
@@ -763,9 +702,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = publish_for(&server, b"zip".to_vec(), Channel::Listed)
-            .await
-            .unwrap_err();
+        let err = run_publish(&server, None).await.unwrap_err();
 
         match err {
             WepubError::HttpStatus { status, body } => {
@@ -850,15 +787,7 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let p = publish(
-            "test-addon".into(),
-            Credentials {
-                api_key: "issuer".into(),
-                api_secret: "secret".into(),
-            },
-            Vec::new(),
-            Channel::Listed,
-        );
+        let p = publish_for_default_root();
         let url = p.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
@@ -866,39 +795,80 @@ mod tests {
         );
     }
 
-    #[test]
-    fn root_url_overrides_default() {
-        let p = publish(
-            "test-addon".into(),
-            Credentials {
-                api_key: "issuer".into(),
-                api_secret: "secret".into(),
-            },
-            Vec::new(),
-            Channel::Listed,
-        )
-        .root_url(Url::parse("http://127.0.0.1:8000/").unwrap());
-        let url = p.endpoint("api/v5/addons/upload/").unwrap();
-        assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
+    #[tokio::test]
+    async fn root_url_setter_appends_trailing_slash() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/prefix/api/v5/addons/upload/"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(upload_json(
+                "uuid-slash",
+                true,
+                true,
+            )))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/prefix/api/v5/addons/addon/test-addon/versions/"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "id": 1 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        publish()
+            .addon_id("test-addon")
+            .api_key("issuer")
+            .api_secret("secret")
+            .package(b"zip".to_vec())
+            .channel(Channel::Listed)
+            .root_url(Url::parse(&format!("{}/prefix", server.uri())).unwrap())
+            .poll_interval(Duration::from_millis(10))
+            .poll_timeout(Duration::from_millis(200))
+            .call()
+            .await
+            .unwrap();
     }
 
     fn http_client() -> reqwest::Client {
         build_client().unwrap()
     }
 
-    fn publish_for(server: &MockServer, zip: Vec<u8>, channel: Channel) -> Publish {
-        publish(
-            "test-addon".into(),
-            Credentials {
-                api_key: "issuer".into(),
-                api_secret: "secret".into(),
-            },
-            zip,
-            channel,
-        )
-        .root_url(Url::parse(&server.uri()).unwrap())
-        .poll_interval(Duration::from_millis(10))
-        .poll_timeout(Duration::from_millis(200))
+    fn publish_for(server: &MockServer) -> Publish {
+        let mut p = publish_for_default_root();
+        p.root_url = Url::parse(&server.uri()).unwrap();
+        p
+    }
+
+    fn publish_for_default_root() -> Publish {
+        Publish {
+            addon_id: "test-addon".to_string(),
+            api_key: "issuer".to_string(),
+            api_secret: "secret".to_string(),
+            channel: Channel::Listed,
+            compatibility: None,
+            approval_notes: None,
+            release_notes: None,
+            root_url: Url::parse(DEFAULT_ROOT_URL).unwrap(),
+            poll_interval: Duration::from_millis(10),
+            poll_timeout: Duration::from_millis(200),
+        }
+    }
+
+    async fn run_publish(server: &MockServer, source: Option<Vec<u8>>) -> Result<()> {
+        publish()
+            .addon_id("test-addon")
+            .api_key("issuer")
+            .api_secret("secret")
+            .package(b"zip".to_vec())
+            .channel(Channel::Listed)
+            .maybe_source(source)
+            .root_url(Url::parse(&server.uri()).unwrap())
+            .poll_interval(Duration::from_millis(10))
+            .poll_timeout(Duration::from_millis(200))
+            .call()
+            .await
     }
 
     fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {

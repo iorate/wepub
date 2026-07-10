@@ -2,7 +2,7 @@
 //!
 //! `wepub-core` is the engine behind the [`wepub`][wepub-bin] command-line
 //! tool. It exposes one `publish` entry point per supported store, returning
-//! a builder that runs when `.await`ed.
+//! a builder that runs when finished with `call()`.
 //!
 //! Currently supported stores:
 //!
@@ -16,19 +16,17 @@
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! use wepub_core::firefox::{Channel, Credentials};
+//! use wepub_core::firefox::{Channel, publish};
 //!
-//! let zip = std::fs::read("./addon.zip")?;
-//! wepub_core::firefox::publish(
-//!     "myaddon@example.com".into(),
-//!     Credentials {
-//!         api_key: "user:12345:6789".into(),
-//!         api_secret: "jwt-secret".into(),
-//!     },
-//!     zip,
-//!     Channel::Listed,
-//! )
-//! .await?;
+//! let package = std::fs::read("./addon.zip")?;
+//! publish()
+//!     .addon_id("myaddon@example.com")
+//!     .api_key("user:12345:6789")
+//!     .api_secret("jwt-secret")
+//!     .package(package)
+//!     .channel(Channel::Listed)
+//!     .call()
+//!     .await?;
 //! # Ok(())
 //! # }
 //! ```

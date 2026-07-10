@@ -1,9 +1,6 @@
-use std::borrow::Cow;
-use std::fmt;
-use std::future::{Future, IntoFuture};
-use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+use bon::builder;
 use serde::{Deserialize, Serialize};
 use tracing::{Level, info, info_span, instrument};
 use url::Url;
@@ -22,36 +19,6 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// OAuth credentials passed to [`publish`].
-#[derive(Clone)]
-pub enum Credentials {
-    /// An OAuth refresh token plus the client credentials needed to redeem
-    /// it for an access token. Obtain them by following
-    /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
-    RefreshToken {
-        /// OAuth client ID.
-        client_id: String,
-        /// OAuth client secret.
-        client_secret: String,
-        /// OAuth refresh token.
-        refresh_token: String,
-    },
-    /// A pre-fetched OAuth access token, used verbatim. Suitable for
-    /// automated workflows that authenticate with a
-    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
-    AccessToken(String),
-}
-
-// Hand-written so secrets never reach `Debug` output.
-impl fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RefreshToken { .. } => f.debug_struct("RefreshToken").finish_non_exhaustive(),
-            Self::AccessToken(_) => f.debug_tuple("AccessToken").finish_non_exhaustive(),
-        }
-    }
-}
-
 /// Whether a new version is published immediately on approval or staged for
 /// later publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -63,133 +30,157 @@ pub enum PublishType {
     StagedPublish,
 }
 
-/// Publish `zip` to the Chrome Web Store item `item_id` owned by
-/// `publisher_id`, authenticating with the supplied `credentials`.
+/// Exchange an OAuth refresh token for an access token.
 ///
-/// Returns a [`Publish`] builder: configure it with the setter methods,
-/// then `.await` it to upload the package and submit the draft.
+/// Returns a builder: set the required parameters with the setter methods,
+/// then finish with `call()` to perform the exchange. Obtain the client
+/// credentials and refresh token by following
+/// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
 ///
 /// # Examples
 ///
 /// ```no_run
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// use wepub_core::chrome::{Credentials, PublishType, publish};
+/// use wepub_core::chrome::fetch_access_token;
 ///
-/// let zip = std::fs::read("./extension.zip")?;
-/// publish(
-///     "abcd1234-ef56-7890-abcd-ef1234567890".into(),
-///     "abcdefghijklmnopabcdefghijklmnop".into(),
-///     Credentials::RefreshToken {
-///         client_id: "client-id".into(),
-///         client_secret: "client-secret".into(),
-///         refresh_token: "refresh-token".into(),
-///     },
-///     zip,
-/// )
-/// .publish_type(PublishType::StagedPublish)
-/// .await?;
+/// let access_token = fetch_access_token()
+///     .client_id("client-id")
+///     .client_secret("client-secret")
+///     .refresh_token("refresh-token")
+///     .call()
+///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-pub fn publish(
-    publisher_id: String,
-    item_id: String,
-    credentials: Credentials,
-    zip: Vec<u8>,
-) -> Publish {
-    Publish {
-        publisher_id,
-        item_id,
-        credentials,
-        zip,
-        publish_type: None,
-        deploy_percentage: None,
-        skip_review: None,
-        root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-        token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
-        poll_interval: DEFAULT_POLL_INTERVAL,
-        poll_timeout: DEFAULT_POLL_TIMEOUT,
-    }
+#[builder(on(String, into))]
+pub async fn fetch_access_token(
+    /// OAuth client ID.
+    client_id: String,
+    /// OAuth client secret.
+    client_secret: String,
+    /// OAuth refresh token.
+    refresh_token: String,
+    /// Override the Google OAuth token endpoint URL.
+    ///
+    /// Defaults to `https://oauth2.googleapis.com/token`.
+    #[builder(default = Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"))]
+    token_url: Url,
+) -> Result<String> {
+    let http = build_client()?;
+    instrument_step(
+        info_span!("fetch_access_token", store = "chrome"),
+        Level::ERROR,
+        async {
+            info!("fetching the access token");
+            let token = auth::refresh_access_token(
+                &http,
+                token_url,
+                &client_id,
+                &client_secret,
+                &refresh_token,
+            )
+            .await?;
+            info!("the access token fetched");
+            Ok(token)
+        },
+    )
+    .await
 }
 
-/// A pending publish to the Chrome Web Store, created by [`publish`].
+/// Publish a package to the Chrome Web Store.
 ///
-/// Runs when `.await`ed; nothing is sent until then.
+/// Returns a builder: set the required parameters and any options with the
+/// setter methods, then finish with `call()` to upload the package and
+/// submit the draft.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use wepub_core::chrome::{PublishType, publish};
+///
+/// let package = std::fs::read("./extension.zip")?;
+/// publish()
+///     .publisher_id("abcd1234-ef56-7890-abcd-ef1234567890")
+///     .item_id("abcdefghijklmnopabcdefghijklmnop")
+///     .access_token("access-token")
+///     .package(package)
+///     .publish_type(PublishType::StagedPublish)
+///     .call()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[builder(on(String, into))]
+pub async fn publish(
+    /// Publisher ID (UUID).
+    publisher_id: String,
+    /// Item ID (32-character string).
+    item_id: String,
+    /// OAuth access token.
+    ///
+    /// Obtain one with [`fetch_access_token`], or from any other source,
+    /// such as a
+    /// [service account](https://developer.chrome.com/docs/webstore/service-accounts).
+    access_token: String,
+    /// Package archive (zip) to upload.
+    package: Vec<u8>,
+    /// Whether to publish immediately on approval or stage for later
+    /// publishing.
+    publish_type: Option<PublishType>,
+    /// Initial percentage of users to roll the new version out to.
+    ///
+    /// Defaults to the value configured in the Developer Dashboard.
+    deploy_percentage: Option<u8>,
+    /// Attempt to skip item review.
+    skip_review: Option<bool>,
+    /// Override the Chrome Web Store API root URL.
+    ///
+    /// Defaults to `https://chromewebstore.googleapis.com/`. A trailing
+    /// slash is appended to the path when missing.
+    #[builder(
+        default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+        with = |root_url: Url| ensure_trailing_slash(root_url),
+    )]
+    root_url: Url,
+    /// Override the delay between successive polls for the upload result.
+    #[builder(default = DEFAULT_POLL_INTERVAL)]
+    poll_interval: Duration,
+    /// Override the maximum total time to wait for the upload result.
+    #[builder(default = DEFAULT_POLL_TIMEOUT)]
+    poll_timeout: Duration,
+) -> Result<()> {
+    let publish = Publish {
+        publisher_id,
+        item_id,
+        access_token,
+        publish_type,
+        deploy_percentage,
+        skip_review,
+        root_url,
+        poll_interval,
+        poll_timeout,
+    };
+    let http = build_client()?;
+    publish.publish(&http, package).await
+}
+
 // The `publish_type` field mirrors the wire field `publishType`; the overlap
 // with the struct name is a false positive.
 #[allow(clippy::struct_field_names)]
-#[must_use = "a publish does nothing unless awaited"]
-pub struct Publish {
+struct Publish {
     publisher_id: String,
     item_id: String,
-    credentials: Credentials,
-    zip: Vec<u8>,
+    access_token: String,
     publish_type: Option<PublishType>,
     deploy_percentage: Option<u8>,
     skip_review: Option<bool>,
     root_url: Url,
-    token_url: Url,
     poll_interval: Duration,
     poll_timeout: Duration,
 }
 
 impl Publish {
-    /// Whether to publish immediately on approval or stage for later
-    /// publishing.
-    pub fn publish_type(mut self, publish_type: PublishType) -> Self {
-        self.publish_type = Some(publish_type);
-        self
-    }
-
-    /// Initial percentage of users to roll the new version out to.
-    ///
-    /// Defaults to the value configured in the Developer Dashboard.
-    pub fn deploy_percentage(mut self, deploy_percentage: u8) -> Self {
-        self.deploy_percentage = Some(deploy_percentage);
-        self
-    }
-
-    /// Attempt to skip item review.
-    pub fn skip_review(mut self, skip_review: bool) -> Self {
-        self.skip_review = Some(skip_review);
-        self
-    }
-
-    /// Override the Chrome Web Store API root URL.
-    ///
-    /// Defaults to `https://chromewebstore.googleapis.com/`. A trailing
-    /// slash is appended to the path when missing.
-    pub fn root_url(mut self, root_url: Url) -> Self {
-        self.root_url = ensure_trailing_slash(root_url);
-        self
-    }
-
-    /// Override the Google OAuth token endpoint URL.
-    ///
-    /// Defaults to `https://oauth2.googleapis.com/token`.
-    pub fn token_url(mut self, token_url: Url) -> Self {
-        self.token_url = token_url;
-        self
-    }
-
-    /// Override the delay between successive polls for the upload result.
-    pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = poll_interval;
-        self
-    }
-
-    /// Override the maximum total time to wait for the upload result.
-    pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = poll_timeout;
-        self
-    }
-
-    async fn run(mut self) -> Result<()> {
-        let http = build_client()?;
-        let zip = std::mem::take(&mut self.zip);
-        self.publish(&http, zip).await
-    }
-
     #[instrument(
         skip_all,
         fields(
@@ -198,72 +189,28 @@ impl Publish {
             item_id = self.item_id.as_str(),
         )
     )]
-    async fn publish(&self, http: &reqwest::Client, zip: Vec<u8>) -> Result<()> {
-        let token: Cow<'_, str> = match &self.credentials {
-            Credentials::RefreshToken {
-                client_id,
-                client_secret,
-                refresh_token,
-            } => {
-                let token = instrument_step(
-                    info_span!("refresh_access_token"),
-                    Level::ERROR,
-                    self.refresh_access_token(http, client_id, client_secret, refresh_token),
-                )
-                .await?;
-                Cow::Owned(token)
-            }
-            Credentials::AccessToken(token) => Cow::Borrowed(token),
-        };
-
+    async fn publish(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<()> {
         let processed = instrument_step(
             info_span!("upload"),
             Level::ERROR,
-            self.upload(http, &token, zip),
+            self.upload(http, package),
         )
         .await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload"),
                 Level::ERROR,
-                self.await_upload(http, &token),
+                self.await_upload(http),
             )
             .await?;
         }
 
-        instrument_step(
-            info_span!("submit"),
-            Level::ERROR,
-            self.submit(http, &token),
-        )
-        .await?;
+        instrument_step(info_span!("submit"), Level::ERROR, self.submit(http)).await?;
 
         Ok(())
     }
 
-    async fn refresh_access_token(
-        &self,
-        http: &reqwest::Client,
-        client_id: &str,
-        client_secret: &str,
-        refresh_token: &str,
-    ) -> Result<String> {
-        info!("refreshing the access token");
-
-        let token = auth::refresh_access_token(
-            http,
-            self.token_url.clone(),
-            client_id,
-            client_secret,
-            refresh_token,
-        )
-        .await?;
-
-        info!("the access token refreshed");
-        Ok(token)
-    }
-
-    async fn upload(&self, http: &reqwest::Client, token: &str, zip: Vec<u8>) -> Result<bool> {
+    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<bool> {
         info!("uploading the package archive");
 
         let req = http
@@ -271,9 +218,9 @@ impl Publish {
                 "upload/v2/publishers/{}/items/{}:upload",
                 self.publisher_id, self.item_id
             ))?)
-            .bearer_auth(token)
+            .bearer_auth(&self.access_token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .body(zip)
+            .body(package)
             .build()
             .map_err(WepubError::http)?;
 
@@ -289,7 +236,7 @@ impl Publish {
         Ok(processed)
     }
 
-    async fn await_upload(&self, http: &reqwest::Client, token: &str) -> Result<()> {
+    async fn await_upload(&self, http: &reqwest::Client) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
@@ -306,7 +253,7 @@ impl Publish {
                     "v2/publishers/{}/items/{}:fetchStatus",
                     self.publisher_id, self.item_id
                 ))?)
-                .bearer_auth(token)
+                .bearer_auth(&self.access_token)
                 .build()
                 .map_err(WepubError::http)?;
 
@@ -323,7 +270,7 @@ impl Publish {
         Ok(())
     }
 
-    async fn submit(&self, http: &reqwest::Client, token: &str) -> Result<()> {
+    async fn submit(&self, http: &reqwest::Client) -> Result<()> {
         info!("submitting the draft");
 
         let body = PublishRequestBody {
@@ -340,7 +287,7 @@ impl Publish {
                 "v2/publishers/{}/items/{}:publish",
                 self.publisher_id, self.item_id
             ))?)
-            .bearer_auth(token)
+            .bearer_auth(&self.access_token)
             .json(&body)
             .build()
             .map_err(WepubError::http)?;
@@ -360,15 +307,6 @@ impl Publish {
 
     fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
-    }
-}
-
-impl IntoFuture for Publish {
-    type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
     }
 }
 
@@ -478,28 +416,14 @@ mod tests {
     const REFRESH_TOKEN: &str = "refresh-token";
     const TEST_TOKEN: &str = "test-access-token";
 
-    #[test]
-    fn debug_redacts_secrets() {
-        let credentials = Credentials::RefreshToken {
-            client_id: CLIENT_ID.to_string(),
-            client_secret: CLIENT_SECRET.to_string(),
-            refresh_token: REFRESH_TOKEN.to_string(),
-        };
-        let credentials_debug = format!("{credentials:?}");
-        assert!(!credentials_debug.contains("secret-client"));
-        assert!(!credentials_debug.contains("secret-refresh"));
-
-        let access = Credentials::AccessToken("secret-token".to_string());
-        assert!(!format!("{access:?}").contains("secret-token"));
-    }
-
     #[tokio::test]
-    async fn new_refreshes_token_before_calling_api() {
+    async fn fetch_access_token_exchanges_refresh_token() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
             .and(path("/"))
             .and(header("content-type", "application/x-www-form-urlencoded"))
+            .and(body_string_contains("grant_type=refresh_token"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(json!({ "access_token": "fresh-token" })),
             )
@@ -507,39 +431,15 @@ mod tests {
             .mount(&server)
             .await;
 
-        Mock::given(method("POST"))
-            .and(path(
-                "/upload/v2/publishers/publisher-1/items/item-1:upload",
-            ))
-            .and(header("authorization", "Bearer fresh-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "uploadState": "SUCCEEDED",
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let base = Url::parse(&server.uri()).unwrap();
-        let p = publish(
-            "publisher-1".to_string(),
-            "item-1".to_string(),
-            Credentials::RefreshToken {
-                client_id: CLIENT_ID.to_string(),
-                client_secret: CLIENT_SECRET.to_string(),
-                refresh_token: REFRESH_TOKEN.to_string(),
-            },
-            Vec::new(),
-        )
-        .root_url(base.clone())
-        .token_url(base);
-        let http = http_client();
-
-        let token = p
-            .refresh_access_token(&http, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
+        let token = fetch_access_token()
+            .client_id(CLIENT_ID)
+            .client_secret(CLIENT_SECRET)
+            .refresh_token(REFRESH_TOKEN)
+            .token_url(Url::parse(&server.uri()).unwrap())
+            .call()
             .await
             .unwrap();
         assert_eq!(token, "fresh-token");
-        p.upload(&http, &token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
@@ -560,11 +460,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        p.upload(&http, TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
-            .await
-            .unwrap();
+        p.upload(&http, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
     }
 
     // Regression guard: official V2 curl example sends neither X-Goog-Upload-Protocol
@@ -582,11 +480,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        p.upload(&http, TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
-            .await
-            .unwrap();
+        p.upload(&http, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
 
         for req in server.received_requests().await.unwrap_or_default() {
             assert!(
@@ -610,9 +506,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let resp = p.upload(&http, TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        let resp = p.upload(&http, b"FAKE".to_vec()).await.unwrap();
         assert!(!resp);
     }
 
@@ -624,12 +520,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p
-            .upload(&http, TEST_TOKEN, b"FAKE".to_vec())
-            .await
-            .unwrap_err();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -649,12 +542,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p
-            .upload(&http, TEST_TOKEN, b"FAKE".to_vec())
-            .await
-            .unwrap_err();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -676,9 +566,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        p.await_upload(&http, TEST_TOKEN).await.unwrap();
+        p.await_upload(&http).await.unwrap();
     }
 
     #[tokio::test]
@@ -691,9 +581,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.await_upload(&http).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -713,9 +603,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.await_upload(&http).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
@@ -734,9 +624,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.await_upload(&http).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
@@ -755,9 +645,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.await_upload(&http).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -799,9 +689,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        p.submit(&http, TEST_TOKEN).await.unwrap();
+        p.submit(&http).await.unwrap();
 
         let received = server.received_requests().await.unwrap();
         let body_str = std::str::from_utf8(&received[0].body).unwrap();
@@ -833,9 +723,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new()).publish_type(PublishType::StagedPublish);
+        let mut p = publish_for(&server);
+        p.publish_type = Some(PublishType::StagedPublish);
         let http = http_client();
-        p.submit(&http, TEST_TOKEN).await.unwrap();
+        p.submit(&http).await.unwrap();
     }
 
     #[tokio::test]
@@ -853,11 +744,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new())
-            .skip_review(true)
-            .deploy_percentage(50);
+        let mut p = publish_for(&server);
+        p.skip_review = Some(true);
+        p.deploy_percentage = Some(50);
         let http = http_client();
-        p.submit(&http, TEST_TOKEN).await.unwrap();
+        p.submit(&http).await.unwrap();
     }
 
     #[tokio::test]
@@ -872,9 +763,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.submit(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.submit(&http).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "REJECTED");
@@ -895,9 +786,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let p = publish_for(&server, Vec::new());
+        let p = publish_for(&server);
         let http = http_client();
-        let err = p.submit(&http, TEST_TOKEN).await.unwrap_err();
+        let err = p.submit(&http).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
@@ -923,9 +814,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let p = publish_for(&server, Vec::new());
+            let p = publish_for(&server);
             let http = http_client();
-            p.submit(&http, TEST_TOKEN)
+            p.submit(&http)
                 .await
                 .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
@@ -965,9 +856,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        publish_for(&server, b"FAKE_ZIP_BYTES".to_vec())
-            .await
-            .unwrap();
+        run_publish(&server).await.unwrap();
     }
 
     #[tokio::test]
@@ -1003,26 +892,37 @@ mod tests {
             .mount(&server)
             .await;
 
-        publish_for(&server, b"FAKE_ZIP_BYTES".to_vec())
-            .await
-            .unwrap();
+        run_publish(&server).await.unwrap();
     }
 
     fn http_client() -> reqwest::Client {
         build_client().unwrap()
     }
 
-    fn publish_for(server: &MockServer, zip: Vec<u8>) -> Publish {
-        let base = Url::parse(&server.uri()).unwrap();
-        publish(
-            "publisher-1".to_string(),
-            "item-1".to_string(),
-            Credentials::AccessToken("test-access-token".to_string()),
-            zip,
-        )
-        .root_url(base.clone())
-        .token_url(base)
-        .poll_interval(Duration::from_millis(10))
-        .poll_timeout(Duration::from_millis(200))
+    fn publish_for(server: &MockServer) -> Publish {
+        Publish {
+            publisher_id: "publisher-1".to_string(),
+            item_id: "item-1".to_string(),
+            access_token: TEST_TOKEN.to_string(),
+            publish_type: None,
+            deploy_percentage: None,
+            skip_review: None,
+            root_url: Url::parse(&server.uri()).unwrap(),
+            poll_interval: Duration::from_millis(10),
+            poll_timeout: Duration::from_millis(200),
+        }
+    }
+
+    async fn run_publish(server: &MockServer) -> Result<()> {
+        publish()
+            .publisher_id("publisher-1")
+            .item_id("item-1")
+            .access_token(TEST_TOKEN)
+            .package(b"FAKE_ZIP_BYTES".to_vec())
+            .root_url(Url::parse(&server.uri()).unwrap())
+            .poll_interval(Duration::from_millis(10))
+            .poll_timeout(Duration::from_millis(200))
+            .call()
+            .await
     }
 }
