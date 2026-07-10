@@ -38,8 +38,7 @@ impl Channel {
 }
 
 /// Compatibility declaration.
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum Compatibility {
     /// Shorthand form: list the compatible apps; for the version range, the
     /// manifest min/max or defaults are used.
@@ -49,8 +48,7 @@ pub enum Compatibility {
 }
 
 /// Application identifier used in compatibility declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Application {
     /// Desktop Firefox.
@@ -59,17 +57,24 @@ pub enum Application {
     Android,
 }
 
+impl Application {
+    fn as_str(self) -> &'static str {
+        match self {
+            Application::Firefox => "firefox",
+            Application::Android => "android",
+        }
+    }
+}
+
 /// Explicit `min` / `max` application version pair used by
 /// [`Compatibility::Full`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VersionRange {
     /// Minimum compatible application version. When `None`, the manifest
     /// min or default is used.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub min: Option<String>,
     /// Maximum compatible application version. When `None`, the manifest
     /// max or default is used.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub max: Option<String>,
 }
 
@@ -284,7 +289,7 @@ impl Publish {
 
         let body = VersionCreateBody {
             upload: upload_uuid,
-            compatibility: self.compatibility.clone(),
+            compatibility: self.compatibility.as_ref().map(Into::into),
             approval_notes: self.approval_notes.clone(),
             release_notes: self.release_notes.clone(),
         };
@@ -358,11 +363,50 @@ struct UploadResponse {
 struct VersionCreateBody {
     upload: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    compatibility: Option<Compatibility>,
+    compatibility: Option<CompatibilityBody>,
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     release_notes: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum CompatibilityBody {
+    Shorthand(Vec<&'static str>),
+    Full(HashMap<&'static str, VersionRangeBody>),
+}
+
+impl From<&Compatibility> for CompatibilityBody {
+    fn from(compatibility: &Compatibility) -> Self {
+        match compatibility {
+            Compatibility::Shorthand(apps) => {
+                CompatibilityBody::Shorthand(apps.iter().map(|app| app.as_str()).collect())
+            }
+            Compatibility::Full(ranges) => CompatibilityBody::Full(
+                ranges
+                    .iter()
+                    .map(|(app, range)| {
+                        (
+                            app.as_str(),
+                            VersionRangeBody {
+                                min: range.min.clone(),
+                                max: range.max.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct VersionRangeBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -724,7 +768,7 @@ mod tests {
     #[test]
     fn version_create_body_with_apps_shorthand() {
         let compat = Compatibility::Shorthand(vec![Application::Firefox, Application::Android]);
-        let json = body_to_json("uuid-123".to_string(), Some(compat), None, None);
+        let json = body_to_json("uuid-123".to_string(), Some(&compat), None, None);
         assert_eq!(
             json,
             json!({
@@ -752,7 +796,7 @@ mod tests {
             },
         );
         let compat = Compatibility::Full(map);
-        let json = body_to_json("uuid-123".to_string(), Some(compat), None, None);
+        let json = body_to_json("uuid-123".to_string(), Some(&compat), None, None);
 
         assert_eq!(json["upload"], "uuid-123");
         assert_eq!(
@@ -882,13 +926,13 @@ mod tests {
 
     fn body_to_json(
         upload: String,
-        compatibility: Option<Compatibility>,
+        compatibility: Option<&Compatibility>,
         approval_notes: Option<String>,
         release_notes: Option<HashMap<String, String>>,
     ) -> serde_json::Value {
         serde_json::to_value(VersionCreateBody {
             upload,
-            compatibility,
+            compatibility: compatibility.map(Into::into),
             approval_notes,
             release_notes,
         })
