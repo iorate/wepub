@@ -12,7 +12,7 @@ use url::Url;
 use crate::{
     Result, WepubError,
     common::{
-        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
     },
     http::build_client,
 };
@@ -132,10 +132,13 @@ pub fn publish(
         credentials,
         zip,
         channel,
-        options: Options::default(),
-        root_url: None,
-        poll_interval: None,
-        poll_timeout: None,
+        compatibility: None,
+        approval_notes: None,
+        release_notes: None,
+        source: None,
+        root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+        poll_interval: DEFAULT_POLL_INTERVAL,
+        poll_timeout: DEFAULT_POLL_TIMEOUT,
     }
 }
 
@@ -148,133 +151,89 @@ pub struct Publish {
     credentials: Credentials,
     zip: Vec<u8>,
     channel: Channel,
-    options: Options,
-    root_url: Option<String>,
-    poll_interval: Option<Duration>,
-    poll_timeout: Option<Duration>,
+    compatibility: Option<Compatibility>,
+    approval_notes: Option<String>,
+    release_notes: Option<HashMap<String, String>>,
+    source: Option<Vec<u8>>,
+    root_url: Url,
+    poll_interval: Duration,
+    poll_timeout: Duration,
 }
 
 impl Publish {
     /// Application compatibility declarations.
     pub fn compatibility(mut self, compatibility: Compatibility) -> Self {
-        self.options.compatibility = Some(compatibility);
+        self.compatibility = Some(compatibility);
         self
     }
 
     /// Information for Mozilla reviewers.
     pub fn approval_notes(mut self, approval_notes: String) -> Self {
-        self.options.approval_notes = Some(approval_notes);
+        self.approval_notes = Some(approval_notes);
         self
     }
 
     /// Release notes keyed by locale code.
     pub fn release_notes(mut self, release_notes: HashMap<String, String>) -> Self {
-        self.options.release_notes = Some(release_notes);
+        self.release_notes = Some(release_notes);
         self
     }
 
     /// Source archive to attach to the version.
     pub fn source(mut self, source: Vec<u8>) -> Self {
-        self.options.source = Some(source);
+        self.source = Some(source);
         self
     }
 
     /// Override the Firefox Add-ons API root URL.
     ///
-    /// Defaults to `https://addons.mozilla.org/`.
-    pub fn root_url(mut self, root_url: &str) -> Self {
-        self.root_url = Some(root_url.to_string());
+    /// Defaults to `https://addons.mozilla.org/`. A trailing slash is
+    /// appended to the path when missing.
+    pub fn root_url(mut self, root_url: Url) -> Self {
+        self.root_url = ensure_trailing_slash(root_url);
         self
     }
 
     /// Override the delay between successive polls for the upload result.
     pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = Some(poll_interval);
+        self.poll_interval = poll_interval;
         self
     }
 
     /// Override the maximum total time to wait for the upload result.
     pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = Some(poll_timeout);
+        self.poll_timeout = poll_timeout;
         self
     }
 
-    async fn run(self) -> Result<()> {
-        let mut client = Client::new(self.addon_id, self.credentials)?;
-        if let Some(root_url) = self.root_url.as_deref() {
-            client = client.with_root_url(root_url)?;
-        }
-        if let Some(interval) = self.poll_interval {
-            client.poll_config.interval = interval;
-        }
-        if let Some(timeout) = self.poll_timeout {
-            client.poll_config.timeout = timeout;
-        }
-        client.publish(self.zip, self.channel, self.options).await
-    }
-}
-
-impl IntoFuture for Publish {
-    type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct Options {
-    compatibility: Option<Compatibility>,
-    approval_notes: Option<String>,
-    release_notes: Option<HashMap<String, String>>,
-    source: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone)]
-struct Client {
-    addon_id: String,
-    credentials: Credentials,
-    root_url: Url,
-    poll_config: PollConfig,
-    http: reqwest::Client,
-}
-
-impl Client {
-    fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
-        Ok(Self {
-            addon_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            poll_config: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-            http: build_client()?,
-        })
-    }
-
-    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        self.root_url = parse_root_url(root_url)?;
-        Ok(self)
+    async fn run(mut self) -> Result<()> {
+        let http = build_client()?;
+        let zip = std::mem::take(&mut self.zip);
+        let source = self.source.take();
+        self.publish(&http, zip, source).await
     }
 
     #[instrument(
         skip_all,
-        fields(store = "firefox", addon_id = self.addon_id.as_str(), channel = channel.as_str())
-    )]
-    async fn publish(&self, zip: Vec<u8>, channel: Channel, options: Options) -> Result<()> {
-        let (upload_uuid, processed) = instrument_step(
-            info_span!("upload"),
-            Level::ERROR,
-            self.upload(zip, channel),
+        fields(
+            store = "firefox",
+            addon_id = self.addon_id.as_str(),
+            channel = self.channel.as_str(),
         )
-        .await?;
+    )]
+    async fn publish(
+        &self,
+        http: &reqwest::Client,
+        zip: Vec<u8>,
+        source: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let (upload_uuid, processed) =
+            instrument_step(info_span!("upload"), Level::ERROR, self.upload(http, zip)).await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
                 Level::ERROR,
-                self.await_upload(&upload_uuid),
+                self.await_upload(http, &upload_uuid),
             )
             .await?;
         }
@@ -282,21 +241,16 @@ impl Client {
         let version_id = instrument_step(
             info_span!("create_version", upload_uuid = upload_uuid.as_str()),
             Level::ERROR,
-            self.create_version(
-                upload_uuid,
-                options.compatibility,
-                options.approval_notes,
-                options.release_notes,
-            ),
+            self.create_version(http, upload_uuid),
         )
         .await?;
-        if let Some(source) = options.source
+        if let Some(source) = source
             && instrument_step(
                 info_span!("update_version_source", version_id = version_id),
                 // The version is already created, so a source failure doesn't
                 // fail the publish; record it as a warning, not an error.
                 Level::WARN,
-                self.update_version_source(version_id, source),
+                self.update_version_source(http, version_id, source),
             )
             .await
             .is_err()
@@ -306,7 +260,7 @@ impl Client {
         Ok(())
     }
 
-    async fn upload(&self, zip: Vec<u8>, channel: Channel) -> Result<(String, bool)> {
+    async fn upload(&self, http: &reqwest::Client, zip: Vec<u8>) -> Result<(String, bool)> {
         info!("uploading the package archive");
 
         let len = zip.len() as u64;
@@ -316,16 +270,15 @@ impl Client {
             .expect("\"application/zip\" is a valid MIME type");
         let form = Form::new()
             .part("upload", part)
-            .text("channel", channel.as_str());
-        let req = self
-            .http
+            .text("channel", self.channel.as_str());
+        let req = http
             .post(self.endpoint("api/v5/addons/upload/")?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
 
         let upload = decode_response(resp).await?;
         let processed = upload_processed(&upload)?;
@@ -338,26 +291,25 @@ impl Client {
         Ok((upload.uuid, processed))
     }
 
-    async fn await_upload(&self, upload_uuid: &str) -> Result<()> {
+    async fn await_upload(&self, http: &reqwest::Client, upload_uuid: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))?)
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let upload: UploadResponse = decode_response(resp).await?;
             let processed = upload_processed(&upload)?;
@@ -370,30 +322,23 @@ impl Client {
         Ok(())
     }
 
-    async fn create_version(
-        &self,
-        upload_uuid: String,
-        compatibility: Option<Compatibility>,
-        approval_notes: Option<String>,
-        release_notes: Option<HashMap<String, String>>,
-    ) -> Result<u64> {
+    async fn create_version(&self, http: &reqwest::Client, upload_uuid: String) -> Result<u64> {
         info!("creating the new version");
 
         let body = VersionCreateBody {
             upload: upload_uuid,
-            compatibility,
-            approval_notes,
-            release_notes,
+            compatibility: self.compatibility.clone(),
+            approval_notes: self.approval_notes.clone(),
+            release_notes: self.release_notes.clone(),
         };
-        let req = self
-            .http
+        let req = http
             .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .json(&body)
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
 
         let version: VersionResponse = decode_response(resp).await?;
 
@@ -401,7 +346,12 @@ impl Client {
         Ok(version.id)
     }
 
-    async fn update_version_source(&self, version_id: u64, source: Vec<u8>) -> Result<()> {
+    async fn update_version_source(
+        &self,
+        http: &reqwest::Client,
+        version_id: u64,
+        source: Vec<u8>,
+    ) -> Result<()> {
         info!("updating the source archive");
 
         let len = source.len() as u64;
@@ -410,8 +360,7 @@ impl Client {
             .mime_str("application/zip")
             .expect("\"application/zip\" is a valid MIME type");
         let form = Form::new().part("source", part);
-        let req = self
-            .http
+        let req = http
             .patch(self.endpoint(&format!(
                 "api/v5/addons/addon/{}/versions/{version_id}/",
                 self.addon_id
@@ -421,7 +370,7 @@ impl Client {
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
 
         let _: VersionResponse = decode_response(resp).await?;
 
@@ -436,6 +385,15 @@ impl Client {
     fn auth_header(&self) -> String {
         let token = generate_jwt(&self.credentials.api_key, &self.credentials.api_secret);
         format!("JWT {token}")
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 
@@ -496,9 +454,6 @@ mod tests {
             api_secret: "secret-jwt".to_string(),
         };
         assert!(!format!("{credentials:?}").contains("secret-jwt"));
-
-        let client = Client::new("addon-1".to_string(), credentials).unwrap();
-        assert!(!format!("{client:?}").contains("secret-jwt"));
     }
 
     #[tokio::test]
@@ -514,11 +469,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let resp = client
-            .upload(b"fake-zip".to_vec(), Channel::Listed)
-            .await
-            .unwrap();
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        let resp = p.upload(&http, b"fake-zip".to_vec()).await.unwrap();
 
         assert_eq!(resp.0, "abc-123");
         assert!(!resp.1);
@@ -545,8 +498,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_upload("uuid-1").await.unwrap();
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        p.await_upload(&http, "uuid-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -568,8 +522,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("uuid-2").await.unwrap_err();
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        let err = p.await_upload(&http, "uuid-2").await.unwrap_err();
 
         match err {
             WepubError::FirefoxUpload { validation } => {
@@ -590,8 +545,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("uuid-3").await.unwrap_err();
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        let err = p.await_upload(&http, "uuid-3").await.unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -653,11 +609,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let resp = client
-            .create_version("uuid-x".to_string(), None, None, None)
-            .await
-            .unwrap();
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        let resp = p.create_version(&http, "uuid-x".to_string()).await.unwrap();
 
         assert_eq!(resp, 4242);
     }
@@ -673,9 +627,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .update_version_source(4242, b"source-zip".to_vec())
+        let p = publish_for(&server, Vec::new(), Channel::Listed);
+        let http = http_client();
+        p.update_version_source(&http, 4242, b"source-zip".to_vec())
             .await
             .unwrap();
     }
@@ -896,15 +850,16 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new(
+        let p = publish(
             "test-addon".into(),
             Credentials {
                 api_key: "issuer".into(),
                 api_secret: "secret".into(),
             },
-        )
-        .unwrap();
-        let url = client.endpoint("api/v5/addons/upload/").unwrap();
+            Vec::new(),
+            Channel::Listed,
+        );
+        let url = p.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(
             url.as_str(),
             "https://addons.mozilla.org/api/v5/addons/upload/"
@@ -912,54 +867,23 @@ mod tests {
     }
 
     #[test]
-    fn with_root_url_overrides_default() {
-        let client = Client::new(
+    fn root_url_overrides_default() {
+        let p = publish(
             "test-addon".into(),
             Credentials {
                 api_key: "issuer".into(),
                 api_secret: "secret".into(),
             },
+            Vec::new(),
+            Channel::Listed,
         )
-        .unwrap()
-        .with_root_url("http://127.0.0.1:8000/")
-        .unwrap();
-        let url = client.endpoint("api/v5/addons/upload/").unwrap();
+        .root_url(Url::parse("http://127.0.0.1:8000/").unwrap());
+        let url = p.endpoint("api/v5/addons/upload/").unwrap();
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
-    #[tokio::test]
-    async fn publish_rejects_garbage_root_url() {
-        let err = publish(
-            "test-addon".into(),
-            Credentials {
-                api_key: "issuer".into(),
-                api_secret: "secret".into(),
-            },
-            b"zip".to_vec(),
-            Channel::Listed,
-        )
-        .root_url("not a url")
-        .await
-        .unwrap_err();
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
-    }
-
-    fn client_for(server: &MockServer) -> Client {
-        let mut client = Client::new(
-            "test-addon".into(),
-            Credentials {
-                api_key: "issuer".into(),
-                api_secret: "secret".into(),
-            },
-        )
-        .unwrap()
-        .with_root_url(&server.uri())
-        .unwrap();
-        client.poll_config = PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        };
-        client
+    fn http_client() -> reqwest::Client {
+        build_client().unwrap()
     }
 
     fn publish_for(server: &MockServer, zip: Vec<u8>, channel: Channel) -> Publish {
@@ -972,7 +896,7 @@ mod tests {
             zip,
             channel,
         )
-        .root_url(&server.uri())
+        .root_url(Url::parse(&server.uri()).unwrap())
         .poll_interval(Duration::from_millis(10))
         .poll_timeout(Duration::from_millis(200))
     }

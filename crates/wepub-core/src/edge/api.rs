@@ -10,7 +10,7 @@ use url::Url;
 use crate::{
     Result, WepubError,
     common::{
-        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
     },
     http::build_client,
 };
@@ -69,9 +69,9 @@ pub fn publish(product_id: String, credentials: Credentials, zip: Vec<u8>) -> Pu
         credentials,
         zip,
         notes: None,
-        root_url: None,
-        poll_interval: None,
-        poll_timeout: None,
+        root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+        poll_interval: DEFAULT_POLL_INTERVAL,
+        poll_timeout: DEFAULT_POLL_TIMEOUT,
     }
 }
 
@@ -84,9 +84,9 @@ pub struct Publish {
     credentials: Credentials,
     zip: Vec<u8>,
     notes: Option<String>,
-    root_url: Option<String>,
-    poll_interval: Option<Duration>,
-    poll_timeout: Option<Duration>,
+    root_url: Url,
+    poll_interval: Duration,
+    poll_timeout: Duration,
 }
 
 impl Publish {
@@ -98,110 +98,70 @@ impl Publish {
 
     /// Override the Edge Add-ons API root URL.
     ///
-    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`.
-    pub fn root_url(mut self, root_url: &str) -> Self {
-        self.root_url = Some(root_url.to_string());
+    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`. A
+    /// trailing slash is appended to the path when missing.
+    pub fn root_url(mut self, root_url: Url) -> Self {
+        self.root_url = ensure_trailing_slash(root_url);
         self
     }
 
     /// Override the delay between successive polls for operation results.
     pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = Some(poll_interval);
+        self.poll_interval = poll_interval;
         self
     }
 
     /// Override the maximum total time to wait for each operation result.
     pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = Some(poll_timeout);
+        self.poll_timeout = poll_timeout;
         self
     }
 
-    async fn run(self) -> Result<()> {
-        let mut client = Client::new(self.product_id, self.credentials)?;
-        if let Some(root_url) = self.root_url.as_deref() {
-            client = client.with_root_url(root_url)?;
-        }
-        if let Some(interval) = self.poll_interval {
-            client.poll_config.interval = interval;
-        }
-        if let Some(timeout) = self.poll_timeout {
-            client.poll_config.timeout = timeout;
-        }
-        client.publish(self.zip, self.notes).await
-    }
-}
-
-impl IntoFuture for Publish {
-    type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
-    }
-}
-
-#[derive(Debug, Clone)]
-struct Client {
-    product_id: String,
-    credentials: Credentials,
-    root_url: Url,
-    poll_config: PollConfig,
-    http: reqwest::Client,
-}
-
-impl Client {
-    fn new(product_id: String, credentials: Credentials) -> Result<Self> {
-        Ok(Self {
-            product_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            poll_config: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-            http: build_client()?,
-        })
-    }
-
-    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        self.root_url = parse_root_url(root_url)?;
-        Ok(self)
+    async fn run(mut self) -> Result<()> {
+        let http = build_client()?;
+        let zip = std::mem::take(&mut self.zip);
+        let notes = self.notes.take();
+        self.publish(&http, zip, notes).await
     }
 
     #[instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
-    async fn publish(&self, zip: Vec<u8>, notes: Option<String>) -> Result<()> {
+    async fn publish(
+        &self,
+        http: &reqwest::Client,
+        zip: Vec<u8>,
+        notes: Option<String>,
+    ) -> Result<()> {
         let upload_operation_id =
-            instrument_step(info_span!("upload"), Level::ERROR, self.upload(zip)).await?;
+            instrument_step(info_span!("upload"), Level::ERROR, self.upload(http, zip)).await?;
         instrument_step(
             info_span!(
                 "await_upload",
                 upload_operation_id = upload_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_upload(&upload_operation_id),
+            self.await_upload(http, &upload_operation_id),
         )
         .await?;
 
         let publish_operation_id =
-            instrument_step(info_span!("submit"), Level::ERROR, self.submit(notes)).await?;
+            instrument_step(info_span!("submit"), Level::ERROR, self.submit(http, notes)).await?;
         instrument_step(
             info_span!(
                 "await_submit",
                 publish_operation_id = publish_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_submit(&publish_operation_id),
+            self.await_submit(http, &publish_operation_id),
         )
         .await?;
 
         Ok(())
     }
 
-    async fn upload(&self, zip: Vec<u8>) -> Result<String> {
+    async fn upload(&self, http: &reqwest::Client, zip: Vec<u8>) -> Result<String> {
         info!("uploading the package archive");
 
-        let req = self
-            .http
+        let req = http
             .post(self.endpoint(&format!(
                 "v1/products/{}/submissions/draft/package",
                 self.product_id
@@ -213,7 +173,7 @@ impl Client {
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -223,20 +183,19 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_upload(&self, upload_operation_id: &str) -> Result<()> {
+    async fn await_upload(&self, http: &reqwest::Client, upload_operation_id: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/draft/package/operations/{upload_operation_id}",
                     self.product_id
@@ -246,7 +205,7 @@ impl Client {
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -266,11 +225,10 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(&self, notes: Option<String>) -> Result<String> {
+    async fn submit(&self, http: &reqwest::Client, notes: Option<String>) -> Result<String> {
         info!("submitting the draft");
 
-        let mut req = self
-            .http
+        let mut req = http
             .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?)
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.credentials.client_id);
@@ -282,7 +240,7 @@ impl Client {
         }
         let req = req.build().map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -292,20 +250,19 @@ impl Client {
         Ok(operation_id)
     }
 
-    async fn await_submit(&self, publish_operation_id: &str) -> Result<()> {
+    async fn await_submit(&self, http: &reqwest::Client, publish_operation_id: &str) -> Result<()> {
         info!("waiting for the submission to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/operations/{}",
                     self.product_id, publish_operation_id
@@ -315,7 +272,7 @@ impl Client {
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -341,6 +298,15 @@ impl Client {
 
     fn auth_header(&self) -> String {
         format!("ApiKey {}", self.credentials.api_key)
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 
@@ -410,9 +376,6 @@ mod tests {
             api_key: "secret-key".to_string(),
         };
         assert!(!format!("{credentials:?}").contains("secret-key"));
-
-        let client = Client::new(PRODUCT_ID.to_string(), credentials).unwrap();
-        assert!(!format!("{client:?}").contains("secret-key"));
     }
 
     #[tokio::test]
@@ -433,8 +396,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client.upload(b"FAKE_ZIP".to_vec()).await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let op_id = p.upload(&http, b"FAKE_ZIP".to_vec()).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -446,8 +410,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -465,8 +430,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.upload(b"FAKE".to_vec()).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -499,8 +465,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_upload("op-1").await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.await_upload(&http, "op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -517,8 +484,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("op-2").await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, "op-2").await.unwrap_err();
         match err {
             WepubError::EdgeApi {
                 message,
@@ -549,8 +517,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("up-u").await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, "up-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -573,8 +542,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload("op-3").await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, "op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -597,9 +567,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client
-            .submit(Some("for reviewers".to_string()))
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let op_id = p
+            .submit(&http, Some("for reviewers".to_string()))
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
@@ -624,8 +595,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let op_id = client.submit(None).await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let op_id = p.submit(&http, None).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -662,8 +634,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_submit("pub-1").await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.await_submit(&http, "pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -704,8 +677,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let client = client_for(&server);
-            let err = client.await_submit("pub-x").await.unwrap_err();
+            let p = publish_for(&server, Vec::new());
+            let http = http_client();
+            let err = p.await_submit(&http, "pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgeApi {
                     message: actual_message,
@@ -733,8 +707,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_submit("pub-u").await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_submit(&http, "pub-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -801,15 +776,15 @@ mod tests {
 
     #[test]
     fn endpoint_joins_relative_path() {
-        let client = Client::new(
+        let p = publish(
             PRODUCT_ID.into(),
             Credentials {
                 client_id: CLIENT_ID.into(),
                 api_key: API_KEY.into(),
             },
-        )
-        .unwrap();
-        let url = client.endpoint("v1/products/p/submissions").unwrap();
+            Vec::new(),
+        );
+        let url = p.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
             "https://api.addons.microsoftedge.microsoft.com/v1/products/p/submissions"
@@ -817,56 +792,25 @@ mod tests {
     }
 
     #[test]
-    fn with_root_url_overrides_default() {
-        let client = Client::new(
+    fn root_url_overrides_default() {
+        let p = publish(
             PRODUCT_ID.into(),
             Credentials {
                 client_id: CLIENT_ID.into(),
                 api_key: API_KEY.into(),
             },
+            Vec::new(),
         )
-        .unwrap()
-        .with_root_url("http://127.0.0.1:8000/")
-        .unwrap();
-        let url = client.endpoint("v1/products/p/submissions").unwrap();
+        .root_url(Url::parse("http://127.0.0.1:8000/").unwrap());
+        let url = p.endpoint("v1/products/p/submissions").unwrap();
         assert_eq!(
             url.as_str(),
             "http://127.0.0.1:8000/v1/products/p/submissions"
         );
     }
 
-    #[tokio::test]
-    async fn publish_rejects_garbage_root_url() {
-        let err = publish(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-            b"FAKE".to_vec(),
-        )
-        .root_url("not a url")
-        .await
-        .unwrap_err();
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
-    }
-
-    fn client_for(server: &MockServer) -> Client {
-        let mut client = Client::new(
-            PRODUCT_ID.into(),
-            Credentials {
-                client_id: CLIENT_ID.into(),
-                api_key: API_KEY.into(),
-            },
-        )
-        .unwrap()
-        .with_root_url(&server.uri())
-        .unwrap();
-        client.poll_config = PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        };
-        client
+    fn http_client() -> reqwest::Client {
+        build_client().unwrap()
     }
 
     fn publish_for(server: &MockServer, zip: Vec<u8>) -> Publish {
@@ -878,7 +822,7 @@ mod tests {
             },
             zip,
         )
-        .root_url(&server.uri())
+        .root_url(Url::parse(&server.uri()).unwrap())
         .poll_interval(Duration::from_millis(10))
         .poll_timeout(Duration::from_millis(200))
     }

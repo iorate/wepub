@@ -11,7 +11,7 @@ use url::Url;
 use crate::{
     Result, WepubError,
     common::{
-        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
     },
     http::build_client,
 };
@@ -102,35 +102,42 @@ pub fn publish(
         item_id,
         credentials,
         zip,
-        options: Options::default(),
-        root_url: None,
-        token_url: None,
-        poll_interval: None,
-        poll_timeout: None,
+        publish_type: None,
+        deploy_percentage: None,
+        skip_review: None,
+        root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
+        token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
+        poll_interval: DEFAULT_POLL_INTERVAL,
+        poll_timeout: DEFAULT_POLL_TIMEOUT,
     }
 }
 
 /// A pending publish to the Chrome Web Store, created by [`publish`].
 ///
 /// Runs when `.await`ed; nothing is sent until then.
+// The `publish_type` field mirrors the wire field `publishType`; the overlap
+// with the struct name is a false positive.
+#[allow(clippy::struct_field_names)]
 #[must_use = "a publish does nothing unless awaited"]
 pub struct Publish {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
     zip: Vec<u8>,
-    options: Options,
-    root_url: Option<String>,
-    token_url: Option<String>,
-    poll_interval: Option<Duration>,
-    poll_timeout: Option<Duration>,
+    publish_type: Option<PublishType>,
+    deploy_percentage: Option<u8>,
+    skip_review: Option<bool>,
+    root_url: Url,
+    token_url: Url,
+    poll_interval: Duration,
+    poll_timeout: Duration,
 }
 
 impl Publish {
     /// Whether to publish immediately on approval or stage for later
     /// publishing.
     pub fn publish_type(mut self, publish_type: PublishType) -> Self {
-        self.options.publish_type = Some(publish_type);
+        self.publish_type = Some(publish_type);
         self
     }
 
@@ -138,116 +145,49 @@ impl Publish {
     ///
     /// Defaults to the value configured in the Developer Dashboard.
     pub fn deploy_percentage(mut self, deploy_percentage: u8) -> Self {
-        self.options.deploy_percentage = Some(deploy_percentage);
+        self.deploy_percentage = Some(deploy_percentage);
         self
     }
 
     /// Attempt to skip item review.
     pub fn skip_review(mut self, skip_review: bool) -> Self {
-        self.options.skip_review = Some(skip_review);
+        self.skip_review = Some(skip_review);
         self
     }
 
     /// Override the Chrome Web Store API root URL.
     ///
-    /// Defaults to `https://chromewebstore.googleapis.com/`.
-    pub fn root_url(mut self, root_url: &str) -> Self {
-        self.root_url = Some(root_url.to_string());
+    /// Defaults to `https://chromewebstore.googleapis.com/`. A trailing
+    /// slash is appended to the path when missing.
+    pub fn root_url(mut self, root_url: Url) -> Self {
+        self.root_url = ensure_trailing_slash(root_url);
         self
     }
 
     /// Override the Google OAuth token endpoint URL.
     ///
     /// Defaults to `https://oauth2.googleapis.com/token`.
-    pub fn token_url(mut self, token_url: &str) -> Self {
-        self.token_url = Some(token_url.to_string());
+    pub fn token_url(mut self, token_url: Url) -> Self {
+        self.token_url = token_url;
         self
     }
 
     /// Override the delay between successive polls for the upload result.
     pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = Some(poll_interval);
+        self.poll_interval = poll_interval;
         self
     }
 
     /// Override the maximum total time to wait for the upload result.
     pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
-        self.poll_timeout = Some(poll_timeout);
+        self.poll_timeout = poll_timeout;
         self
     }
 
-    async fn run(self) -> Result<()> {
-        let mut client = Client::new(self.publisher_id, self.item_id, self.credentials)?;
-        if let Some(root_url) = self.root_url.as_deref() {
-            client = client.with_root_url(root_url)?;
-        }
-        if let Some(token_url) = self.token_url.as_deref() {
-            client = client.with_token_url(token_url)?;
-        }
-        if let Some(interval) = self.poll_interval {
-            client.poll_config.interval = interval;
-        }
-        if let Some(timeout) = self.poll_timeout {
-            client.poll_config.timeout = timeout;
-        }
-        client.publish(self.zip, self.options).await
-    }
-}
-
-impl IntoFuture for Publish {
-    type Output = Result<()>;
-    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        Box::pin(self.run())
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct Options {
-    publish_type: Option<PublishType>,
-    deploy_percentage: Option<u8>,
-    skip_review: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
-struct Client {
-    publisher_id: String,
-    item_id: String,
-    credentials: Credentials,
-    root_url: Url,
-    token_url: Url,
-    poll_config: PollConfig,
-    http: reqwest::Client,
-}
-
-impl Client {
-    fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
-        Ok(Self {
-            publisher_id,
-            item_id,
-            credentials,
-            root_url: Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-            token_url: Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"),
-            poll_config: PollConfig {
-                interval: DEFAULT_POLL_INTERVAL,
-                timeout: DEFAULT_POLL_TIMEOUT,
-            },
-            http: build_client()?,
-        })
-    }
-
-    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
-        self.root_url = parse_root_url(root_url)?;
-        Ok(self)
-    }
-
-    fn with_token_url(mut self, token_url: &str) -> Result<Self> {
-        self.token_url = Url::parse(token_url).map_err(|err| WepubError::Url {
-            url: token_url.to_string(),
-            source: err,
-        })?;
-        Ok(self)
+    async fn run(mut self) -> Result<()> {
+        let http = build_client()?;
+        let zip = std::mem::take(&mut self.zip);
+        self.publish(&http, zip).await
     }
 
     #[instrument(
@@ -258,7 +198,7 @@ impl Client {
             item_id = self.item_id.as_str(),
         )
     )]
-    async fn publish(&self, zip: Vec<u8>, options: Options) -> Result<()> {
+    async fn publish(&self, http: &reqwest::Client, zip: Vec<u8>) -> Result<()> {
         let token: Cow<'_, str> = match &self.credentials {
             Credentials::RefreshToken {
                 client_id,
@@ -268,7 +208,7 @@ impl Client {
                 let token = instrument_step(
                     info_span!("refresh_access_token"),
                     Level::ERROR,
-                    self.refresh_access_token(client_id, client_secret, refresh_token),
+                    self.refresh_access_token(http, client_id, client_secret, refresh_token),
                 )
                 .await?;
                 Cow::Owned(token)
@@ -276,13 +216,17 @@ impl Client {
             Credentials::AccessToken(token) => Cow::Borrowed(token),
         };
 
-        let processed =
-            instrument_step(info_span!("upload"), Level::ERROR, self.upload(&token, zip)).await?;
+        let processed = instrument_step(
+            info_span!("upload"),
+            Level::ERROR,
+            self.upload(http, &token, zip),
+        )
+        .await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload"),
                 Level::ERROR,
-                self.await_upload(&token),
+                self.await_upload(http, &token),
             )
             .await?;
         }
@@ -290,7 +234,7 @@ impl Client {
         instrument_step(
             info_span!("submit"),
             Level::ERROR,
-            self.submit(&token, &options),
+            self.submit(http, &token),
         )
         .await?;
 
@@ -299,6 +243,7 @@ impl Client {
 
     async fn refresh_access_token(
         &self,
+        http: &reqwest::Client,
         client_id: &str,
         client_secret: &str,
         refresh_token: &str,
@@ -306,7 +251,7 @@ impl Client {
         info!("refreshing the access token");
 
         let token = auth::refresh_access_token(
-            &self.http,
+            http,
             self.token_url.clone(),
             client_id,
             client_secret,
@@ -318,11 +263,10 @@ impl Client {
         Ok(token)
     }
 
-    async fn upload(&self, token: &str, zip: Vec<u8>) -> Result<bool> {
+    async fn upload(&self, http: &reqwest::Client, token: &str, zip: Vec<u8>) -> Result<bool> {
         info!("uploading the package archive");
 
-        let req = self
-            .http
+        let req = http
             .post(self.endpoint(&format!(
                 "upload/v2/publishers/{}/items/{}:upload",
                 self.publisher_id, self.item_id
@@ -333,7 +277,7 @@ impl Client {
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
 
         let upload: UploadResponse = decode_response(resp).await?;
         let processed = upload_processed(Some(upload.upload_state))?;
@@ -345,20 +289,19 @@ impl Client {
         Ok(processed)
     }
 
-    async fn await_upload(&self, token: &str) -> Result<()> {
+    async fn await_upload(&self, http: &reqwest::Client, token: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
 
         loop {
             let elapsed = started.elapsed();
-            if elapsed >= self.poll_config.timeout {
+            if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_config.interval).await;
+            tokio::time::sleep(self.poll_interval).await;
 
-            let req = self
-                .http
+            let req = http
                 .get(self.endpoint(&format!(
                     "v2/publishers/{}/items/{}:fetchStatus",
                     self.publisher_id, self.item_id
@@ -367,7 +310,7 @@ impl Client {
                 .build()
                 .map_err(WepubError::http)?;
 
-            let resp = send_request(&self.http, req).await?;
+            let resp = send_request(http, req).await?;
 
             let status: FetchStatusResponse = decode_response(resp).await?;
             let processed = upload_processed(status.last_async_upload_state)?;
@@ -380,20 +323,19 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(&self, token: &str, options: &Options) -> Result<()> {
+    async fn submit(&self, http: &reqwest::Client, token: &str) -> Result<()> {
         info!("submitting the draft");
 
         let body = PublishRequestBody {
-            publish_type: options.publish_type,
-            deploy_infos: options.deploy_percentage.map(|p| {
+            publish_type: self.publish_type,
+            deploy_infos: self.deploy_percentage.map(|p| {
                 vec![DeployInfo {
                     deploy_percentage: p,
                 }]
             }),
-            skip_review: options.skip_review,
+            skip_review: self.skip_review,
         };
-        let req = self
-            .http
+        let req = http
             .post(self.endpoint(&format!(
                 "v2/publishers/{}/items/{}:publish",
                 self.publisher_id, self.item_id
@@ -403,7 +345,7 @@ impl Client {
             .build()
             .map_err(WepubError::http)?;
 
-        let resp = send_request(&self.http, req).await?;
+        let resp = send_request(http, req).await?;
 
         let publish: PublishResponse = decode_response(resp).await?;
         if let ItemState::Rejected | ItemState::Cancelled = publish.state {
@@ -418,6 +360,15 @@ impl Client {
 
     fn endpoint(&self, path: &str) -> Result<Url> {
         join_endpoint(&self.root_url, path)
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
     }
 }
 
@@ -540,12 +491,6 @@ mod tests {
 
         let access = Credentials::AccessToken("secret-token".to_string());
         assert!(!format!("{access:?}").contains("secret-token"));
-
-        let client =
-            Client::new("publisher-1".to_string(), "item-1".to_string(), credentials).unwrap();
-        let client_debug = format!("{client:?}");
-        assert!(!client_debug.contains("secret-client"));
-        assert!(!client_debug.contains("secret-refresh"));
     }
 
     #[tokio::test]
@@ -575,7 +520,7 @@ mod tests {
             .await;
 
         let base = Url::parse(&server.uri()).unwrap();
-        let client = Client::new(
+        let p = publish(
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::RefreshToken {
@@ -583,19 +528,18 @@ mod tests {
                 client_secret: CLIENT_SECRET.to_string(),
                 refresh_token: REFRESH_TOKEN.to_string(),
             },
+            Vec::new(),
         )
-        .unwrap()
-        .with_root_url(base.as_str())
-        .unwrap()
-        .with_token_url(base.as_str())
-        .unwrap();
+        .root_url(base.clone())
+        .token_url(base);
+        let http = http_client();
 
-        let token = client
-            .refresh_access_token(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
+        let token = p
+            .refresh_access_token(&http, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
             .await
             .unwrap();
         assert_eq!(token, "fresh-token");
-        client.upload(&token, b"FAKE".to_vec()).await.unwrap();
+        p.upload(&http, &token, b"FAKE".to_vec()).await.unwrap();
     }
 
     #[tokio::test]
@@ -616,9 +560,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.upload(&http, TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
     }
@@ -638,9 +582,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .upload(TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.upload(&http, TEST_TOKEN, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
 
@@ -666,8 +610,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let resp = client.upload(TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let resp = p.upload(&http, TEST_TOKEN, b"FAKE".to_vec()).await.unwrap();
         assert!(!resp);
     }
 
@@ -679,9 +624,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec())
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p
+            .upload(&http, TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
@@ -703,9 +649,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client
-            .upload(TEST_TOKEN, b"FAKE".to_vec())
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p
+            .upload(&http, TEST_TOKEN, b"FAKE".to_vec())
             .await
             .unwrap_err();
         match err {
@@ -729,8 +676,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client.await_upload(TEST_TOKEN).await.unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.await_upload(&http, TEST_TOKEN).await.unwrap();
     }
 
     #[tokio::test]
@@ -743,8 +691,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -764,8 +713,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
@@ -784,8 +734,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
@@ -804,8 +755,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client.await_upload(TEST_TOKEN).await.unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.await_upload(&http, TEST_TOKEN).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -847,11 +799,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .submit(TEST_TOKEN, &Options::default())
-            .await
-            .unwrap();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        p.submit(&http, TEST_TOKEN).await.unwrap();
 
         let received = server.received_requests().await.unwrap();
         let body_str = std::str::from_utf8(&received[0].body).unwrap();
@@ -883,13 +833,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let opts = Options {
-            publish_type: Some(PublishType::StagedPublish),
-            ..Options::default()
-        };
-
-        let client = client_for(&server);
-        client.submit(TEST_TOKEN, &opts).await.unwrap();
+        let p = publish_for(&server, Vec::new()).publish_type(PublishType::StagedPublish);
+        let http = http_client();
+        p.submit(&http, TEST_TOKEN).await.unwrap();
     }
 
     #[tokio::test]
@@ -907,14 +853,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let opts = Options {
-            skip_review: Some(true),
-            deploy_percentage: Some(50),
-            ..Options::default()
-        };
-
-        let client = client_for(&server);
-        client.submit(TEST_TOKEN, &opts).await.unwrap();
+        let p = publish_for(&server, Vec::new())
+            .skip_review(true)
+            .deploy_percentage(50);
+        let http = http_client();
+        p.submit(&http, TEST_TOKEN).await.unwrap();
     }
 
     #[tokio::test]
@@ -929,11 +872,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client
-            .submit(TEST_TOKEN, &Options::default())
-            .await
-            .unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.submit(&http, TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "REJECTED");
@@ -954,11 +895,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client
-            .submit(TEST_TOKEN, &Options::default())
-            .await
-            .unwrap_err();
+        let p = publish_for(&server, Vec::new());
+        let http = http_client();
+        let err = p.submit(&http, TEST_TOKEN).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
@@ -984,9 +923,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let client = client_for(&server);
-            client
-                .submit(TEST_TOKEN, &Options::default())
+            let p = publish_for(&server, Vec::new());
+            let http = http_client();
+            p.submit(&http, TEST_TOKEN)
                 .await
                 .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
@@ -1069,63 +1008,20 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn publish_rejects_garbage_root_url() {
-        let err = publish(
-            "publisher-1".to_string(),
-            "item-1".to_string(),
-            Credentials::AccessToken("token".to_string()),
-            b"FAKE".to_vec(),
-        )
-        .root_url("not a url")
-        .await
-        .unwrap_err();
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
-    }
-
-    #[tokio::test]
-    async fn publish_rejects_garbage_token_url() {
-        let err = publish(
-            "publisher-1".to_string(),
-            "item-1".to_string(),
-            Credentials::AccessToken("token".to_string()),
-            b"FAKE".to_vec(),
-        )
-        .token_url("not a url")
-        .await
-        .unwrap_err();
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
-    }
-
-    fn client_for(server: &MockServer) -> Client {
-        let base = server.uri();
-        let mut client = Client::new(
-            "publisher-1".to_string(),
-            "item-1".to_string(),
-            Credentials::AccessToken("test-access-token".to_string()),
-        )
-        .unwrap()
-        .with_root_url(&base)
-        .unwrap()
-        .with_token_url(&base)
-        .unwrap();
-        client.poll_config = PollConfig {
-            interval: Duration::from_millis(10),
-            timeout: Duration::from_millis(200),
-        };
-        client
+    fn http_client() -> reqwest::Client {
+        build_client().unwrap()
     }
 
     fn publish_for(server: &MockServer, zip: Vec<u8>) -> Publish {
-        let base = server.uri();
+        let base = Url::parse(&server.uri()).unwrap();
         publish(
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::AccessToken("test-access-token".to_string()),
             zip,
         )
-        .root_url(&base)
-        .token_url(&base)
+        .root_url(base.clone())
+        .token_url(base)
         .poll_interval(Duration::from_millis(10))
         .poll_timeout(Duration::from_millis(200))
     }

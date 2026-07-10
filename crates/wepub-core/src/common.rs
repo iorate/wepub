@@ -1,15 +1,7 @@
-use std::time::Duration;
-
 use tracing::{Instrument, Level, Span, debug};
 use url::Url;
 
 use crate::{Result, WepubError, error::record_error};
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct PollConfig {
-    pub(crate) interval: Duration,
-    pub(crate) timeout: Duration,
-}
 
 pub(crate) async fn instrument_step<T>(
     span: Span,
@@ -21,17 +13,13 @@ pub(crate) async fn instrument_step<T>(
         .await
 }
 
-pub(crate) fn parse_root_url(root_url: &str) -> Result<Url> {
-    let mut parsed = Url::parse(root_url).map_err(|err| WepubError::Url {
-        url: root_url.to_string(),
-        source: err,
-    })?;
-    // A trailing slash makes `Url::join` append rather than replace the last segment.
-    if !parsed.path().ends_with('/') {
-        let new_path = format!("{}/", parsed.path());
-        parsed.set_path(&new_path);
+// A trailing slash makes `Url::join` append rather than replace the last segment.
+pub(crate) fn ensure_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        let new_path = format!("{}/", url.path());
+        url.set_path(&new_path);
     }
-    Ok(parsed)
+    url
 }
 
 pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
@@ -80,21 +68,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_root_url_appends_trailing_slash_when_missing() {
-        let url = parse_root_url("https://example.com/api/v5").unwrap();
+    fn ensure_trailing_slash_appends_when_missing() {
+        let url = ensure_trailing_slash(Url::parse("https://example.com/api/v5").unwrap());
         assert_eq!(url.as_str(), "https://example.com/api/v5/");
     }
 
     #[test]
-    fn parse_root_url_preserves_existing_trailing_slash() {
-        let url = parse_root_url("https://example.com/api/v5/").unwrap();
+    fn ensure_trailing_slash_preserves_existing() {
+        let url = ensure_trailing_slash(Url::parse("https://example.com/api/v5/").unwrap());
         assert_eq!(url.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
-    fn parse_root_url_rejects_garbage() {
-        let err = parse_root_url("not a url").unwrap_err();
-        assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     #[test]

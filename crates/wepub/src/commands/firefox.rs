@@ -25,7 +25,7 @@ pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
 
     let mut publish = firefox::publish(args.addon_id, credentials, zip, channel);
     if let Some(root_url) = args.internal_root_url {
-        publish = publish.root_url(root_url.as_str());
+        publish = publish.root_url(root_url);
     }
     if let Some(compatibility) = build_compatibility(&args.compatibility) {
         publish = publish.compatibility(compatibility);
