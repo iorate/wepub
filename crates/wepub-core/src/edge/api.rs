@@ -7,9 +7,7 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{
-        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
-    },
+    common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
 };
 
@@ -62,10 +60,7 @@ pub async fn publish(
     ///
     /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`. A
     /// trailing slash is appended to the path when missing.
-    #[builder(
-        default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-        with = |root_url: Url| ensure_trailing_slash(root_url),
-    )]
+    #[builder(default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"))]
     root_url: Url,
     /// Override the delay between successive polls for operation results.
     #[builder(default = DEFAULT_POLL_INTERVAL)]
@@ -141,7 +136,7 @@ impl Publish {
             .post(self.endpoint(&format!(
                 "v1/products/{}/submissions/draft/package",
                 self.product_id
-            ))?)
+            )))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id)
             .header(reqwest::header::CONTENT_TYPE, "application/zip")
@@ -175,7 +170,7 @@ impl Publish {
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/draft/package/operations/{upload_operation_id}",
                     self.product_id
-                ))?)
+                )))
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.client_id)
                 .build()
@@ -205,7 +200,7 @@ impl Publish {
         info!("submitting the draft");
 
         let mut req = http
-            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id))?)
+            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .header("X-ClientID", &self.client_id);
         if let Some(notes) = notes {
@@ -242,7 +237,7 @@ impl Publish {
                 .get(self.endpoint(&format!(
                     "v1/products/{}/submissions/operations/{}",
                     self.product_id, publish_operation_id
-                ))?)
+                )))
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .header("X-ClientID", &self.client_id)
                 .build()
@@ -268,7 +263,7 @@ impl Publish {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Url {
         join_endpoint(&self.root_url, path)
     }
 
@@ -743,7 +738,7 @@ mod tests {
     #[test]
     fn endpoint_joins_relative_path() {
         let p = publish_for_default_root();
-        let url = p.endpoint("v1/products/p/submissions").unwrap();
+        let url = p.endpoint("v1/products/p/submissions");
         assert_eq!(
             url.as_str(),
             "https://api.addons.microsoftedge.microsoft.com/v1/products/p/submissions"

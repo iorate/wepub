@@ -51,15 +51,6 @@ pub enum WepubError {
         reason: String,
     },
 
-    /// A URL could not be parsed.
-    #[error("a URL could not be parsed")]
-    Url {
-        /// The URL that failed to parse.
-        url: String,
-        /// The underlying URL parsing error.
-        source: url::ParseError,
-    },
-
     /// The upload endpoint of Chrome Web Store reported the upload as failed.
     #[error("the upload endpoint of Chrome Web Store reported the upload as failed")]
     ChromeUpload {
@@ -139,10 +130,6 @@ pub(crate) fn record_error(level: Level, err: &WepubError) {
         WepubError::UnexpectedResponse { reason } => {
             record!(reason = reason.as_str(), "{err}");
         }
-        WepubError::Url { url, source } => {
-            let source = source.to_string();
-            record!(url = url.as_str(), source = source.as_str(), "{err}");
-        }
         WepubError::ChromeUpload { upload_state } => {
             record!(upload_state = upload_state.as_str(), "{err}");
         }
@@ -201,12 +188,11 @@ mod tests {
     // The underlying error is reachable through `source()` but not embedded in
     // `Display`, so the CLI's `{:#}` chain prints it exactly once.
     #[test]
-    fn url_keeps_the_parse_error_as_source_only() {
-        let err = WepubError::Url {
-            url: "not a url".to_string(),
-            source: url::ParseError::RelativeUrlWithoutBase,
+    fn http_keeps_the_underlying_error_as_source_only() {
+        let err = WepubError::Http {
+            source: "connection reset".into(),
         };
-        assert_eq!(err.to_string(), "a URL could not be parsed");
+        assert_eq!(err.to_string(), "the underlying HTTP request failed");
         assert!(err.source().is_some());
 
         let err = WepubError::PollTimeout {

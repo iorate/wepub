@@ -13,20 +13,10 @@ pub(crate) async fn instrument_step<T>(
         .await
 }
 
-// A trailing slash makes `Url::join` append rather than replace the last segment.
-pub(crate) fn ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        let new_path = format!("{}/", url.path());
-        url.set_path(&new_path);
-    }
+pub(crate) fn join_endpoint(root: &Url, path: &str) -> Url {
+    let mut url = root.clone();
+    url.set_path(&format!("{}/{}", root.path().trim_end_matches('/'), path));
     url
-}
-
-pub(crate) fn join_endpoint(root: &Url, path: &str) -> Result<Url> {
-    root.join(path).map_err(|err| WepubError::Url {
-        url: path.to_string(),
-        source: err,
-    })
 }
 
 pub(crate) async fn send_request(
@@ -68,21 +58,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ensure_trailing_slash_appends_when_missing() {
-        let url = ensure_trailing_slash(Url::parse("https://example.com/api/v5").unwrap());
-        assert_eq!(url.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
-    fn ensure_trailing_slash_preserves_existing() {
-        let url = ensure_trailing_slash(Url::parse("https://example.com/api/v5/").unwrap());
-        assert_eq!(url.as_str(), "https://example.com/api/v5/");
-    }
-
-    #[test]
     fn join_endpoint_appends_relative_path() {
         let root = Url::parse("https://example.com/").unwrap();
-        let url = join_endpoint(&root, "api/v5/addons/upload/").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
         assert_eq!(url.as_str(), "https://example.com/api/v5/addons/upload/");
+    }
+
+    #[test]
+    fn join_endpoint_appends_to_root_with_path() {
+        let root = Url::parse("https://example.com/prefix/").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/prefix/api/v5/addons/upload/"
+        );
+    }
+
+    #[test]
+    fn join_endpoint_appends_to_root_without_trailing_slash() {
+        let root = Url::parse("https://example.com/prefix").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/prefix/api/v5/addons/upload/"
+        );
     }
 }

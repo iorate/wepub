@@ -7,9 +7,7 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{
-        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
-    },
+    common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
 };
 
@@ -138,10 +136,7 @@ pub async fn publish(
     ///
     /// Defaults to `https://chromewebstore.googleapis.com/`. A trailing
     /// slash is appended to the path when missing.
-    #[builder(
-        default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-        with = |root_url: Url| ensure_trailing_slash(root_url),
-    )]
+    #[builder(default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"))]
     root_url: Url,
     /// Override the delay between successive polls for the upload result.
     #[builder(default = DEFAULT_POLL_INTERVAL)]
@@ -217,7 +212,7 @@ impl Publish {
             .post(self.endpoint(&format!(
                 "upload/v2/publishers/{}/items/{}:upload",
                 self.publisher_id, self.item_id
-            ))?)
+            )))
             .bearer_auth(&self.access_token)
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .body(package)
@@ -252,7 +247,7 @@ impl Publish {
                 .get(self.endpoint(&format!(
                     "v2/publishers/{}/items/{}:fetchStatus",
                     self.publisher_id, self.item_id
-                ))?)
+                )))
                 .bearer_auth(&self.access_token)
                 .build()
                 .map_err(WepubError::http)?;
@@ -286,7 +281,7 @@ impl Publish {
             .post(self.endpoint(&format!(
                 "v2/publishers/{}/items/{}:publish",
                 self.publisher_id, self.item_id
-            ))?)
+            )))
             .bearer_auth(&self.access_token)
             .json(&body)
             .build()
@@ -305,7 +300,7 @@ impl Publish {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Url {
         join_endpoint(&self.root_url, path)
     }
 }

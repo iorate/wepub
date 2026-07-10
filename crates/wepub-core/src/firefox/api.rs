@@ -9,9 +9,7 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{
-        decode_response, ensure_trailing_slash, instrument_step, join_endpoint, send_request,
-    },
+    common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
 };
 
@@ -128,10 +126,7 @@ pub async fn publish(
     ///
     /// Defaults to `https://addons.mozilla.org/`. A trailing slash is
     /// appended to the path when missing.
-    #[builder(
-        default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"),
-        with = |root_url: Url| ensure_trailing_slash(root_url),
-    )]
+    #[builder(default = Url::parse(DEFAULT_ROOT_URL).expect("DEFAULT_ROOT_URL is a valid URL"))]
     root_url: Url,
     /// Override the delay between successive polls for the upload result.
     #[builder(default = DEFAULT_POLL_INTERVAL)]
@@ -233,7 +228,7 @@ impl Publish {
             .part("upload", part)
             .text("channel", self.channel.as_str());
         let req = http
-            .post(self.endpoint("api/v5/addons/upload/")?)
+            .post(self.endpoint("api/v5/addons/upload/"))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
             .build()
@@ -265,7 +260,7 @@ impl Publish {
             tokio::time::sleep(self.poll_interval).await;
 
             let req = http
-                .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))?)
+                .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/")))
                 .header(reqwest::header::AUTHORIZATION, self.auth_header())
                 .build()
                 .map_err(WepubError::http)?;
@@ -293,7 +288,7 @@ impl Publish {
             release_notes: self.release_notes.clone(),
         };
         let req = http
-            .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))?)
+            .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id)))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .json(&body)
             .build()
@@ -325,7 +320,7 @@ impl Publish {
             .patch(self.endpoint(&format!(
                 "api/v5/addons/addon/{}/versions/{version_id}/",
                 self.addon_id
-            ))?)
+            )))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
             .multipart(form)
             .build()
@@ -339,7 +334,7 @@ impl Publish {
         Ok(())
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url> {
+    fn endpoint(&self, path: &str) -> Url {
         join_endpoint(&self.root_url, path)
     }
 
@@ -788,7 +783,7 @@ mod tests {
     #[test]
     fn endpoint_joins_relative_path() {
         let p = publish_for_default_root();
-        let url = p.endpoint("api/v5/addons/upload/").unwrap();
+        let url = p.endpoint("api/v5/addons/upload/");
         assert_eq!(
             url.as_str(),
             "https://addons.mozilla.org/api/v5/addons/upload/"
@@ -796,7 +791,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_url_setter_appends_trailing_slash() {
+    async fn root_url_without_trailing_slash_is_normalized() {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
