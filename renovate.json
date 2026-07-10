@@ -3,22 +3,9 @@
   "extends": ["config:best-practices", "group:allNonMajor"],
   "ignorePresets": [":pinDevDependencies"],
   "enabledManagers": ["cargo", "github-actions", "custom.regex"],
-  "dependencyDashboardApproval": true,
-  "vulnerabilityAlerts": {
-    "dependencyDashboardApproval": false
-  },
+  "ignorePaths": [".github/workflows/release.yml"],
   "minimumReleaseAge": "3 days",
   "platformCommit": "enabled",
-  "ignorePaths": [".github/workflows/release.yml"],
-  "packageRules": [
-    {
-      "description": "Ungroup breaking 0.x updates from the non-major group",
-      "matchManagers": ["cargo"],
-      "matchCurrentVersion": "<1",
-      "matchUpdateTypes": ["minor"],
-      "groupName": null
-    }
-  ],
   "customManagers": [
     {
       "customType": "regex",
@@ -40,5 +27,17 @@
       "versioningTemplate": "semver",
       "autoReplaceStringTemplate": "\"{{{depName}}}\" = \"{{{newDigest}}}\" # {{{newValue}}}"
     }
-  ]
+  ],
+  "packageRules": [
+    {
+      "description": "Ungroup breaking 0.x updates from the non-major group",
+      "matchManagers": ["cargo"],
+      "matchCurrentVersion": "<1",
+      "matchUpdateTypes": ["minor"],
+      "groupName": null
+    }
+  ],
+  "lockFileMaintenance": {
+    "schedule": ["* * L * *"]
+  }
 }
