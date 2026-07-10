@@ -19,14 +19,22 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Whether a new version is published immediately on approval or staged for
 /// later publishing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PublishType {
     /// Publish immediately on approval.
     DefaultPublish,
     /// Stage for later publishing.
     StagedPublish,
+}
+
+impl PublishType {
+    fn as_str(self) -> &'static str {
+        match self {
+            PublishType::DefaultPublish => "DEFAULT_PUBLISH",
+            PublishType::StagedPublish => "STAGED_PUBLISH",
+        }
+    }
 }
 
 /// Exchange an OAuth refresh token for an access token.
@@ -270,7 +278,7 @@ impl Publish {
         info!("submitting the draft");
 
         let body = PublishRequestBody {
-            publish_type: self.publish_type,
+            publish_type: self.publish_type.map(PublishType::as_str),
             deploy_infos: self.deploy_percentage.map(|p| {
                 vec![DeployInfo {
                     deploy_percentage: p,
@@ -343,7 +351,7 @@ impl UploadState {
 #[serde(rename_all = "camelCase")]
 struct PublishRequestBody {
     #[serde(skip_serializing_if = "Option::is_none")]
-    publish_type: Option<PublishType>,
+    publish_type: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_infos: Option<Vec<DeployInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
