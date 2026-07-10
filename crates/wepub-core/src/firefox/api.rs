@@ -51,6 +51,7 @@ pub enum Compatibility {
 /// Application identifier used in compatibility declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Application {
     /// Desktop Firefox.
     Firefox,

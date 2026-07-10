@@ -12,6 +12,7 @@ pub type Result<T> = std::result::Result<T, WepubError>;
 pub enum WepubError {
     /// The underlying HTTP request failed.
     #[error("the underlying HTTP request failed")]
+    #[non_exhaustive]
     Http {
         /// The underlying HTTP error.
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -19,6 +20,7 @@ pub enum WepubError {
 
     /// The server returned a non-2xx HTTP status.
     #[error("the server returned a non-2xx HTTP status")]
+    #[non_exhaustive]
     HttpStatus {
         /// HTTP status code.
         status: u16,
@@ -28,6 +30,7 @@ pub enum WepubError {
 
     /// The token endpoint of an OAuth server reported the request as failed.
     #[error("the OAuth token endpoint reported the request as failed")]
+    #[non_exhaustive]
     OAuthToken {
         /// The error code.
         error: String,
@@ -39,6 +42,7 @@ pub enum WepubError {
 
     /// A polling loop timed out.
     #[error("a polling loop timed out")]
+    #[non_exhaustive]
     PollTimeout {
         /// Total elapsed time before giving up.
         elapsed: Duration,
@@ -46,6 +50,7 @@ pub enum WepubError {
 
     /// The server's response did not match the expected format.
     #[error("the server's response did not match the expected format")]
+    #[non_exhaustive]
     UnexpectedResponse {
         /// Short description of how the response was unexpected.
         reason: String,
@@ -53,6 +58,7 @@ pub enum WepubError {
 
     /// The upload endpoint of Chrome Web Store reported the upload as failed.
     #[error("the upload endpoint of Chrome Web Store reported the upload as failed")]
+    #[non_exhaustive]
     ChromeUpload {
         /// Upload state.
         upload_state: String,
@@ -60,6 +66,7 @@ pub enum WepubError {
 
     /// The publish endpoint of Chrome Web Store reported the publish as failed.
     #[error("the publish endpoint of Chrome Web Store reported the publish as failed")]
+    #[non_exhaustive]
     ChromePublish {
         /// Item state.
         item_state: String,
@@ -67,6 +74,7 @@ pub enum WepubError {
 
     /// The upload endpoint of Firefox Add-ons reported the upload as failed.
     #[error("the upload endpoint of Firefox Add-ons reported the upload as failed")]
+    #[non_exhaustive]
     FirefoxUpload {
         /// Validation results.
         validation: serde_json::Value,
@@ -74,6 +82,7 @@ pub enum WepubError {
 
     /// Edge Add-ons reported the operation as failed.
     #[error("Edge Add-ons reported the operation as failed")]
+    #[non_exhaustive]
     EdgeApi {
         /// Operation message, if any.
         message: Option<String>,
