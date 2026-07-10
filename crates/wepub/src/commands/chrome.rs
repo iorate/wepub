@@ -1,13 +1,11 @@
 use anyhow::{Result, bail};
-use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
+use wepub_core::chrome::{self, Credentials, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
 use crate::commands::common::read_binary_input;
 
 pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
-    let client = build_client(
-        args.publisher_id,
-        args.item_id,
+    let credentials = build_credentials(
         args.client_id,
         args.client_secret,
         args.refresh_token,
@@ -16,13 +14,18 @@ pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
 
     let zip = read_binary_input(&args.zip, "package").await?;
 
-    let options = PublishOptions {
-        publish_type: args.publish_type.map(Into::into),
-        deploy_percentage: args.deploy_percentage,
-        skip_review: args.skip_review,
-    };
+    let mut publish = chrome::publish(args.publisher_id, args.item_id, credentials, zip);
+    if let Some(publish_type) = args.publish_type {
+        publish = publish.publish_type(publish_type.into());
+    }
+    if let Some(deploy_percentage) = args.deploy_percentage {
+        publish = publish.deploy_percentage(deploy_percentage);
+    }
+    if let Some(skip_review) = args.skip_review {
+        publish = publish.skip_review(skip_review);
+    }
 
-    client.publish(zip, options).await?;
+    publish.await?;
 
     Ok(())
 }
@@ -36,14 +39,12 @@ impl From<ChromePublishTypeArg> for PublishType {
     }
 }
 
-fn build_client(
-    publisher_id: String,
-    item_id: String,
+fn build_credentials(
     client_id: Option<String>,
     client_secret: Option<String>,
     refresh_token: Option<String>,
     access_token: Option<String>,
-) -> Result<Client> {
+) -> Result<Credentials> {
     let any_refresh_token_arg =
         client_id.is_some() || client_secret.is_some() || refresh_token.is_some();
 
@@ -63,20 +64,12 @@ fn build_client(
                     "--client-id / --client-secret / --refresh-token must all be provided together"
                 );
             };
-            Ok(Client::new(
-                publisher_id,
-                item_id,
-                Credentials::RefreshToken {
-                    client_id,
-                    client_secret,
-                    refresh_token,
-                },
-            )?)
+            Ok(Credentials::RefreshToken {
+                client_id,
+                client_secret,
+                refresh_token,
+            })
         }
-        (false, Some(access_token)) => Ok(Client::new(
-            publisher_id,
-            item_id,
-            Credentials::AccessToken(access_token),
-        )?),
+        (false, Some(access_token)) => Ok(Credentials::AccessToken(access_token)),
     }
 }

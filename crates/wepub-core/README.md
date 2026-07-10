@@ -6,22 +6,24 @@
 
 Asynchronous client library for publishing browser extensions to web stores.
 
-`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `Client` type per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons) and a single `publish` verb.
+`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `publish` entry point per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons), returning a builder that runs when `.await`ed.
 
 ## Example
 
 ```rust
-use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
+use wepub_core::firefox::{Channel, Credentials};
 
-let client = Client::new(
+let zip = std::fs::read("./addon.zip")?;
+wepub_core::firefox::publish(
     "myaddon@example.com".into(),
     Credentials {
         api_key: "user:12345:6789".into(),
         api_secret: "jwt-secret".into(),
     },
-)?;
-let zip = std::fs::read("./addon.zip")?;
-client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
+    zip,
+    Channel::Listed,
+)
+.await?;
 ```
 
 See the full API on [docs.rs](https://docs.rs/wepub-core).

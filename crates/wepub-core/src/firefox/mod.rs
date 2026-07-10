@@ -1,11 +1,9 @@
 //! Firefox Add-ons API (v5) client.
 //!
-//! The entry point is [`Client`]. Build it with [`Client::new`], then
-//! call [`Client::publish`] to publish an add-on.
+//! The entry point is [`publish`]: configure the returned [`Publish`]
+//! builder, then `.await` it to publish an add-on.
 
 mod api;
 mod auth;
 
-pub use api::{
-    Application, Channel, Client, Compatibility, Credentials, PublishOptions, VersionRange,
-};
+pub use api::{Application, Channel, Compatibility, Credentials, Publish, VersionRange, publish};

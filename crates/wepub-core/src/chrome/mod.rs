@@ -1,9 +1,9 @@
 //! Chrome Web Store API (v2) client.
 //!
-//! The entry point is [`Client`]. Build it with [`Client::new`], then
-//! call [`Client::publish`] to publish an extension.
+//! The entry point is [`publish`]: configure the returned [`Publish`]
+//! builder, then `.await` it to publish an extension.
 
 mod api;
 mod auth;
 
-pub use api::{Client, Credentials, PublishOptions, PublishType};
+pub use api::{Credentials, Publish, PublishType, publish};

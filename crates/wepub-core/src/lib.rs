@@ -1,14 +1,14 @@
 //! Asynchronous client library for publishing browser extensions to web stores.
 //!
 //! `wepub-core` is the engine behind the [`wepub`][wepub-bin] command-line
-//! tool. It exposes one `Client` type per supported store and a single
-//! `publish` verb.
+//! tool. It exposes one `publish` entry point per supported store, returning
+//! a builder that runs when `.await`ed.
 //!
 //! Currently supported stores:
 //!
-//! - **Chrome Web Store** via [`chrome::Client`].
-//! - **Firefox Add-ons** via [`firefox::Client`].
-//! - **Edge Add-ons** via [`edge::Client`].
+//! - **Chrome Web Store** via [`chrome::publish`].
+//! - **Firefox Add-ons** via [`firefox::publish`].
+//! - **Edge Add-ons** via [`edge::publish`].
 //!
 //! All stores share the [`WepubError`] error type and the [`Result`] alias.
 //!
@@ -16,17 +16,19 @@
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
+//! use wepub_core::firefox::{Channel, Credentials};
 //!
-//! let client = Client::new(
+//! let zip = std::fs::read("./addon.zip")?;
+//! wepub_core::firefox::publish(
 //!     "myaddon@example.com".into(),
 //!     Credentials {
 //!         api_key: "user:12345:6789".into(),
 //!         api_secret: "jwt-secret".into(),
 //!     },
-//! )?;
-//! let zip = std::fs::read("./addon.zip")?;
-//! client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
+//!     zip,
+//!     Channel::Listed,
+//! )
+//! .await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -43,5 +45,4 @@ pub mod chrome;
 pub mod edge;
 pub mod firefox;
 
-pub use common::PollConfig;
 pub use error::{Result, WepubError};

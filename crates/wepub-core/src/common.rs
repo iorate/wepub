@@ -5,13 +5,10 @@ use url::Url;
 
 use crate::{Result, WepubError, error::record_error};
 
-/// Polling interval and timeout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PollConfig {
-    /// Delay between successive polls.
-    pub interval: Duration,
-    /// Maximum total time to wait before giving up.
-    pub timeout: Duration,
+pub(crate) struct PollConfig {
+    pub(crate) interval: Duration,
+    pub(crate) timeout: Duration,
 }
 
 pub(crate) async fn instrument_step<T>(

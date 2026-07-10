@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use reqwest::multipart::{Form, Part};
@@ -8,8 +10,10 @@ use tracing::{Level, info, info_span, instrument, warn};
 use url::Url;
 
 use crate::{
-    PollConfig, Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
+    Result, WepubError,
+    common::{
+        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+    },
     http::build_client,
 };
 
@@ -19,7 +23,7 @@ const DEFAULT_ROOT_URL: &str = "https://addons.mozilla.org/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// API credentials passed to [`Client::new`].
+/// API credentials passed to [`publish`].
 ///
 /// Obtain them from the
 /// [API Credentials Management Page](https://addons.mozilla.org/developers/addon/api/key/).
@@ -35,27 +39,6 @@ pub struct Credentials {
 impl fmt::Debug for Credentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials").finish_non_exhaustive()
-    }
-}
-
-/// Options that shape how [`Client::publish`] creates the new version.
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    /// Application compatibility declarations.
-    pub compatibility: Option<Compatibility>,
-    /// Information for Mozilla reviewers.
-    pub approval_notes: Option<String>,
-    /// Release notes keyed by locale code.
-    pub release_notes: Option<HashMap<String, String>>,
-    /// Source archive to attach to the version.
-    pub source: Option<Vec<u8>>,
-}
-
-impl PublishOptions {
-    /// Build a `PublishOptions` with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
     }
 }
 
@@ -112,9 +95,144 @@ pub struct VersionRange {
     pub max: Option<String>,
 }
 
-/// Client for the Firefox Add-ons API (v5).
+/// Publish `zip` to the Firefox add-on `addon_id` under `channel`,
+/// authenticating with the supplied `credentials`.
+///
+/// Returns a [`Publish`] builder: configure it with the setter methods,
+/// then `.await` it to upload the package and submit the new version.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use wepub_core::firefox::{Channel, Credentials, publish};
+///
+/// let zip = std::fs::read("./addon.zip")?;
+/// publish(
+///     "myaddon@example.com".into(),
+///     Credentials {
+///         api_key: "user:12345:6789".into(),
+///         api_secret: "jwt-secret".into(),
+///     },
+///     zip,
+///     Channel::Listed,
+/// )
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn publish(
+    addon_id: String,
+    credentials: Credentials,
+    zip: Vec<u8>,
+    channel: Channel,
+) -> Publish {
+    Publish {
+        addon_id,
+        credentials,
+        zip,
+        channel,
+        options: Options::default(),
+        root_url: None,
+        poll_interval: None,
+        poll_timeout: None,
+    }
+}
+
+/// A pending publish to Firefox Add-ons, created by [`publish`].
+///
+/// Runs when `.await`ed; nothing is sent until then.
+#[must_use = "a publish does nothing unless awaited"]
+pub struct Publish {
+    addon_id: String,
+    credentials: Credentials,
+    zip: Vec<u8>,
+    channel: Channel,
+    options: Options,
+    root_url: Option<String>,
+    poll_interval: Option<Duration>,
+    poll_timeout: Option<Duration>,
+}
+
+impl Publish {
+    /// Application compatibility declarations.
+    pub fn compatibility(mut self, compatibility: Compatibility) -> Self {
+        self.options.compatibility = Some(compatibility);
+        self
+    }
+
+    /// Information for Mozilla reviewers.
+    pub fn approval_notes(mut self, approval_notes: String) -> Self {
+        self.options.approval_notes = Some(approval_notes);
+        self
+    }
+
+    /// Release notes keyed by locale code.
+    pub fn release_notes(mut self, release_notes: HashMap<String, String>) -> Self {
+        self.options.release_notes = Some(release_notes);
+        self
+    }
+
+    /// Source archive to attach to the version.
+    pub fn source(mut self, source: Vec<u8>) -> Self {
+        self.options.source = Some(source);
+        self
+    }
+
+    /// Override the Firefox Add-ons API root URL.
+    ///
+    /// Defaults to `https://addons.mozilla.org/`.
+    pub fn root_url(mut self, root_url: &str) -> Self {
+        self.root_url = Some(root_url.to_string());
+        self
+    }
+
+    /// Override the delay between successive polls for the upload result.
+    pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = Some(poll_interval);
+        self
+    }
+
+    /// Override the maximum total time to wait for the upload result.
+    pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
+        self.poll_timeout = Some(poll_timeout);
+        self
+    }
+
+    async fn run(self) -> Result<()> {
+        let mut client = Client::new(self.addon_id, self.credentials)?;
+        if let Some(root_url) = self.root_url.as_deref() {
+            client = client.with_root_url(root_url)?;
+        }
+        if let Some(interval) = self.poll_interval {
+            client.poll_config.interval = interval;
+        }
+        if let Some(timeout) = self.poll_timeout {
+            client.poll_config.timeout = timeout;
+        }
+        client.publish(self.zip, self.channel, self.options).await
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct Options {
+    compatibility: Option<Compatibility>,
+    approval_notes: Option<String>,
+    release_notes: Option<HashMap<String, String>>,
+    source: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone)]
-pub struct Client {
+struct Client {
     addon_id: String,
     credentials: Credentials,
     root_url: Url,
@@ -123,9 +241,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client bound to `addon_id`, authenticating with the supplied
-    /// `credentials`.
-    pub fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
+    fn new(addon_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             addon_id,
             credentials,
@@ -138,51 +254,16 @@ impl Client {
         })
     }
 
-    /// Override the Firefox Add-ons API root URL.
-    ///
-    /// Defaults to `https://addons.mozilla.org/`.
-    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
+    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
-    /// Override the poll config.
-    #[must_use]
-    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
-        self.poll_config = poll_config;
-        self
-    }
-
-    /// Upload `zip` and submit the new version under `channel`.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// use wepub_core::firefox::{Channel, Client, Credentials, PublishOptions};
-    ///
-    /// let client = Client::new(
-    ///     "myaddon@example.com".into(),
-    ///     Credentials {
-    ///         api_key: "user:12345:6789".into(),
-    ///         api_secret: "jwt-secret".into(),
-    ///     },
-    /// )?;
-    /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, Channel::Listed, PublishOptions::new()).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[instrument(
         skip_all,
         fields(store = "firefox", addon_id = self.addon_id.as_str(), channel = channel.as_str())
     )]
-    pub async fn publish(
-        &self,
-        zip: Vec<u8>,
-        channel: Channel,
-        options: PublishOptions,
-    ) -> Result<()> {
+    async fn publish(&self, zip: Vec<u8>, channel: Channel, options: Options) -> Result<()> {
         let (upload_uuid, processed) = instrument_step(
             info_span!("upload"),
             Level::ERROR,
@@ -634,13 +715,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let options = PublishOptions {
-            source: Some(b"source-zip".to_vec()),
-            ..PublishOptions::new()
-        };
-        client
-            .publish(b"zip".to_vec(), Channel::Listed, options)
+        publish_for(&server, b"zip".to_vec(), Channel::Listed)
+            .source(b"source-zip".to_vec())
             .await
             .unwrap();
     }
@@ -683,9 +759,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+        publish_for(&server, b"zip".to_vec(), Channel::Listed)
             .await
             .unwrap();
     }
@@ -719,13 +793,8 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let options = PublishOptions {
-            source: Some(b"source-zip".to_vec()),
-            ..PublishOptions::new()
-        };
-        client
-            .publish(b"zip".to_vec(), Channel::Listed, options)
+        publish_for(&server, b"zip".to_vec(), Channel::Listed)
+            .source(b"source-zip".to_vec())
             .await
             .unwrap();
     }
@@ -740,9 +809,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let err = client
-            .publish(b"zip".to_vec(), Channel::Listed, PublishOptions::new())
+        let err = publish_for(&server, b"zip".to_vec(), Channel::Listed)
             .await
             .unwrap_err();
 
@@ -860,24 +927,25 @@ mod tests {
         assert_eq!(url.as_str(), "http://127.0.0.1:8000/api/v5/addons/upload/");
     }
 
-    #[test]
-    fn with_root_url_rejects_garbage() {
-        let client = Client::new(
+    #[tokio::test]
+    async fn publish_rejects_garbage_root_url() {
+        let err = publish(
             "test-addon".into(),
             Credentials {
                 api_key: "issuer".into(),
                 api_secret: "secret".into(),
             },
+            b"zip".to_vec(),
+            Channel::Listed,
         )
-        .unwrap();
-        let Err(err) = client.with_root_url("not a url") else {
-            panic!("expected with_root_url to reject");
-        };
+        .root_url("not a url")
+        .await
+        .unwrap_err();
         assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new(
+        let mut client = Client::new(
             "test-addon".into(),
             Credentials {
                 api_key: "issuer".into(),
@@ -886,11 +954,27 @@ mod tests {
         )
         .unwrap()
         .with_root_url(&server.uri())
-        .unwrap()
-        .with_poll_config(PollConfig {
+        .unwrap();
+        client.poll_config = PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        })
+        };
+        client
+    }
+
+    fn publish_for(server: &MockServer, zip: Vec<u8>, channel: Channel) -> Publish {
+        publish(
+            "test-addon".into(),
+            Credentials {
+                api_key: "issuer".into(),
+                api_secret: "secret".into(),
+            },
+            zip,
+            channel,
+        )
+        .root_url(&server.uri())
+        .poll_interval(Duration::from_millis(10))
+        .poll_timeout(Duration::from_millis(200))
     }
 
     fn upload_json(uuid: &str, processed: bool, valid: bool) -> serde_json::Value {

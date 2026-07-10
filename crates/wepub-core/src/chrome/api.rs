@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 use std::fmt;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -7,8 +9,10 @@ use tracing::{Level, info, info_span, instrument};
 use url::Url;
 
 use crate::{
-    PollConfig, Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
+    Result, WepubError,
+    common::{
+        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+    },
     http::build_client,
 };
 
@@ -18,7 +22,7 @@ const DEFAULT_ROOT_URL: &str = "https://chromewebstore.googleapis.com/";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// OAuth credentials passed to [`Client::new`].
+/// OAuth credentials passed to [`publish`].
 #[derive(Clone)]
 pub enum Credentials {
     /// An OAuth refresh token plus the client credentials needed to redeem
@@ -48,29 +52,6 @@ impl fmt::Debug for Credentials {
     }
 }
 
-/// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    /// Whether to publish immediately on approval or stage for later
-    /// publishing.
-    pub publish_type: Option<PublishType>,
-
-    /// Initial percentage of users to roll the new version out to.
-    /// `None` means "use the value configured in the Developer Dashboard".
-    pub deploy_percentage: Option<u8>,
-
-    /// Attempt to skip item review.
-    pub skip_review: Option<bool>,
-}
-
-impl PublishOptions {
-    /// Build a `PublishOptions` with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
 /// Whether a new version is published immediately on approval or staged for
 /// later publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -82,9 +63,155 @@ pub enum PublishType {
     StagedPublish,
 }
 
-/// Client for the Chrome Web Store API (v2).
+/// Publish `zip` to the Chrome Web Store item `item_id` owned by
+/// `publisher_id`, authenticating with the supplied `credentials`.
+///
+/// Returns a [`Publish`] builder: configure it with the setter methods,
+/// then `.await` it to upload the package and submit the draft.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use wepub_core::chrome::{Credentials, PublishType, publish};
+///
+/// let zip = std::fs::read("./extension.zip")?;
+/// publish(
+///     "abcd1234-ef56-7890-abcd-ef1234567890".into(),
+///     "abcdefghijklmnopabcdefghijklmnop".into(),
+///     Credentials::RefreshToken {
+///         client_id: "client-id".into(),
+///         client_secret: "client-secret".into(),
+///         refresh_token: "refresh-token".into(),
+///     },
+///     zip,
+/// )
+/// .publish_type(PublishType::StagedPublish)
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn publish(
+    publisher_id: String,
+    item_id: String,
+    credentials: Credentials,
+    zip: Vec<u8>,
+) -> Publish {
+    Publish {
+        publisher_id,
+        item_id,
+        credentials,
+        zip,
+        options: Options::default(),
+        root_url: None,
+        token_url: None,
+        poll_interval: None,
+        poll_timeout: None,
+    }
+}
+
+/// A pending publish to the Chrome Web Store, created by [`publish`].
+///
+/// Runs when `.await`ed; nothing is sent until then.
+#[must_use = "a publish does nothing unless awaited"]
+pub struct Publish {
+    publisher_id: String,
+    item_id: String,
+    credentials: Credentials,
+    zip: Vec<u8>,
+    options: Options,
+    root_url: Option<String>,
+    token_url: Option<String>,
+    poll_interval: Option<Duration>,
+    poll_timeout: Option<Duration>,
+}
+
+impl Publish {
+    /// Whether to publish immediately on approval or stage for later
+    /// publishing.
+    pub fn publish_type(mut self, publish_type: PublishType) -> Self {
+        self.options.publish_type = Some(publish_type);
+        self
+    }
+
+    /// Initial percentage of users to roll the new version out to.
+    ///
+    /// Defaults to the value configured in the Developer Dashboard.
+    pub fn deploy_percentage(mut self, deploy_percentage: u8) -> Self {
+        self.options.deploy_percentage = Some(deploy_percentage);
+        self
+    }
+
+    /// Attempt to skip item review.
+    pub fn skip_review(mut self, skip_review: bool) -> Self {
+        self.options.skip_review = Some(skip_review);
+        self
+    }
+
+    /// Override the Chrome Web Store API root URL.
+    ///
+    /// Defaults to `https://chromewebstore.googleapis.com/`.
+    pub fn root_url(mut self, root_url: &str) -> Self {
+        self.root_url = Some(root_url.to_string());
+        self
+    }
+
+    /// Override the Google OAuth token endpoint URL.
+    ///
+    /// Defaults to `https://oauth2.googleapis.com/token`.
+    pub fn token_url(mut self, token_url: &str) -> Self {
+        self.token_url = Some(token_url.to_string());
+        self
+    }
+
+    /// Override the delay between successive polls for the upload result.
+    pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = Some(poll_interval);
+        self
+    }
+
+    /// Override the maximum total time to wait for the upload result.
+    pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
+        self.poll_timeout = Some(poll_timeout);
+        self
+    }
+
+    async fn run(self) -> Result<()> {
+        let mut client = Client::new(self.publisher_id, self.item_id, self.credentials)?;
+        if let Some(root_url) = self.root_url.as_deref() {
+            client = client.with_root_url(root_url)?;
+        }
+        if let Some(token_url) = self.token_url.as_deref() {
+            client = client.with_token_url(token_url)?;
+        }
+        if let Some(interval) = self.poll_interval {
+            client.poll_config.interval = interval;
+        }
+        if let Some(timeout) = self.poll_timeout {
+            client.poll_config.timeout = timeout;
+        }
+        client.publish(self.zip, self.options).await
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct Options {
+    publish_type: Option<PublishType>,
+    deploy_percentage: Option<u8>,
+    skip_review: Option<bool>,
+}
+
 #[derive(Debug, Clone)]
-pub struct Client {
+struct Client {
     publisher_id: String,
     item_id: String,
     credentials: Credentials,
@@ -95,9 +222,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client bound to `publisher_id` / `item_id`, authenticating
-    /// with the supplied `credentials`.
-    pub fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
+    fn new(publisher_id: String, item_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             publisher_id,
             item_id,
@@ -112,18 +237,12 @@ impl Client {
         })
     }
 
-    /// Override the Chrome Web Store API root URL.
-    ///
-    /// Defaults to `https://chromewebstore.googleapis.com/`.
-    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
+    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
-    /// Override the Google OAuth token endpoint URL.
-    ///
-    /// Defaults to `https://oauth2.googleapis.com/token`.
-    pub fn with_token_url(mut self, token_url: &str) -> Result<Self> {
+    fn with_token_url(mut self, token_url: &str) -> Result<Self> {
         self.token_url = Url::parse(token_url).map_err(|err| WepubError::Url {
             url: token_url.to_string(),
             source: err,
@@ -131,43 +250,6 @@ impl Client {
         Ok(self)
     }
 
-    /// Override the poll config.
-    #[must_use]
-    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
-        self.poll_config = poll_config;
-        self
-    }
-
-    /// Upload `zip` and submit the draft.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// use wepub_core::chrome::{Client, Credentials, PublishOptions, PublishType};
-    ///
-    /// let client = Client::new(
-    ///     "abcd1234-ef56-7890-abcd-ef1234567890".into(),
-    ///     "abcdefghijklmnopabcdefghijklmnop".into(),
-    ///     Credentials::RefreshToken {
-    ///         client_id: "client-id".into(),
-    ///         client_secret: "client-secret".into(),
-    ///         refresh_token: "refresh-token".into(),
-    ///     },
-    /// )?;
-    /// let zip = std::fs::read("./extension.zip")?;
-    /// client
-    ///     .publish(
-    ///         zip,
-    ///         PublishOptions {
-    ///             publish_type: Some(PublishType::StagedPublish),
-    ///             ..PublishOptions::new()
-    ///         },
-    ///     )
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[instrument(
         skip_all,
         fields(
@@ -176,7 +258,7 @@ impl Client {
             item_id = self.item_id.as_str(),
         )
     )]
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+    async fn publish(&self, zip: Vec<u8>, options: Options) -> Result<()> {
         let token: Cow<'_, str> = match &self.credentials {
             Credentials::RefreshToken {
                 client_id,
@@ -298,7 +380,7 @@ impl Client {
         Ok(())
     }
 
-    async fn submit(&self, token: &str, options: &PublishOptions) -> Result<()> {
+    async fn submit(&self, token: &str, options: &Options) -> Result<()> {
         info!("submitting the draft");
 
         let body = PublishRequestBody {
@@ -767,7 +849,7 @@ mod tests {
 
         let client = client_for(&server);
         client
-            .submit(TEST_TOKEN, &PublishOptions::new())
+            .submit(TEST_TOKEN, &Options::default())
             .await
             .unwrap();
 
@@ -801,8 +883,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = PublishOptions::new();
-        opts.publish_type = Some(PublishType::StagedPublish);
+        let opts = Options {
+            publish_type: Some(PublishType::StagedPublish),
+            ..Options::default()
+        };
 
         let client = client_for(&server);
         client.submit(TEST_TOKEN, &opts).await.unwrap();
@@ -823,9 +907,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut opts = PublishOptions::new();
-        opts.skip_review = Some(true);
-        opts.deploy_percentage = Some(50);
+        let opts = Options {
+            skip_review: Some(true),
+            deploy_percentage: Some(50),
+            ..Options::default()
+        };
 
         let client = client_for(&server);
         client.submit(TEST_TOKEN, &opts).await.unwrap();
@@ -845,7 +931,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit(TEST_TOKEN, &PublishOptions::new())
+            .submit(TEST_TOKEN, &Options::default())
             .await
             .unwrap_err();
         match err {
@@ -870,7 +956,7 @@ mod tests {
 
         let client = client_for(&server);
         let err = client
-            .submit(TEST_TOKEN, &PublishOptions::new())
+            .submit(TEST_TOKEN, &Options::default())
             .await
             .unwrap_err();
         match err {
@@ -900,7 +986,7 @@ mod tests {
 
             let client = client_for(&server);
             client
-                .submit(TEST_TOKEN, &PublishOptions::new())
+                .submit(TEST_TOKEN, &Options::default())
                 .await
                 .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
@@ -940,9 +1026,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
+        publish_for(&server, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
     }
@@ -980,44 +1064,42 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        client
-            .publish(b"FAKE_ZIP_BYTES".to_vec(), PublishOptions::new())
+        publish_for(&server, b"FAKE_ZIP_BYTES".to_vec())
             .await
             .unwrap();
     }
 
-    #[test]
-    fn with_root_url_rejects_garbage() {
-        let client = Client::new(
+    #[tokio::test]
+    async fn publish_rejects_garbage_root_url() {
+        let err = publish(
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::AccessToken("token".to_string()),
+            b"FAKE".to_vec(),
         )
-        .unwrap();
-        let Err(err) = client.with_root_url("not a url") else {
-            panic!("expected with_root_url to reject");
-        };
+        .root_url("not a url")
+        .await
+        .unwrap_err();
         assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
-    #[test]
-    fn with_token_url_rejects_garbage() {
-        let client = Client::new(
+    #[tokio::test]
+    async fn publish_rejects_garbage_token_url() {
+        let err = publish(
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::AccessToken("token".to_string()),
+            b"FAKE".to_vec(),
         )
-        .unwrap();
-        let Err(err) = client.with_token_url("not a url") else {
-            panic!("expected with_token_url to reject");
-        };
+        .token_url("not a url")
+        .await
+        .unwrap_err();
         assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {
         let base = server.uri();
-        Client::new(
+        let mut client = Client::new(
             "publisher-1".to_string(),
             "item-1".to_string(),
             Credentials::AccessToken("test-access-token".to_string()),
@@ -1026,10 +1108,25 @@ mod tests {
         .with_root_url(&base)
         .unwrap()
         .with_token_url(&base)
-        .unwrap()
-        .with_poll_config(PollConfig {
+        .unwrap();
+        client.poll_config = PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        })
+        };
+        client
+    }
+
+    fn publish_for(server: &MockServer, zip: Vec<u8>) -> Publish {
+        let base = server.uri();
+        publish(
+            "publisher-1".to_string(),
+            "item-1".to_string(),
+            Credentials::AccessToken("test-access-token".to_string()),
+            zip,
+        )
+        .root_url(&base)
+        .token_url(&base)
+        .poll_interval(Duration::from_millis(10))
+        .poll_timeout(Duration::from_millis(200))
     }
 }

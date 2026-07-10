@@ -1,4 +1,6 @@
 use std::fmt;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -6,8 +8,10 @@ use tracing::{Level, debug, info, info_span, instrument};
 use url::Url;
 
 use crate::{
-    PollConfig, Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, parse_root_url, send_request},
+    Result, WepubError,
+    common::{
+        PollConfig, decode_response, instrument_step, join_endpoint, parse_root_url, send_request,
+    },
     http::build_client,
 };
 
@@ -15,7 +19,7 @@ const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/"
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// API credentials passed to [`Client::new`].
+/// API credentials passed to [`publish`].
 ///
 /// Obtain them from the **Publish API** page of the
 /// [Partner Center developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/public/login).
@@ -34,24 +38,110 @@ impl fmt::Debug for Credentials {
     }
 }
 
-/// Options that shape how [`Client::publish`] submits the new version.
-#[derive(Debug, Clone, Default)]
-pub struct PublishOptions {
-    /// Notes for certification.
-    pub notes: Option<String>,
-}
-
-impl PublishOptions {
-    /// Build a `PublishOptions` with all fields unset.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+/// Publish `zip` to the Edge add-on `product_id`, authenticating with the
+/// supplied `credentials`.
+///
+/// Returns a [`Publish`] builder: configure it with the setter methods,
+/// then `.await` it to upload the package and submit the draft.
+///
+/// # Examples
+///
+/// ```no_run
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// use wepub_core::edge::{Credentials, publish};
+///
+/// let zip = std::fs::read("./addon.zip")?;
+/// publish(
+///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
+///     Credentials {
+///         client_id: "client-id".into(),
+///         api_key: "api-key".into(),
+///     },
+///     zip,
+/// )
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn publish(product_id: String, credentials: Credentials, zip: Vec<u8>) -> Publish {
+    Publish {
+        product_id,
+        credentials,
+        zip,
+        notes: None,
+        root_url: None,
+        poll_interval: None,
+        poll_timeout: None,
     }
 }
 
-/// Client for the Edge Add-ons API (v1.1).
+/// A pending publish to Edge Add-ons, created by [`publish`].
+///
+/// Runs when `.await`ed; nothing is sent until then.
+#[must_use = "a publish does nothing unless awaited"]
+pub struct Publish {
+    product_id: String,
+    credentials: Credentials,
+    zip: Vec<u8>,
+    notes: Option<String>,
+    root_url: Option<String>,
+    poll_interval: Option<Duration>,
+    poll_timeout: Option<Duration>,
+}
+
+impl Publish {
+    /// Notes for certification.
+    pub fn notes(mut self, notes: String) -> Self {
+        self.notes = Some(notes);
+        self
+    }
+
+    /// Override the Edge Add-ons API root URL.
+    ///
+    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`.
+    pub fn root_url(mut self, root_url: &str) -> Self {
+        self.root_url = Some(root_url.to_string());
+        self
+    }
+
+    /// Override the delay between successive polls for operation results.
+    pub fn poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = Some(poll_interval);
+        self
+    }
+
+    /// Override the maximum total time to wait for each operation result.
+    pub fn poll_timeout(mut self, poll_timeout: Duration) -> Self {
+        self.poll_timeout = Some(poll_timeout);
+        self
+    }
+
+    async fn run(self) -> Result<()> {
+        let mut client = Client::new(self.product_id, self.credentials)?;
+        if let Some(root_url) = self.root_url.as_deref() {
+            client = client.with_root_url(root_url)?;
+        }
+        if let Some(interval) = self.poll_interval {
+            client.poll_config.interval = interval;
+        }
+        if let Some(timeout) = self.poll_timeout {
+            client.poll_config.timeout = timeout;
+        }
+        client.publish(self.zip, self.notes).await
+    }
+}
+
+impl IntoFuture for Publish {
+    type Output = Result<()>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.run())
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct Client {
+struct Client {
     product_id: String,
     credentials: Credentials,
     root_url: Url,
@@ -60,9 +150,7 @@ pub struct Client {
 }
 
 impl Client {
-    /// Build a client bound to `product_id`, authenticating with the
-    /// supplied `credentials`.
-    pub fn new(product_id: String, credentials: Credentials) -> Result<Self> {
+    fn new(product_id: String, credentials: Credentials) -> Result<Self> {
         Ok(Self {
             product_id,
             credentials,
@@ -75,43 +163,13 @@ impl Client {
         })
     }
 
-    /// Override the Edge Add-ons API root URL.
-    ///
-    /// Defaults to `https://api.addons.microsoftedge.microsoft.com/`.
-    pub fn with_root_url(mut self, root_url: &str) -> Result<Self> {
+    fn with_root_url(mut self, root_url: &str) -> Result<Self> {
         self.root_url = parse_root_url(root_url)?;
         Ok(self)
     }
 
-    /// Override the poll config.
-    #[must_use]
-    pub fn with_poll_config(mut self, poll_config: PollConfig) -> Self {
-        self.poll_config = poll_config;
-        self
-    }
-
-    /// Upload `zip` and submit the draft.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// use wepub_core::edge::{Client, Credentials, PublishOptions};
-    ///
-    /// let client = Client::new(
-    ///     "d34f98f5-f9b7-42b1-bebb-98707202b21d".into(),
-    ///     Credentials {
-    ///         client_id: "client-id".into(),
-    ///         api_key: "api-key".into(),
-    ///     },
-    /// )?;
-    /// let zip = std::fs::read("./addon.zip")?;
-    /// client.publish(zip, PublishOptions::new()).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
-    pub async fn publish(&self, zip: Vec<u8>, options: PublishOptions) -> Result<()> {
+    async fn publish(&self, zip: Vec<u8>, notes: Option<String>) -> Result<()> {
         let upload_operation_id =
             instrument_step(info_span!("upload"), Level::ERROR, self.upload(zip)).await?;
         instrument_step(
@@ -124,12 +182,8 @@ impl Client {
         )
         .await?;
 
-        let publish_operation_id = instrument_step(
-            info_span!("submit"),
-            Level::ERROR,
-            self.submit(options.notes),
-        )
-        .await?;
+        let publish_operation_id =
+            instrument_step(info_span!("submit"), Level::ERROR, self.submit(notes)).await?;
         instrument_step(
             info_span!(
                 "await_submit",
@@ -739,11 +793,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = client_for(&server);
-        let options = PublishOptions {
-            notes: Some("ship it".into()),
-        };
-        client.publish(b"FAKE_ZIP".to_vec(), options).await.unwrap();
+        publish_for(&server, b"FAKE_ZIP".to_vec())
+            .notes("ship it".into())
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -782,24 +835,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn with_root_url_rejects_garbage() {
-        let client = Client::new(
+    #[tokio::test]
+    async fn publish_rejects_garbage_root_url() {
+        let err = publish(
             PRODUCT_ID.into(),
             Credentials {
                 client_id: CLIENT_ID.into(),
                 api_key: API_KEY.into(),
             },
+            b"FAKE".to_vec(),
         )
-        .unwrap();
-        let Err(err) = client.with_root_url("not a url") else {
-            panic!("expected with_root_url to reject");
-        };
+        .root_url("not a url")
+        .await
+        .unwrap_err();
         assert!(matches!(err, WepubError::Url { .. }), "got {err:?}");
     }
 
     fn client_for(server: &MockServer) -> Client {
-        Client::new(
+        let mut client = Client::new(
             PRODUCT_ID.into(),
             Credentials {
                 client_id: CLIENT_ID.into(),
@@ -808,10 +861,25 @@ mod tests {
         )
         .unwrap()
         .with_root_url(&server.uri())
-        .unwrap()
-        .with_poll_config(PollConfig {
+        .unwrap();
+        client.poll_config = PollConfig {
             interval: Duration::from_millis(10),
             timeout: Duration::from_millis(200),
-        })
+        };
+        client
+    }
+
+    fn publish_for(server: &MockServer, zip: Vec<u8>) -> Publish {
+        publish(
+            PRODUCT_ID.into(),
+            Credentials {
+                client_id: CLIENT_ID.into(),
+                api_key: API_KEY.into(),
+            },
+            zip,
+        )
+        .root_url(&server.uri())
+        .poll_interval(Duration::from_millis(10))
+        .poll_timeout(Duration::from_millis(200))
     }
 }

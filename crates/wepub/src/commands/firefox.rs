@@ -2,9 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use wepub_core::firefox::{
-    Application, Channel, Client, Compatibility, Credentials, PublishOptions,
-};
+use wepub_core::firefox::{self, Application, Channel, Compatibility, Credentials};
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
 use crate::commands::common::{read_binary_input, resolve_text_input};
@@ -16,47 +14,46 @@ pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
         bail!("--approval-notes-file and --release-notes-file cannot both read from stdin (\"-\")");
     }
 
-    let mut client = Client::new(
-        args.addon_id,
-        Credentials {
-            api_key: args.api_key,
-            api_secret: args.api_secret,
-        },
-    )?;
-    if let Some(root_url) = args.internal_root_url {
-        client = client.with_root_url(root_url.as_str())?;
-    }
+    let credentials = Credentials {
+        api_key: args.api_key,
+        api_secret: args.api_secret,
+    };
 
     let zip = read_binary_input(&args.zip, "package").await?;
 
     let channel: Channel = args.channel.into();
 
-    let compatibility = build_compatibility(&args.compatibility);
-    let approval_notes = resolve_text_input(
+    let mut publish = firefox::publish(args.addon_id, credentials, zip, channel);
+    if let Some(root_url) = args.internal_root_url {
+        publish = publish.root_url(root_url.as_str());
+    }
+    if let Some(compatibility) = build_compatibility(&args.compatibility) {
+        publish = publish.compatibility(compatibility);
+    }
+    if let Some(approval_notes) = resolve_text_input(
         args.approval_notes,
         args.approval_notes_file.as_deref(),
         "approval notes",
     )
-    .await?;
-    let release_notes = resolve_text_input(
+    .await?
+    {
+        publish = publish.approval_notes(approval_notes);
+    }
+    if let Some(release_notes) = resolve_text_input(
         args.release_notes,
         args.release_notes_file.as_deref(),
         "release notes",
     )
     .await?
-    .map(|text| HashMap::from([(args.release_notes_lang, text)]));
-    let source = match &args.source {
-        Some(path) => Some(read_binary_input(path, "source").await?),
-        None => None,
-    };
-    let options = PublishOptions {
-        compatibility,
-        approval_notes,
-        release_notes,
-        source,
-    };
+    .map(|text| HashMap::from([(args.release_notes_lang, text)]))
+    {
+        publish = publish.release_notes(release_notes);
+    }
+    if let Some(path) = &args.source {
+        publish = publish.source(read_binary_input(path, "source").await?);
+    }
 
-    client.publish(zip, channel, options).await?;
+    publish.await?;
 
     Ok(())
 }

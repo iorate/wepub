@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Project Overview
 
-`wepub` is a CLI to publish browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons. Cargo workspace: `wepub-core` (async library, one `Client` per store with a single `publish` verb) and `wepub` (the `clap`-based binary).
+`wepub` is a CLI to publish browser extensions to Chrome Web Store, Firefox Add-ons, and Edge Add-ons. Cargo workspace: `wepub-core` (async library, one `publish` builder entry point per store) and `wepub` (the `clap`-based binary).
 
 ## Verifying Changes
 
