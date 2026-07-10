@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0](https://github.com/iorate/wepub/compare/v0.8.0...v0.9.0)
+
+### ⛰️ Features
+
+
+- [**breaking**] Replace per-store clients with publish builders ([#92](https://github.com/iorate/wepub/pull/92)) - ([f0e73b8](https://github.com/iorate/wepub/commit/f0e73b8399fb0b9f3a2fa42b7806608709f5113d))
+- [**breaking**] Keep the wire format out of the public API ([#95](https://github.com/iorate/wepub/pull/95)) - ([cd0e5b2](https://github.com/iorate/wepub/commit/cd0e5b2b3a69f0ffc969dc06e6b0a15207f636fa))
+- [**breaking**] Make request enums and error variants non_exhaustive ([#93](https://github.com/iorate/wepub/pull/93)) - ([389679e](https://github.com/iorate/wepub/commit/389679e24e9a3233271e8ea44fda43bbd366fbde))
+- [**breaking**] Remove reqwest from the public API ([#91](https://github.com/iorate/wepub/pull/91)) - ([155444e](https://github.com/iorate/wepub/commit/155444e2e9885482e18a92f44e656c3d22dfaf06))
+
+### 📚 Documentation
+
+
+- State the supported store API versions in the README ([#77](https://github.com/iorate/wepub/pull/77)) - ([d07a451](https://github.com/iorate/wepub/commit/d07a451a42369b3e2975d6217dfeaebb60f77402))
+- Mention uBlacklist's use in the README intro ([#75](https://github.com/iorate/wepub/pull/75)) - ([c3d211d](https://github.com/iorate/wepub/commit/c3d211d80edc43426f78df228f9e0a677ab26445))
+
+
 ## [0.8.0](https://github.com/iorate/wepub/compare/v0.7.1...v0.8.0)
 
 ### ⛰️ Features
