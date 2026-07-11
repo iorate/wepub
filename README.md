@@ -161,6 +161,10 @@ Other flags:
 
 `wepub` reads a `.env` file from the current working directory at startup, so the `WEPUB_*` variables above can live there. Existing shell environment values take precedence over `.env` entries.
 
+### Proxies
+
+`wepub` honors the `http_proxy`, `https_proxy`, and `no_proxy` environment variables (via libcurl); OS-level proxy settings are not read.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0, at your option.

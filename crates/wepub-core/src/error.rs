@@ -94,9 +94,9 @@ pub enum WepubError {
 }
 
 impl WepubError {
-    pub(crate) fn http(source: reqwest::Error) -> Self {
+    pub(crate) fn http(source: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
         Self::Http {
-            source: Box::new(source),
+            source: source.into(),
         }
     }
 }

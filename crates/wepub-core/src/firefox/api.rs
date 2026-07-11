@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use bon::builder;
-use reqwest::multipart::{Form, Part};
+use isahc::HttpClient;
+use isahc::http::{Request, header};
 use serde::{Deserialize, Serialize};
 use tracing::{Level, info, info_span, instrument, warn};
 use url::Url;
@@ -11,6 +12,7 @@ use crate::{
     Result, WepubError,
     common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
+    multipart::Form,
 };
 
 use super::auth::generate_jwt;
@@ -153,8 +155,8 @@ pub async fn publish(
         poll_interval,
         poll_timeout,
     };
-    let http = build_client()?;
-    publish.publish(&http, package, source).await
+    let client = build_client()?;
+    publish.publish(&client, package, source).await
 }
 
 struct Publish {
@@ -181,21 +183,21 @@ impl Publish {
     )]
     async fn publish(
         &self,
-        http: &reqwest::Client,
+        client: &HttpClient,
         package: Vec<u8>,
         source: Option<Vec<u8>>,
     ) -> Result<()> {
         let (upload_uuid, processed) = instrument_step(
             info_span!("upload"),
             Level::ERROR,
-            self.upload(http, package),
+            self.upload(client, package),
         )
         .await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload", upload_uuid = upload_uuid.as_str()),
                 Level::ERROR,
-                self.await_upload(http, &upload_uuid),
+                self.await_upload(client, &upload_uuid),
             )
             .await?;
         }
@@ -203,7 +205,7 @@ impl Publish {
         let version_id = instrument_step(
             info_span!("create_version", upload_uuid = upload_uuid.as_str()),
             Level::ERROR,
-            self.create_version(http, upload_uuid),
+            self.create_version(client, upload_uuid),
         )
         .await?;
         if let Some(source) = source
@@ -212,7 +214,7 @@ impl Publish {
                 // The version is already created, so a source failure doesn't
                 // fail the publish; record it as a warning, not an error.
                 Level::WARN,
-                self.update_version_source(http, version_id, source),
+                self.update_version_source(client, version_id, source),
             )
             .await
             .is_err()
@@ -222,25 +224,20 @@ impl Publish {
         Ok(())
     }
 
-    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<(String, bool)> {
+    async fn upload(&self, client: &HttpClient, package: Vec<u8>) -> Result<(String, bool)> {
         info!("uploading the package archive");
 
-        let len = package.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(package), len)
-            .file_name("addon.zip")
-            .mime_str("application/zip")
-            .expect("\"application/zip\" is a valid MIME type");
-        let form = Form::new()
-            .part("upload", part)
-            .text("channel", self.channel.as_str());
-        let req = http
-            .post(self.endpoint("api/v5/addons/upload/"))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .multipart(form)
-            .build()
+        let (content_type, body) = Form::new()
+            .file("upload", "addon.zip", "application/zip", &package)
+            .text("channel", self.channel.as_str())
+            .finish();
+        let req = Request::post(self.endpoint("api/v5/addons/upload/").as_str())
+            .header(header::AUTHORIZATION, self.auth_header())
+            .header(header::CONTENT_TYPE, content_type)
+            .body(body)
             .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
 
         let upload = decode_response(resp).await?;
         let processed = upload_processed(&upload)?;
@@ -253,7 +250,7 @@ impl Publish {
         Ok((upload.uuid, processed))
     }
 
-    async fn await_upload(&self, http: &reqwest::Client, upload_uuid: &str) -> Result<()> {
+    async fn await_upload(&self, client: &HttpClient, upload_uuid: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
@@ -263,15 +260,17 @@ impl Publish {
             if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_interval).await;
+            async_io::Timer::after(self.poll_interval).await;
 
-            let req = http
-                .get(self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/")))
-                .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .build()
-                .map_err(WepubError::http)?;
+            let req = Request::get(
+                self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))
+                    .as_str(),
+            )
+            .header(header::AUTHORIZATION, self.auth_header())
+            .body(())
+            .map_err(WepubError::http)?;
 
-            let resp = send_request(http, req).await?;
+            let resp = send_request(client, req).await?;
 
             let upload: UploadResponse = decode_response(resp).await?;
             let processed = upload_processed(&upload)?;
@@ -284,7 +283,7 @@ impl Publish {
         Ok(())
     }
 
-    async fn create_version(&self, http: &reqwest::Client, upload_uuid: String) -> Result<u64> {
+    async fn create_version(&self, client: &HttpClient, upload_uuid: String) -> Result<u64> {
         info!("creating the new version");
 
         let body = VersionCreateBody {
@@ -293,14 +292,17 @@ impl Publish {
             approval_notes: self.approval_notes.clone(),
             release_notes: self.release_notes.clone(),
         };
-        let req = http
-            .post(self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id)))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .json(&body)
-            .build()
-            .map_err(WepubError::http)?;
+        let body = serde_json::to_vec(&body).expect("serializing a plain request body cannot fail");
+        let req = Request::post(
+            self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))
+                .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
 
         let version: VersionResponse = decode_response(resp).await?;
 
@@ -310,29 +312,28 @@ impl Publish {
 
     async fn update_version_source(
         &self,
-        http: &reqwest::Client,
+        client: &HttpClient,
         version_id: u64,
         source: Vec<u8>,
     ) -> Result<()> {
         info!("updating the source archive");
 
-        let len = source.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(source), len)
-            .file_name("source.zip")
-            .mime_str("application/zip")
-            .expect("\"application/zip\" is a valid MIME type");
-        let form = Form::new().part("source", part);
-        let req = http
-            .patch(self.endpoint(&format!(
+        let (content_type, body) = Form::new()
+            .file("source", "source.zip", "application/zip", &source)
+            .finish();
+        let req = Request::patch(
+            self.endpoint(&format!(
                 "api/v5/addons/addon/{}/versions/{version_id}/",
                 self.addon_id
-            )))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .multipart(form)
-            .build()
-            .map_err(WepubError::http)?;
+            ))
+            .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::CONTENT_TYPE, content_type)
+        .body(body)
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
 
         let _: VersionResponse = decode_response(resp).await?;
 
@@ -453,11 +454,32 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let resp = p.upload(&http, b"fake-zip".to_vec()).await.unwrap();
+        let client = http_client();
+        let resp = p.upload(&client, b"fake-zip".to_vec()).await.unwrap();
 
         assert_eq!(resp.0, "abc-123");
         assert!(!resp.1);
+
+        let received = server.received_requests().await.unwrap();
+        let req = &received[0];
+        let content_type = req.headers.get("content-type").unwrap().to_str().unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap_or_else(|| panic!("unexpected content type: {content_type}"));
+        let body = std::str::from_utf8(&req.body).unwrap();
+        let expected = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"upload\"; filename=\"addon.zip\"\r\n\
+             Content-Type: application/zip\r\n\
+             \r\n\
+             fake-zip\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"channel\"\r\n\
+             \r\n\
+             listed\r\n\
+             --{boundary}--\r\n"
+        );
+        assert_eq!(body, expected);
     }
 
     #[tokio::test]
@@ -482,8 +504,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.await_upload(&http, "uuid-1").await.unwrap();
+        let client = http_client();
+        p.await_upload(&client, "uuid-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -506,8 +528,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http, "uuid-2").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client, "uuid-2").await.unwrap_err();
 
         match err {
             WepubError::FirefoxUpload { validation } => {
@@ -529,8 +551,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http, "uuid-3").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client, "uuid-3").await.unwrap_err();
 
         match err {
             WepubError::PollTimeout { .. } => {}
@@ -593,8 +615,11 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let resp = p.create_version(&http, "uuid-x".to_string()).await.unwrap();
+        let client = http_client();
+        let resp = p
+            .create_version(&client, "uuid-x".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(resp, 4242);
     }
@@ -611,10 +636,26 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.update_version_source(&http, 4242, b"source-zip".to_vec())
+        let client = http_client();
+        p.update_version_source(&client, 4242, b"source-zip".to_vec())
             .await
             .unwrap();
+
+        let received = server.received_requests().await.unwrap();
+        let req = &received[0];
+        let content_type = req.headers.get("content-type").unwrap().to_str().unwrap();
+        assert!(
+            content_type.starts_with("multipart/form-data; boundary="),
+            "unexpected content type: {content_type}",
+        );
+        let body = std::str::from_utf8(&req.body).unwrap();
+        assert!(
+            body.contains(
+                "Content-Disposition: form-data; name=\"source\"; filename=\"source.zip\""
+            ),
+            "body: {body}",
+        );
+        assert!(body.contains("source-zip"), "body: {body}");
     }
 
     #[tokio::test]
@@ -871,7 +912,7 @@ mod tests {
             .unwrap();
     }
 
-    fn http_client() -> reqwest::Client {
+    fn http_client() -> HttpClient {
         build_client().unwrap()
     }
 

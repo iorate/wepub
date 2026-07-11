@@ -26,6 +26,8 @@ publish()
 
 See the full API on [docs.rs](https://docs.rs/wepub-core).
 
+HTTP requests honor the `http_proxy`, `https_proxy`, and `no_proxy` environment variables (via libcurl); OS-level proxy settings are not read.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0, at your option.
