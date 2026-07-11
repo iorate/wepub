@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices", "group:allNonMajor"],
+  "extends": ["config:best-practices", "group:allNonMajor", ":automergeMinor"],
   "ignorePresets": [":pinDevDependencies"],
   "enabledManagers": ["cargo", "github-actions", "custom.regex"],
   "ignorePaths": [".github/workflows/release.yml"],
@@ -34,7 +34,8 @@
       "matchManagers": ["cargo"],
       "matchCurrentVersion": "<1",
       "matchUpdateTypes": ["minor"],
-      "groupName": null
+      "groupName": null,
+      "automerge": false
     }
   ],
   "lockFileMaintenance": {
