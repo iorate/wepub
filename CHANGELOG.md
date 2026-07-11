@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/iorate/wepub/compare/v0.9.0...v0.9.1)
+
+### ⛰️ Features
+
+
+- Replace reqwest with isahc and drop the Tokio requirement ([#98](https://github.com/iorate/wepub/pull/98)) - ([1db136e](https://github.com/iorate/wepub/commit/1db136e3d19db4346bc1f2daf66cdbb33aea8924))
+
+
 ## [0.9.0](https://github.com/iorate/wepub/compare/v0.8.0...v0.9.0)
 
 ### ⛰️ Features
