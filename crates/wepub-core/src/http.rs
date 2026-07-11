@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use isahc::HttpClient;
-use isahc::config::Configurable;
+use isahc::config::{Configurable, RedirectPolicy};
 use isahc::http::header;
 
 use crate::{Result, WepubError};
@@ -17,6 +17,7 @@ pub(crate) fn build_client() -> Result<HttpClient> {
         .connect_timeout(CONNECT_TIMEOUT)
         .low_speed_timeout(STALL_SPEED_LIMIT, STALL_TIMEOUT)
         .expect_continue(false)
+        .redirect_policy(RedirectPolicy::Limit(10))
         .build()
         .map_err(WepubError::http)?;
     Ok(client)

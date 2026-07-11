@@ -214,12 +214,12 @@ impl Publish {
         )
         .header(header::AUTHORIZATION, self.auth_header())
         .header("X-ClientID", &self.client_id);
-        // Docs disagree on the notes body (reference page says plain text,
-        // using page says JSON). What is known to work on the wire is plain
-        // text: the wdzeng/edge-addon action sends it via axios, whose
-        // default Content-Type the server evidently ignores, so declare the
-        // honest text/plain here.
+        // Docs disagree (reference page says plain text, using page says
+        // JSON); wdzeng/edge-addon reports plain text "worked":
         // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
+        // Unlike wdzeng/edge-addon, which sends it as
+        // application/x-www-form-urlencoded (axios's default), we send
+        // text/plain.
         let req = match notes {
             Some(notes) => builder
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")

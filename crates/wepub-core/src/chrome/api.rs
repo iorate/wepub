@@ -171,8 +171,6 @@ pub async fn publish(
     publish.publish(&client, package).await
 }
 
-// The `publish_type` field mirrors the wire field `publishType`; the overlap
-// with the struct name is a false positive.
 #[allow(clippy::struct_field_names)]
 struct Publish {
     publisher_id: String,
@@ -815,7 +813,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_accepts_non_terminal_item_states() {
-        for wire in [
+        for state in [
             "PENDING_REVIEW",
             "STAGED",
             "PUBLISHED",
@@ -825,7 +823,7 @@ mod tests {
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                     "itemId": "item-1",
-                    "state": wire,
+                    "state": state,
                 })))
                 .mount(&server)
                 .await;
@@ -834,7 +832,7 @@ mod tests {
             let client = http_client();
             p.submit(&client)
                 .await
-                .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
+                .unwrap_or_else(|err| panic!("state {state} should be accepted, got {err:?}"));
         }
     }
 
