@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use bon::builder;
-use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use tracing::{Level, info, info_span, instrument, warn};
 use url::Url;
@@ -11,6 +10,7 @@ use crate::{
     Result, WepubError,
     common::{decode_response, instrument_step, join_endpoint, send_request},
     http::build_client,
+    multipart::Form,
 };
 
 use super::auth::generate_jwt;
@@ -225,18 +225,15 @@ impl Publish {
     async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<(String, bool)> {
         info!("uploading the package archive");
 
-        let len = package.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(package), len)
-            .file_name("addon.zip")
-            .mime_str("application/zip")
-            .expect("\"application/zip\" is a valid MIME type");
-        let form = Form::new()
-            .part("upload", part)
-            .text("channel", self.channel.as_str());
+        let (content_type, body) = Form::new()
+            .file("upload", "addon.zip", "application/zip", &package)
+            .text("channel", self.channel.as_str())
+            .finish();
         let req = http
             .post(self.endpoint("api/v5/addons/upload/"))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .multipart(form)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body)
             .build()
             .map_err(WepubError::http)?;
 
@@ -316,19 +313,17 @@ impl Publish {
     ) -> Result<()> {
         info!("updating the source archive");
 
-        let len = source.len() as u64;
-        let part = Part::stream_with_length(reqwest::Body::from(source), len)
-            .file_name("source.zip")
-            .mime_str("application/zip")
-            .expect("\"application/zip\" is a valid MIME type");
-        let form = Form::new().part("source", part);
+        let (content_type, body) = Form::new()
+            .file("source", "source.zip", "application/zip", &source)
+            .finish();
         let req = http
             .patch(self.endpoint(&format!(
                 "api/v5/addons/addon/{}/versions/{version_id}/",
                 self.addon_id
             )))
             .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .multipart(form)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(body)
             .build()
             .map_err(WepubError::http)?;
 
@@ -458,6 +453,27 @@ mod tests {
 
         assert_eq!(resp.0, "abc-123");
         assert!(!resp.1);
+
+        let received = server.received_requests().await.unwrap();
+        let req = &received[0];
+        let content_type = req.headers.get("content-type").unwrap().to_str().unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/form-data; boundary=")
+            .unwrap_or_else(|| panic!("unexpected content type: {content_type}"));
+        let body = std::str::from_utf8(&req.body).unwrap();
+        let expected = format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"upload\"; filename=\"addon.zip\"\r\n\
+             Content-Type: application/zip\r\n\
+             \r\n\
+             fake-zip\r\n\
+             --{boundary}\r\n\
+             Content-Disposition: form-data; name=\"channel\"\r\n\
+             \r\n\
+             listed\r\n\
+             --{boundary}--\r\n"
+        );
+        assert_eq!(body, expected);
     }
 
     #[tokio::test]
@@ -615,6 +631,22 @@ mod tests {
         p.update_version_source(&http, 4242, b"source-zip".to_vec())
             .await
             .unwrap();
+
+        let received = server.received_requests().await.unwrap();
+        let req = &received[0];
+        let content_type = req.headers.get("content-type").unwrap().to_str().unwrap();
+        assert!(
+            content_type.starts_with("multipart/form-data; boundary="),
+            "unexpected content type: {content_type}",
+        );
+        let body = std::str::from_utf8(&req.body).unwrap();
+        assert!(
+            body.contains(
+                "Content-Disposition: form-data; name=\"source\"; filename=\"source.zip\""
+            ),
+            "body: {body}",
+        );
+        assert!(body.contains("source-zip"), "body: {body}");
     }
 
     #[tokio::test]

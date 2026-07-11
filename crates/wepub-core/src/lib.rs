@@ -38,6 +38,7 @@
 mod common;
 mod error;
 mod http;
+mod multipart;
 
 pub mod chrome;
 pub mod edge;
