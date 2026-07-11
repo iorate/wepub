@@ -1,3 +1,5 @@
+use isahc::http::{Request, header};
+use isahc::{AsyncReadResponseExt, HttpClient};
 use serde::Deserialize;
 use tracing::debug;
 use url::Url;
@@ -7,24 +9,24 @@ use crate::{Result, WepubError, common::send_request};
 pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
 pub(crate) async fn refresh_access_token(
-    client: &reqwest::Client,
+    client: &HttpClient,
     token_url: Url,
     client_id: &str,
     client_secret: &str,
     refresh_token: &str,
 ) -> Result<String> {
-    let req = client
-        .post(token_url)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("refresh_token", refresh_token),
-        ])
-        .build()
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", "refresh_token")
+        .append_pair("client_id", client_id)
+        .append_pair("client_secret", client_secret)
+        .append_pair("refresh_token", refresh_token)
+        .finish();
+    let req = Request::post(token_url.as_str())
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(body)
         .map_err(WepubError::http)?;
 
-    let resp = send_request(client, req).await?;
+    let mut resp = send_request(client, req).await?;
 
     let status = resp.status();
     let body = resp.text().await.map_err(WepubError::http)?;
@@ -77,7 +79,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn refresh(server: &MockServer, secret: &str) -> Result<String> {
-        let client = reqwest::Client::new();
+        let client = crate::http::build_client().unwrap();
         let token_url = Url::parse(&server.uri()).unwrap();
         refresh_access_token(
             &client,

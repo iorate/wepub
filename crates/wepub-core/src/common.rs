@@ -1,3 +1,5 @@
+use isahc::http::{Request, Response};
+use isahc::{AsyncBody, AsyncReadResponseExt, HttpClient};
 use tracing::{Instrument, Level, Span, debug};
 use url::Url;
 
@@ -19,21 +21,22 @@ pub(crate) fn join_endpoint(root: &Url, path: &str) -> Url {
     url
 }
 
-pub(crate) async fn send_request(
-    client: &reqwest::Client,
-    req: reqwest::Request,
-) -> Result<reqwest::Response> {
+pub(crate) async fn send_request<B: Into<AsyncBody>>(
+    client: &HttpClient,
+    req: Request<B>,
+) -> Result<Response<AsyncBody>> {
+    let url = req.uri().to_string();
     debug!(
         method = req.method().as_str(),
-        url = req.url().as_str(),
+        url = url.as_str(),
         "sending request"
     );
-    let resp = client.execute(req).await.map_err(WepubError::http)?;
+    let resp = client.send_async(req).await.map_err(WepubError::http)?;
     Ok(resp)
 }
 
 pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
-    resp: reqwest::Response,
+    mut resp: Response<AsyncBody>,
 ) -> Result<T> {
     let status = resp.status();
     let body = resp.text().await.map_err(WepubError::http)?;

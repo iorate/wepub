@@ -12,6 +12,11 @@
 //!
 //! All stores share the [`WepubError`] error type and the [`Result`] alias.
 //!
+//! The async API is runtime-agnostic: the returned futures can be awaited
+//! on any executor, and no Tokio runtime is required. Each `publish` (or
+//! `fetch_access_token`) call drives its HTTP I/O on a dedicated background
+//! thread that lives for the duration of the call.
+//!
 //! # Example
 //!
 //! ```no_run

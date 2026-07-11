@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
 use bon::builder;
+use isahc::http::{Request, Response, header};
+use isahc::{AsyncBody, AsyncReadResponseExt, HttpClient};
 use serde::Deserialize;
 use tracing::{Level, debug, info, info_span, instrument};
 use url::Url;
@@ -77,8 +79,8 @@ pub async fn publish(
         poll_interval,
         poll_timeout,
     };
-    let http = build_client()?;
-    publish.publish(&http, package, notes).await
+    let client = build_client()?;
+    publish.publish(&client, package, notes).await
 }
 
 struct Publish {
@@ -94,14 +96,14 @@ impl Publish {
     #[instrument(skip_all, fields(store = "edge", product_id = self.product_id.as_str()))]
     async fn publish(
         &self,
-        http: &reqwest::Client,
+        client: &HttpClient,
         package: Vec<u8>,
         notes: Option<String>,
     ) -> Result<()> {
         let upload_operation_id = instrument_step(
             info_span!("upload"),
             Level::ERROR,
-            self.upload(http, package),
+            self.upload(client, package),
         )
         .await?;
         instrument_step(
@@ -110,41 +112,46 @@ impl Publish {
                 upload_operation_id = upload_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_upload(http, &upload_operation_id),
+            self.await_upload(client, &upload_operation_id),
         )
         .await?;
 
-        let publish_operation_id =
-            instrument_step(info_span!("submit"), Level::ERROR, self.submit(http, notes)).await?;
+        let publish_operation_id = instrument_step(
+            info_span!("submit"),
+            Level::ERROR,
+            self.submit(client, notes),
+        )
+        .await?;
         instrument_step(
             info_span!(
                 "await_submit",
                 publish_operation_id = publish_operation_id.as_str()
             ),
             Level::ERROR,
-            self.await_submit(http, &publish_operation_id),
+            self.await_submit(client, &publish_operation_id),
         )
         .await?;
 
         Ok(())
     }
 
-    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<String> {
+    async fn upload(&self, client: &HttpClient, package: Vec<u8>) -> Result<String> {
         info!("uploading the package archive");
 
-        let req = http
-            .post(self.endpoint(&format!(
+        let req = Request::post(
+            self.endpoint(&format!(
                 "v1/products/{}/submissions/draft/package",
                 self.product_id
-            )))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id)
-            .header(reqwest::header::CONTENT_TYPE, "application/zip")
-            .body(package)
-            .build()
-            .map_err(WepubError::http)?;
+            ))
+            .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header("X-ClientID", &self.client_id)
+        .header(header::CONTENT_TYPE, "application/zip")
+        .body(package)
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -154,7 +161,7 @@ impl Publish {
         Ok(operation_id)
     }
 
-    async fn await_upload(&self, http: &reqwest::Client, upload_operation_id: &str) -> Result<()> {
+    async fn await_upload(&self, client: &HttpClient, upload_operation_id: &str) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
@@ -164,19 +171,21 @@ impl Publish {
             if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_interval).await;
+            async_io::Timer::after(self.poll_interval).await;
 
-            let req = http
-                .get(self.endpoint(&format!(
+            let req = Request::get(
+                self.endpoint(&format!(
                     "v1/products/{}/submissions/draft/package/operations/{upload_operation_id}",
                     self.product_id
-                )))
-                .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
-                .build()
-                .map_err(WepubError::http)?;
+                ))
+                .as_str(),
+            )
+            .header(header::AUTHORIZATION, self.auth_header())
+            .header("X-ClientID", &self.client_id)
+            .body(())
+            .map_err(WepubError::http)?;
 
-            let resp = send_request(http, req).await?;
+            let resp = send_request(client, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -196,22 +205,30 @@ impl Publish {
         Ok(())
     }
 
-    async fn submit(&self, http: &reqwest::Client, notes: Option<String>) -> Result<String> {
+    async fn submit(&self, client: &HttpClient, notes: Option<String>) -> Result<String> {
         info!("submitting the draft");
 
-        let mut req = http
-            .post(self.endpoint(&format!("v1/products/{}/submissions", self.product_id)))
-            .header(reqwest::header::AUTHORIZATION, self.auth_header())
-            .header("X-ClientID", &self.client_id);
-        if let Some(notes) = notes {
-            // Docs disagree (reference page says plain text, using page says
-            // JSON); wdzeng/edge-addon reports plain text "worked":
-            // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
-            req = req.body(notes);
+        let builder = Request::post(
+            self.endpoint(&format!("v1/products/{}/submissions", self.product_id))
+                .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header("X-ClientID", &self.client_id);
+        // Docs disagree on the notes body (reference page says plain text,
+        // using page says JSON). What is known to work on the wire is plain
+        // text: the wdzeng/edge-addon action sends it via axios, whose
+        // default Content-Type the server evidently ignores, so declare the
+        // honest text/plain here.
+        // https://github.com/wdzeng/edge-addon/pull/11#issuecomment-2503315960
+        let req = match notes {
+            Some(notes) => builder
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(AsyncBody::from(notes)),
+            None => builder.body(AsyncBody::empty()),
         }
-        let req = req.build().map_err(WepubError::http)?;
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
         let operation_id = extract_operation_id(resp).await?;
 
         info!(
@@ -221,7 +238,7 @@ impl Publish {
         Ok(operation_id)
     }
 
-    async fn await_submit(&self, http: &reqwest::Client, publish_operation_id: &str) -> Result<()> {
+    async fn await_submit(&self, client: &HttpClient, publish_operation_id: &str) -> Result<()> {
         info!("waiting for the submission to be processed");
 
         let started = Instant::now();
@@ -231,19 +248,21 @@ impl Publish {
             if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_interval).await;
+            async_io::Timer::after(self.poll_interval).await;
 
-            let req = http
-                .get(self.endpoint(&format!(
+            let req = Request::get(
+                self.endpoint(&format!(
                     "v1/products/{}/submissions/operations/{}",
                     self.product_id, publish_operation_id
-                )))
-                .header(reqwest::header::AUTHORIZATION, self.auth_header())
-                .header("X-ClientID", &self.client_id)
-                .build()
-                .map_err(WepubError::http)?;
+                ))
+                .as_str(),
+            )
+            .header(header::AUTHORIZATION, self.auth_header())
+            .header("X-ClientID", &self.client_id)
+            .body(())
+            .map_err(WepubError::http)?;
 
-            let resp = send_request(http, req).await?;
+            let resp = send_request(client, req).await?;
 
             let operation: OperationResponse = decode_response(resp).await?;
             match operation.status {
@@ -293,9 +312,9 @@ struct OperationResponse {
     errors: Option<Vec<serde_json::Value>>,
 }
 
-async fn extract_operation_id(resp: reqwest::Response) -> Result<String> {
+async fn extract_operation_id(mut resp: Response<AsyncBody>) -> Result<String> {
     let status = resp.status();
-    let location = resp.headers().get(reqwest::header::LOCATION).cloned();
+    let location = resp.headers().get(header::LOCATION).cloned();
     let body = resp.text().await.map_err(WepubError::http)?;
     debug!(
         status = status.as_u16(),
@@ -350,8 +369,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let op_id = p.upload(&http, b"FAKE_ZIP".to_vec()).await.unwrap();
+        let client = http_client();
+        let op_id = p.upload(&client, b"FAKE_ZIP".to_vec()).await.unwrap();
         assert_eq!(op_id, "operation-abc-123");
     }
 
@@ -364,8 +383,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
+        let client = http_client();
+        let err = p.upload(&client, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -384,8 +403,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
+        let client = http_client();
+        let err = p.upload(&client, b"FAKE".to_vec()).await.unwrap_err();
         assert!(
             matches!(err, WepubError::UnexpectedResponse { .. }),
             "got {err:?}"
@@ -419,8 +438,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.await_upload(&http, "op-1").await.unwrap();
+        let client = http_client();
+        p.await_upload(&client, "op-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -438,8 +457,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http, "op-2").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client, "op-2").await.unwrap_err();
         match err {
             WepubError::EdgeApi {
                 message,
@@ -471,8 +490,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http, "up-u").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client, "up-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -496,8 +515,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http, "op-3").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client, "op-3").await.unwrap_err();
         match err {
             WepubError::PollTimeout { .. } => {}
             other => panic!("expected WepubError::PollTimeout, got {other:?}"),
@@ -521,19 +540,18 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
+        let client = http_client();
         let op_id = p
-            .submit(&http, Some("for reviewers".to_string()))
+            .submit(&client, Some("for reviewers".to_string()))
             .await
             .unwrap();
         assert_eq!(op_id, "publish-op-1");
 
         let received = server.received_requests().await.unwrap();
         let req = &received[0];
-        assert!(
-            req.headers.get("content-type").is_none(),
-            "Content-Type must not be set; got {:?}",
-            req.headers.get("content-type"),
+        assert_eq!(
+            req.headers.get("content-type").unwrap(),
+            "text/plain; charset=utf-8",
         );
     }
 
@@ -549,8 +567,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let op_id = p.submit(&http, None).await.unwrap();
+        let client = http_client();
+        let op_id = p.submit(&client, None).await.unwrap();
         assert_eq!(op_id, "publish-op-2");
 
         let received = server.received_requests().await.unwrap();
@@ -588,8 +606,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.await_submit(&http, "pub-1").await.unwrap();
+        let client = http_client();
+        p.await_submit(&client, "pub-1").await.unwrap();
     }
 
     #[tokio::test]
@@ -631,8 +649,8 @@ mod tests {
                 .await;
 
             let p = publish_for(&server);
-            let http = http_client();
-            let err = p.await_submit(&http, "pub-x").await.unwrap_err();
+            let client = http_client();
+            let err = p.await_submit(&client, "pub-x").await.unwrap_err();
             match err {
                 WepubError::EdgeApi {
                     message: actual_message,
@@ -661,8 +679,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_submit(&http, "pub-u").await.unwrap_err();
+        let client = http_client();
+        let err = p.await_submit(&client, "pub-u").await.unwrap_err();
         match err {
             WepubError::EdgeApi { message, .. } => {
                 assert!(
@@ -745,7 +763,7 @@ mod tests {
         );
     }
 
-    fn http_client() -> reqwest::Client {
+    fn http_client() -> HttpClient {
         build_client().unwrap()
     }
 

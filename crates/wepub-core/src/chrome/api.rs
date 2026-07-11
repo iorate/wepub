@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
 use bon::builder;
+use isahc::HttpClient;
+use isahc::http::{Request, header};
 use serde::{Deserialize, Serialize};
 use tracing::{Level, info, info_span, instrument};
 use url::Url;
@@ -73,14 +75,14 @@ pub async fn fetch_access_token(
     #[builder(default = Url::parse(DEFAULT_TOKEN_URL).expect("DEFAULT_TOKEN_URL is a valid URL"))]
     token_url: Url,
 ) -> Result<String> {
-    let http = build_client()?;
+    let client = build_client()?;
     instrument_step(
         info_span!("fetch_access_token", store = "chrome"),
         Level::ERROR,
         async {
             info!("fetching the access token");
             let token = auth::refresh_access_token(
-                &http,
+                &client,
                 token_url,
                 &client_id,
                 &client_secret,
@@ -165,8 +167,8 @@ pub async fn publish(
         poll_interval,
         poll_timeout,
     };
-    let http = build_client()?;
-    publish.publish(&http, package).await
+    let client = build_client()?;
+    publish.publish(&client, package).await
 }
 
 // The `publish_type` field mirrors the wire field `publishType`; the overlap
@@ -193,42 +195,43 @@ impl Publish {
             item_id = self.item_id.as_str(),
         )
     )]
-    async fn publish(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<()> {
+    async fn publish(&self, client: &HttpClient, package: Vec<u8>) -> Result<()> {
         let processed = instrument_step(
             info_span!("upload"),
             Level::ERROR,
-            self.upload(http, package),
+            self.upload(client, package),
         )
         .await?;
         if !processed {
             instrument_step(
                 info_span!("await_upload"),
                 Level::ERROR,
-                self.await_upload(http),
+                self.await_upload(client),
             )
             .await?;
         }
 
-        instrument_step(info_span!("submit"), Level::ERROR, self.submit(http)).await?;
+        instrument_step(info_span!("submit"), Level::ERROR, self.submit(client)).await?;
 
         Ok(())
     }
 
-    async fn upload(&self, http: &reqwest::Client, package: Vec<u8>) -> Result<bool> {
+    async fn upload(&self, client: &HttpClient, package: Vec<u8>) -> Result<bool> {
         info!("uploading the package archive");
 
-        let req = http
-            .post(self.endpoint(&format!(
+        let req = Request::post(
+            self.endpoint(&format!(
                 "upload/v2/publishers/{}/items/{}:upload",
                 self.publisher_id, self.item_id
-            )))
-            .bearer_auth(&self.access_token)
-            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .body(package)
-            .build()
-            .map_err(WepubError::http)?;
+            ))
+            .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(package)
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
 
         let upload: UploadResponse = decode_response(resp).await?;
         let processed = upload_processed(Some(upload.upload_state))?;
@@ -240,7 +243,7 @@ impl Publish {
         Ok(processed)
     }
 
-    async fn await_upload(&self, http: &reqwest::Client) -> Result<()> {
+    async fn await_upload(&self, client: &HttpClient) -> Result<()> {
         info!("waiting for the upload to be processed");
 
         let started = Instant::now();
@@ -250,18 +253,20 @@ impl Publish {
             if elapsed >= self.poll_timeout {
                 return Err(WepubError::PollTimeout { elapsed });
             }
-            tokio::time::sleep(self.poll_interval).await;
+            async_io::Timer::after(self.poll_interval).await;
 
-            let req = http
-                .get(self.endpoint(&format!(
+            let req = Request::get(
+                self.endpoint(&format!(
                     "v2/publishers/{}/items/{}:fetchStatus",
                     self.publisher_id, self.item_id
-                )))
-                .bearer_auth(&self.access_token)
-                .build()
-                .map_err(WepubError::http)?;
+                ))
+                .as_str(),
+            )
+            .header(header::AUTHORIZATION, self.auth_header())
+            .body(())
+            .map_err(WepubError::http)?;
 
-            let resp = send_request(http, req).await?;
+            let resp = send_request(client, req).await?;
 
             let status: FetchStatusResponse = decode_response(resp).await?;
             let processed = upload_processed(status.last_async_upload_state)?;
@@ -274,7 +279,7 @@ impl Publish {
         Ok(())
     }
 
-    async fn submit(&self, http: &reqwest::Client) -> Result<()> {
+    async fn submit(&self, client: &HttpClient) -> Result<()> {
         info!("submitting the draft");
 
         let body = PublishRequestBody {
@@ -286,17 +291,20 @@ impl Publish {
             }),
             skip_review: self.skip_review,
         };
-        let req = http
-            .post(self.endpoint(&format!(
+        let body = serde_json::to_vec(&body).expect("serializing a plain request body cannot fail");
+        let req = Request::post(
+            self.endpoint(&format!(
                 "v2/publishers/{}/items/{}:publish",
                 self.publisher_id, self.item_id
-            )))
-            .bearer_auth(&self.access_token)
-            .json(&body)
-            .build()
-            .map_err(WepubError::http)?;
+            ))
+            .as_str(),
+        )
+        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .map_err(WepubError::http)?;
 
-        let resp = send_request(http, req).await?;
+        let resp = send_request(client, req).await?;
 
         let publish: PublishResponse = decode_response(resp).await?;
         if let ItemState::Rejected | ItemState::Cancelled = publish.state {
@@ -311,6 +319,10 @@ impl Publish {
 
     fn endpoint(&self, path: &str) -> Url {
         join_endpoint(&self.root_url, path)
+    }
+
+    fn auth_header(&self) -> String {
+        format!("Bearer {}", self.access_token)
     }
 }
 
@@ -465,8 +477,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.upload(&http, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
+        let client = http_client();
+        p.upload(&client, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
     }
 
     // Regression guard: official V2 curl example sends neither X-Goog-Upload-Protocol
@@ -485,8 +497,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.upload(&http, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
+        let client = http_client();
+        p.upload(&client, b"FAKE_ZIP_BYTES".to_vec()).await.unwrap();
 
         for req in server.received_requests().await.unwrap_or_default() {
             assert!(
@@ -511,8 +523,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let resp = p.upload(&http, b"FAKE".to_vec()).await.unwrap();
+        let client = http_client();
+        let resp = p.upload(&client, b"FAKE".to_vec()).await.unwrap();
         assert!(!resp);
     }
 
@@ -525,8 +537,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
+        let client = http_client();
+        let err = p.upload(&client, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 401);
@@ -547,8 +559,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.upload(&http, b"FAKE".to_vec()).await.unwrap_err();
+        let client = http_client();
+        let err = p.upload(&client, b"FAKE".to_vec()).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -571,8 +583,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.await_upload(&http).await.unwrap();
+        let client = http_client();
+        p.await_upload(&client).await.unwrap();
     }
 
     #[tokio::test]
@@ -586,8 +598,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "FAILED");
@@ -608,8 +620,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "UPLOAD_STATE_UNSPECIFIED");
@@ -629,8 +641,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client).await.unwrap_err();
         match err {
             WepubError::ChromeUpload { upload_state } => {
                 assert_eq!(upload_state, "NOT_FOUND");
@@ -650,8 +662,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.await_upload(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.await_upload(&client).await.unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("timeout") || msg.to_lowercase().contains("timed out"),
@@ -694,8 +706,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        p.submit(&http).await.unwrap();
+        let client = http_client();
+        p.submit(&client).await.unwrap();
 
         let received = server.received_requests().await.unwrap();
         let body_str = std::str::from_utf8(&received[0].body).unwrap();
@@ -729,8 +741,8 @@ mod tests {
 
         let mut p = publish_for(&server);
         p.publish_type = Some(PublishType::StagedPublish);
-        let http = http_client();
-        p.submit(&http).await.unwrap();
+        let client = http_client();
+        p.submit(&client).await.unwrap();
     }
 
     #[tokio::test]
@@ -751,8 +763,8 @@ mod tests {
         let mut p = publish_for(&server);
         p.skip_review = Some(true);
         p.deploy_percentage = Some(50);
-        let http = http_client();
-        p.submit(&http).await.unwrap();
+        let client = http_client();
+        p.submit(&client).await.unwrap();
     }
 
     #[tokio::test]
@@ -768,8 +780,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.submit(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.submit(&client).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "REJECTED");
@@ -791,8 +803,8 @@ mod tests {
             .await;
 
         let p = publish_for(&server);
-        let http = http_client();
-        let err = p.submit(&http).await.unwrap_err();
+        let client = http_client();
+        let err = p.submit(&client).await.unwrap_err();
         match err {
             WepubError::ChromePublish { item_state } => {
                 assert_eq!(item_state, "CANCELLED");
@@ -819,8 +831,8 @@ mod tests {
                 .await;
 
             let p = publish_for(&server);
-            let http = http_client();
-            p.submit(&http)
+            let client = http_client();
+            p.submit(&client)
                 .await
                 .unwrap_or_else(|err| panic!("wire value {wire} should succeed, got {err:?}"));
         }
@@ -899,7 +911,7 @@ mod tests {
         run_publish(&server).await.unwrap();
     }
 
-    fn http_client() -> reqwest::Client {
+    fn http_client() -> HttpClient {
         build_client().unwrap()
     }
 
