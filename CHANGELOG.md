@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.2](https://github.com/iorate/wepub/compare/v0.9.1...v0.9.2)
+
+### ⛰️ Features
+
+
+- Let publish builders be awaited directly via IntoFuture ([#103](https://github.com/iorate/wepub/pull/103)) - ([8b91aff](https://github.com/iorate/wepub/commit/8b91affe5b70637dfbce89f5aaff71003f2b5122))
+
+
 ## [0.9.1](https://github.com/iorate/wepub/compare/v0.9.0...v0.9.1)
 
 ### ⛰️ Features
