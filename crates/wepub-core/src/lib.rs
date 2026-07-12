@@ -2,7 +2,7 @@
 //!
 //! `wepub-core` is the engine behind the [`wepub`][wepub-bin] command-line
 //! tool. It exposes one `publish` entry point per supported store, returning
-//! a builder that runs when finished with `call()`.
+//! a builder that runs when awaited directly or finished with `call()`.
 //!
 //! Currently supported stores:
 //!
@@ -30,7 +30,6 @@
 //!     .api_secret("jwt-secret")
 //!     .package(package)
 //!     .channel(Channel::Listed)
-//!     .call()
 //!     .await?;
 //! # Ok(())
 //! # }

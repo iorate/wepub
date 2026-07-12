@@ -6,7 +6,7 @@
 
 Asynchronous client library for publishing browser extensions to web stores.
 
-`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `publish` entry point per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons), returning a builder that runs when finished with `call()`.
+`wepub-core` is the engine behind the [`wepub`](https://crates.io/crates/wepub) command-line tool. It exposes one `publish` entry point per supported store (Chrome Web Store, Firefox Add-ons, and Edge Add-ons), returning a builder that runs when awaited directly or finished with `call()`.
 
 ## Example
 
@@ -20,7 +20,6 @@ publish()
     .api_secret("jwt-secret")
     .package(package)
     .channel(Channel::Listed)
-    .call()
     .await?;
 ```
 

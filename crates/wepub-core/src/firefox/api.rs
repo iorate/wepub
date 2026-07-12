@@ -83,8 +83,8 @@ pub struct VersionRange {
 /// Publish a package to Firefox Add-ons.
 ///
 /// Returns a builder: set the required parameters and any options with the
-/// setter methods, then finish with `call()` to upload the package and
-/// submit the new version.
+/// setter methods, then run it by awaiting the builder directly or by
+/// finishing with `call()` to upload the package and submit the new version.
 ///
 /// # Examples
 ///
@@ -99,12 +99,11 @@ pub struct VersionRange {
 ///     .api_secret("jwt-secret")
 ///     .package(package)
 ///     .channel(Channel::Listed)
-///     .call()
 ///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-#[builder(on(String, into))]
+#[builder(on(String, into), derive(IntoFuture(Box)))]
 pub async fn publish(
     /// Add-on ID (slug or GUID).
     addon_id: String,

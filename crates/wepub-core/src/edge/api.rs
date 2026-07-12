@@ -20,8 +20,8 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Publish a package to Edge Add-ons.
 ///
 /// Returns a builder: set the required parameters and any options with the
-/// setter methods, then finish with `call()` to upload the package and
-/// submit the draft.
+/// setter methods, then run it by awaiting the builder directly or by
+/// finishing with `call()` to upload the package and submit the draft.
 ///
 /// # Examples
 ///
@@ -35,12 +35,11 @@ const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 ///     .client_id("client-id")
 ///     .api_key("api-key")
 ///     .package(package)
-///     .call()
 ///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-#[builder(on(String, into))]
+#[builder(on(String, into), derive(IntoFuture(Box)))]
 pub async fn publish(
     /// Product ID (GUID).
     product_id: String,
