@@ -42,8 +42,8 @@ impl PublishType {
 /// Exchange an OAuth refresh token for an access token.
 ///
 /// Returns a builder: set the required parameters with the setter methods,
-/// then finish with `call()` to perform the exchange. Obtain the client
-/// credentials and refresh token by following
+/// then run it by awaiting the builder directly or by finishing with
+/// `call()`. Obtain the client credentials and refresh token by following
 /// [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api).
 ///
 /// # Examples
@@ -56,12 +56,11 @@ impl PublishType {
 ///     .client_id("client-id")
 ///     .client_secret("client-secret")
 ///     .refresh_token("refresh-token")
-///     .call()
 ///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-#[builder(on(String, into))]
+#[builder(on(String, into), derive(IntoFuture(Box)))]
 pub async fn fetch_access_token(
     /// OAuth client ID.
     client_id: String,
@@ -99,8 +98,8 @@ pub async fn fetch_access_token(
 /// Publish a package to the Chrome Web Store.
 ///
 /// Returns a builder: set the required parameters and any options with the
-/// setter methods, then finish with `call()` to upload the package and
-/// submit the draft.
+/// setter methods, then run it by awaiting the builder directly or by
+/// finishing with `call()` to upload the package and submit the draft.
 ///
 /// # Examples
 ///
@@ -115,12 +114,11 @@ pub async fn fetch_access_token(
 ///     .access_token("access-token")
 ///     .package(package)
 ///     .publish_type(PublishType::StagedPublish)
-///     .call()
 ///     .await?;
 /// # Ok(())
 /// # }
 /// ```
-#[builder(on(String, into))]
+#[builder(on(String, into), derive(IntoFuture(Box)))]
 pub async fn publish(
     /// Publisher ID (UUID).
     publisher_id: String,
