@@ -3,7 +3,12 @@
   "extends": ["config:best-practices", "group:allNonMajor", ":automergeMinor"],
   "ignorePresets": [":pinDevDependencies"],
   "enabledManagers": ["cargo", "github-actions", "custom.regex"],
-  "ignorePaths": [".github/workflows/release.yml"],
+  "schedule": ["* * * * 5"],
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
+  "lockFileMaintenance": {
+    "schedule": ["* * * * 0#L"]
+  },
   "minimumReleaseAge": "3 days",
   "platformCommit": "enabled",
   "customManagers": [
@@ -38,7 +43,5 @@
       "automerge": false
     }
   ],
-  "lockFileMaintenance": {
-    "schedule": ["* * L * *"]
-  }
+  "ignorePaths": [".github/workflows/release.yml"]
 }
