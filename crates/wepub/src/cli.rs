@@ -48,15 +48,15 @@ pub(crate) struct ChromeArgs {
     pub(crate) client_id: Option<String>,
 
     /// OAuth client secret. Use together with --client-id and --refresh-token.
-    #[arg(long, env = "WEPUB_CHROME_CLIENT_SECRET")]
+    #[arg(long, env = "WEPUB_CHROME_CLIENT_SECRET", hide_env_values = true)]
     pub(crate) client_secret: Option<String>,
 
     /// OAuth refresh token. Use together with --client-id and --client-secret.
-    #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN")]
+    #[arg(long, env = "WEPUB_CHROME_REFRESH_TOKEN", hide_env_values = true)]
     pub(crate) refresh_token: Option<String>,
 
     /// Pre-fetched OAuth access token.
-    #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN")]
+    #[arg(long, env = "WEPUB_CHROME_ACCESS_TOKEN", hide_env_values = true)]
     pub(crate) access_token: Option<String>,
 
     /// Whether to publish immediately on approval or stage for later publishing.
@@ -103,7 +103,7 @@ pub(crate) struct FirefoxArgs {
     pub(crate) api_key: String,
 
     /// API secret (JWT secret).
-    #[arg(long, env = "WEPUB_FIREFOX_API_SECRET")]
+    #[arg(long, env = "WEPUB_FIREFOX_API_SECRET", hide_env_values = true)]
     pub(crate) api_secret: String,
 
     /// Version channel. Determines visibility on the site.
@@ -179,7 +179,7 @@ pub(crate) struct EdgeArgs {
     pub(crate) client_id: String,
 
     /// API key.
-    #[arg(long, env = "WEPUB_EDGE_API_KEY")]
+    #[arg(long, env = "WEPUB_EDGE_API_KEY", hide_env_values = true)]
     pub(crate) api_key: String,
 
     /// Notes for certification. Mutually exclusive with --notes-file.
