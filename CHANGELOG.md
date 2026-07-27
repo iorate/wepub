@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.1](https://github.com/iorate/wepub/compare/v1.0.0...v1.0.1)
+
+This release attaches build provenance attestations to release artifacts. It contains no code changes.
+
 ## [1.0.0](https://github.com/iorate/wepub/compare/v0.9.2...v1.0.0)
 
 This release stabilizes the API of the 0.9 series as 1.0.0.
