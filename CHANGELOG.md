@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.0](https://github.com/iorate/wepub/compare/v0.9.2...v1.0.0)
+
+No functional changes. This release stabilizes the API of the 0.9 series as 1.0.0.
+
 ## [0.9.2](https://github.com/iorate/wepub/compare/v0.9.1...v0.9.2)
 
 ### ⛰️ Features
