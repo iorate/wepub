@@ -41,8 +41,8 @@
 
 mod error;
 mod http;
-mod instrument;
 mod multipart;
+mod tracing;
 
 pub mod chrome;
 pub mod edge;

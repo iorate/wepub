@@ -107,7 +107,7 @@ mod tests {
     use super::*;
 
     // `Display` is a static per-variant summary that carries no field values;
-    // detail lives in the variant's fields and in `instrument::record_error`.
+    // detail lives in the variant's fields and in `crate::tracing::record_error`.
     #[test]
     fn display_is_a_static_summary_without_field_values() {
         assert_eq!(

@@ -11,8 +11,8 @@ use url::Url;
 use crate::{
     Result, WepubError,
     http::{build_client, decode_response, join_endpoint, send_request},
-    instrument::instrument_step,
     multipart::Form,
+    tracing::instrument_step,
 };
 
 use super::auth::generate_jwt;

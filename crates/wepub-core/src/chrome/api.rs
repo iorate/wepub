@@ -10,7 +10,7 @@ use url::Url;
 use crate::{
     Result, WepubError,
     http::{build_client, decode_response, join_endpoint, send_request},
-    instrument::instrument_step,
+    tracing::instrument_step,
 };
 
 use super::auth::{self, DEFAULT_TOKEN_URL};
