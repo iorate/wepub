@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use wepub_core::chrome::{self, PublishType};
 
 use crate::cli::{ChromeArgs, ChromePublishTypeArg};
-use crate::commands::common::read_binary_input;
+use crate::commands::input::read_binary_input;
 
 pub(crate) async fn run(args: ChromeArgs) -> Result<()> {
     let auth = build_auth(

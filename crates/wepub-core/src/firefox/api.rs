@@ -10,8 +10,8 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, send_request},
-    http::build_client,
+    http::{build_client, decode_response, join_endpoint, send_request},
+    instrument::instrument_step,
     multipart::Form,
 };
 
@@ -209,16 +209,16 @@ impl Publish {
         .await?;
         if let Some(source) = source
             && instrument_step(
-                info_span!("update_version_source", version_id = version_id),
+                info_span!("upload_source", version_id = version_id),
                 // The version is already created, so a source failure doesn't
                 // fail the publish; record it as a warning, not an error.
                 Level::WARN,
-                self.update_version_source(client, version_id, source),
+                self.upload_source(client, version_id, source),
             )
             .await
             .is_err()
         {
-            warn!(version_id, "failed to update the source archive");
+            warn!(version_id, "failed to upload the source archive");
         }
         Ok(())
     }
@@ -309,13 +309,13 @@ impl Publish {
         Ok(version.id)
     }
 
-    async fn update_version_source(
+    async fn upload_source(
         &self,
         client: &HttpClient,
         version_id: u64,
         source: Vec<u8>,
     ) -> Result<()> {
-        info!("updating the source archive");
+        info!("uploading the source archive");
 
         let (content_type, body) = Form::new()
             .file("source", "source.zip", "application/zip", &source)
@@ -336,7 +336,7 @@ impl Publish {
 
         let _: VersionResponse = decode_response(resp).await?;
 
-        info!("the source archive updated");
+        info!("the source archive uploaded");
         Ok(())
     }
 
@@ -624,7 +624,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_version_source_sends_multipart_patch() {
+    async fn upload_source_sends_multipart_patch() {
         let server = MockServer::start().await;
         Mock::given(method("PATCH"))
             .and(path("/api/v5/addons/addon/test-addon/versions/4242/"))
@@ -636,7 +636,7 @@ mod tests {
 
         let p = publish_for(&server);
         let client = http_client();
-        p.update_version_source(&client, 4242, b"source-zip".to_vec())
+        p.upload_source(&client, 4242, b"source-zip".to_vec())
             .await
             .unwrap();
 

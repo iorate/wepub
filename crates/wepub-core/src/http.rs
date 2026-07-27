@@ -1,8 +1,10 @@
 use std::time::Duration;
 
-use isahc::HttpClient;
 use isahc::config::{Configurable, RedirectPolicy};
-use isahc::http::header;
+use isahc::http::{Request, Response, header};
+use isahc::{AsyncBody, AsyncReadResponseExt, HttpClient};
+use tracing::debug;
+use url::Url;
 
 use crate::{Result, WepubError};
 
@@ -21,4 +23,77 @@ pub(crate) fn build_client() -> Result<HttpClient> {
         .build()
         .map_err(WepubError::http)?;
     Ok(client)
+}
+
+pub(crate) fn join_endpoint(root: &Url, path: &str) -> Url {
+    let mut url = root.clone();
+    url.set_path(&format!("{}/{}", root.path().trim_end_matches('/'), path));
+    url
+}
+
+pub(crate) async fn send_request<B: Into<AsyncBody>>(
+    client: &HttpClient,
+    req: Request<B>,
+) -> Result<Response<AsyncBody>> {
+    let url = req.uri().to_string();
+    debug!(
+        method = req.method().as_str(),
+        url = url.as_str(),
+        "sending request"
+    );
+    let resp = client.send_async(req).await.map_err(WepubError::http)?;
+    Ok(resp)
+}
+
+pub(crate) async fn decode_response<T: serde::de::DeserializeOwned>(
+    mut resp: Response<AsyncBody>,
+) -> Result<T> {
+    let status = resp.status();
+    let body = resp.text().await.map_err(WepubError::http)?;
+    debug!(
+        status = status.as_u16(),
+        body = body.as_str(),
+        "received response"
+    );
+    if !status.is_success() {
+        return Err(WepubError::HttpStatus {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    serde_json::from_str(&body).map_err(|err| WepubError::UnexpectedResponse {
+        reason: format!("failed to decode response: {err}"),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_endpoint_appends_relative_path() {
+        let root = Url::parse("https://example.com/").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
+        assert_eq!(url.as_str(), "https://example.com/api/v5/addons/upload/");
+    }
+
+    #[test]
+    fn join_endpoint_appends_to_root_with_path() {
+        let root = Url::parse("https://example.com/prefix/").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/prefix/api/v5/addons/upload/"
+        );
+    }
+
+    #[test]
+    fn join_endpoint_appends_to_root_without_trailing_slash() {
+        let root = Url::parse("https://example.com/prefix").unwrap();
+        let url = join_endpoint(&root, "api/v5/addons/upload/");
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/prefix/api/v5/addons/upload/"
+        );
+    }
 }

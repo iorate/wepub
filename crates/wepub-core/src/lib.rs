@@ -39,9 +39,9 @@
 
 #![warn(missing_docs)]
 
-mod common;
 mod error;
 mod http;
+mod instrument;
 mod multipart;
 
 pub mod chrome;

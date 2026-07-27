@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 use wepub_core::firefox::{self, Application, Channel, Compatibility};
 
 use crate::cli::{FirefoxApplicationArg, FirefoxArgs, FirefoxChannelArg};
-use crate::commands::common::{read_binary_input, resolve_text_input};
+use crate::commands::input::{read_binary_input, resolve_text_input};
 
 pub(crate) async fn run(args: FirefoxArgs) -> Result<()> {
     if is_stdin_path(args.approval_notes_file.as_deref())
