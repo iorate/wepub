@@ -9,8 +9,8 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, send_request},
-    http::build_client,
+    http::{build_client, decode_response, join_endpoint, send_request},
+    tracing::instrument_step,
 };
 
 use super::auth::{self, DEFAULT_TOKEN_URL};
@@ -80,7 +80,7 @@ pub async fn fetch_access_token(
         Level::ERROR,
         async {
             info!("fetching the access token");
-            let token = auth::refresh_access_token(
+            let token = auth::fetch_access_token(
                 &client,
                 token_url,
                 &client_id,

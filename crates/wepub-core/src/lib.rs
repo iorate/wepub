@@ -39,10 +39,10 @@
 
 #![warn(missing_docs)]
 
-mod common;
 mod error;
 mod http;
 mod multipart;
+mod tracing;
 
 pub mod chrome;
 pub mod edge;

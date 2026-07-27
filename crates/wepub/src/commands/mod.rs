@@ -1,4 +1,4 @@
-mod common;
+mod input;
 
 pub(crate) mod chrome;
 pub(crate) mod edge;

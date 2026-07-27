@@ -4,11 +4,11 @@ use serde::Deserialize;
 use tracing::debug;
 use url::Url;
 
-use crate::{Result, WepubError, common::send_request};
+use crate::{Result, WepubError, http::send_request};
 
 pub(crate) const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
-pub(crate) async fn refresh_access_token(
+pub(crate) async fn fetch_access_token(
     client: &HttpClient,
     token_url: Url,
     client_id: &str,
@@ -78,10 +78,10 @@ mod tests {
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    async fn refresh(server: &MockServer, secret: &str) -> Result<String> {
+    async fn fetch(server: &MockServer, secret: &str) -> Result<String> {
         let client = crate::http::build_client().unwrap();
         let token_url = Url::parse(&server.uri()).unwrap();
-        refresh_access_token(
+        fetch_access_token(
             &client,
             token_url,
             "client-id",
@@ -106,7 +106,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let token = refresh(&server, "client-secret").await.unwrap();
+        let token = fetch(&server, "client-secret").await.unwrap();
         assert_eq!(token, "ya29.example");
     }
 
@@ -127,7 +127,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        refresh(&server, "client-secret").await.unwrap();
+        fetch(&server, "client-secret").await.unwrap();
     }
 
     #[tokio::test]
@@ -141,7 +141,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = refresh(&server, "client-secret").await.unwrap_err();
+        let err = fetch(&server, "client-secret").await.unwrap_err();
         match err {
             WepubError::OAuthToken {
                 error,
@@ -168,7 +168,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = refresh(&server, "client-secret").await.unwrap_err();
+        let err = fetch(&server, "client-secret").await.unwrap_err();
         match err {
             WepubError::OAuthToken { error, .. } => {
                 assert_eq!(error, "invalid_client");
@@ -185,7 +185,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = refresh(&server, "client-secret").await.unwrap_err();
+        let err = fetch(&server, "client-secret").await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 400);
@@ -205,7 +205,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = refresh(&server, "client-secret").await.unwrap_err();
+        let err = fetch(&server, "client-secret").await.unwrap_err();
         match err {
             WepubError::HttpStatus { status, body } => {
                 assert_eq!(status, 503);
@@ -226,7 +226,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let err = refresh(&server, "client-secret").await.unwrap_err();
+        let err = fetch(&server, "client-secret").await.unwrap_err();
         match err {
             WepubError::UnexpectedResponse { reason } => {
                 assert!(

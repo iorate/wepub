@@ -9,8 +9,8 @@ use url::Url;
 
 use crate::{
     Result, WepubError,
-    common::{decode_response, instrument_step, join_endpoint, send_request},
-    http::build_client,
+    http::{build_client, decode_response, join_endpoint, send_request},
+    tracing::instrument_step,
 };
 
 const DEFAULT_ROOT_URL: &str = "https://api.addons.microsoftedge.microsoft.com/";
