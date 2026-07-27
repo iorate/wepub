@@ -23,6 +23,8 @@ publish-jobs = ["homebrew", "npm"]
 install-updater = false
 # Don't run the release workflow on pull requests
 pr-run-mode = "skip"
+# Attest build provenance of release artifacts with GitHub Artifact Attestations
+github-attestations = true
 
 # Pin GitHub Actions used by the generated release.yml to specific commit SHAs.
 [dist.github-action-commits]
@@ -30,3 +32,4 @@ pr-run-mode = "skip"
 "actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" # v7.0.1
 "actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" # v8.0.1
 "actions/setup-node" = "820762786026740c76f36085b0efc47a31fe5020" # v7.0.0
+"actions/attest" = "f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6" # v4.2.0
