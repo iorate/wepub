@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.0](https://github.com/iorate/wepub/compare/v0.9.2...v1.0.0)
+
+This release stabilizes the API of the 0.9 series as 1.0.0.
+
+### 🐛 Bug Fixes
+
+
+- Hide secret env values in help output ([#110](https://github.com/iorate/wepub/pull/110)) - ([bc775cd](https://github.com/iorate/wepub/commit/bc775cd8833334cd76fe8385f65c12ea8e0a161e))
+
 ## [0.9.2](https://github.com/iorate/wepub/compare/v0.9.1...v0.9.2)
 
 ### ⛰️ Features
