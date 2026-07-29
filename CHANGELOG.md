@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/iorate/wepub/compare/wepub-v1.0.1...wepub-v1.0.2)
+
+### 📚 Documentation
+
+
+- Replace setup-wepub with the in-repo setup action ([#116](https://github.com/iorate/wepub/pull/116)) - ([941a31d](https://github.com/iorate/wepub/commit/941a31d30c6d3af111bc20b538857de3902fbd4b))
+
+
 ## [1.0.1](https://github.com/iorate/wepub/compare/v1.0.0...v1.0.1)
 
 This release attaches build provenance attestations to release artifacts. It contains no code changes.
