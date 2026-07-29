@@ -1,0 +1,54 @@
+name: Tag aliases
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tag-aliases:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+    steps:
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Create version and major tags
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          ANNOUNCEMENT_TAG: ${{ fromJson(inputs.plan).announcement_tag }}
+        run: |
+          version="${ANNOUNCEMENT_TAG#wepub-v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected announcement tag: \"$ANNOUNCEMENT_TAG\""
+            exit 1
+          fi
+
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$ANNOUNCEMENT_TAG" --jq '.sha')
+
+          create_or_update_tag() {
+            local tag="$1"
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --silent 2>/dev/null; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" -f "sha=$sha" -F force=true
+            else
+              gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$sha"
+            fi
+          }
+
+          create_or_update_tag "v$version"
+          create_or_update_tag "v${version%%.*}"

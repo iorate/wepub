@@ -23,6 +23,10 @@ publish-jobs = ["homebrew", "npm"]
 install-updater = false
 # Don't run the release workflow on pull requests
 pr-run-mode = "skip"
+# Only react to tags like "wepub-v1.0.2"; plain "v1.0.2" tags are created post-announce
+tag-namespace = "wepub"
+# Create the "v1.0.2" and "v1" tags after the release is published
+post-announce-jobs = ["./tag-aliases"]
 # Attest build provenance of release artifacts with GitHub Artifact Attestations
 github-attestations = true
 
