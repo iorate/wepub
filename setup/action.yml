@@ -1,0 +1,23 @@
+name: Setup wepub
+description: Install the wepub CLI for publishing browser extensions to web stores
+
+inputs:
+  token:
+    description: GitHub token for verifying build provenance
+    default: ${{ github.token }}
+    required: false
+
+outputs:
+  version:
+    description: The version of wepub that was installed
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install wepub
+      id: install
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      shell: bash
