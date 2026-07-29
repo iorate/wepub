@@ -10,7 +10,7 @@ changelog_update = true
 changelog_include = ["wepub-core"]
 changelog_path = "./CHANGELOG.md"
 git_tag_enable = true
-git_tag_name = "v{{ version }}"
+git_tag_name = "wepub-v{{ version }}"
 
 [changelog]
 header = "# Changelog"

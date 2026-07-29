@@ -43,5 +43,5 @@
       "automerge": false
     }
   ],
-  "ignorePaths": [".github/workflows/release.yml"]
+  "ignorePaths": [".github/workflows/wepub-release.yml"]
 }

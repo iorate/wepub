@@ -41,7 +41,7 @@ permissions:
 on:
   push:
     tags:
-      - '**[0-9]+.[0-9]+.[0-9]+*'
+      - 'wepub**[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
@@ -377,3 +377,12 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-tag-aliases:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/tag-aliases.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
