@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/iorate/wepub/compare/wepub-v1.0.2...wepub-v1.0.3)
+
+### ⬆️ Dependencies
+
+
+- *(deps)* Update rust crate jsonwebtoken to v11 ([#119](https://github.com/iorate/wepub/pull/119)) - ([3eeca1c](https://github.com/iorate/wepub/commit/3eeca1c7c51f60e90117d96211fde8f02b78e8ca))
+
+
 ## [1.0.2](https://github.com/iorate/wepub/compare/wepub-v1.0.1...wepub-v1.0.2)
 
 ### 📚 Documentation
