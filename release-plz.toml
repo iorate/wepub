@@ -53,6 +53,7 @@ body = """
 """
 commit_parsers = [
   { message = "^feat", group = "<!-- 0 -->⛰️ Features" },
+  { message = "^fix\\(deps\\)", group = "<!-- 4 -->⬆️ Dependencies" },
   { message = "^fix", group = "<!-- 1 -->🐛 Bug Fixes" },
   { message = "^perf", group = "<!-- 2 -->⚡ Performance" },
   { message = "^docs", group = "<!-- 3 -->📚 Documentation" },
