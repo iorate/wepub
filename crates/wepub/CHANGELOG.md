@@ -1,4 +1,4 @@
-# Changelog
+# wepub
 
 ## [1.0.3](https://github.com/iorate/wepub/compare/wepub-v1.0.2...wepub-v1.0.3)
 

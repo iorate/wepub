@@ -1,0 +1,156 @@
+name: Version
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install changesette
+        uses: iorate/changesette/setup@bdcc11407fab5c629a0efa7bb76e8186f7184a76 # v3.0.0
+
+      - name: Install cargo-edit
+        uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cargo-edit@0.13.13
+
+      - name: Bump versions
+        id: version
+        run: |
+          changesette version --output "$RUNNER_TEMP/plan.json"
+          if jq -e 'any(.releases[]; .type != "none")' "$RUNNER_TEMP/plan.json" > /dev/null; then
+            jq -re '.releases[] | select(.type != "none") | .name + " " + .newVersion' "$RUNNER_TEMP/plan.json" \
+              | while read -r name version; do
+                  cargo set-version -p "$name" "$version"
+                done
+            cargo update -w
+            title="Release $(jq -re '[.releases[] | select(.type != "none") | .name + " v" + .newVersion] | join(" and ")' "$RUNNER_TEMP/plan.json")"
+            echo "title=$title" >> "$GITHUB_OUTPUT"
+            delim="$(openssl rand -hex 16)"
+            {
+              echo "body<<$delim"
+              jq -r '[.releases[] | select(.type != "none") | "## \(.name)@\(.newVersion)\n\n\(.changelogEntry)"] | join("\n\n")' "$RUNNER_TEMP/plan.json"
+              echo "$delim"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "title=Consume changesets" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate token
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create pull request
+        id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          branch: changesette/release
+          commit-message: ${{ steps.version.outputs.title }}
+          title: ${{ steps.version.outputs.title }}
+          body: ${{ steps.version.outputs.body }}
+          delete-branch: true
+          sign-commits: true
+
+      - name: Determine crates to release
+        id: release
+        if: steps.pr.outputs.pull-request-number == ''
+        run: |
+          for name in wepub-core wepub; do
+            version="$(jq -re .version "crates/$name/package.json")"
+            prefix="${name:0:2}/${name:2:2}"
+            if curl -fsS "https://index.crates.io/$prefix/$name" \
+                | jq -e --arg v "$version" 'select(.vers == $v)' > /dev/null; then
+              version=""
+            fi
+            echo "$name=$version" >> "$GITHUB_OUTPUT"
+          done
+          tag_version="$(jq -re .version crates/wepub/package.json)"
+          if [[ -n "$(git ls-remote origin "refs/tags/wepub-v$tag_version")" ]]; then
+            tag_version=""
+          fi
+          echo "tag=$tag_version" >> "$GITHUB_OUTPUT"
+
+    outputs:
+      release-wepub-core: ${{ steps.release.outputs.wepub-core }}
+      release-wepub: ${{ steps.release.outputs.wepub }}
+      release-tag: ${{ steps.release.outputs.tag }}
+
+  release:
+    needs: version
+
+    if: needs.version.outputs.release-wepub-core != '' || needs.version.outputs.release-wepub != '' || needs.version.outputs.release-tag != ''
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write # crates.io Trusted Publishing (OIDC)
+
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Authenticate with crates.io
+        id: auth
+        if: needs.version.outputs.release-wepub-core != '' || needs.version.outputs.release-wepub != ''
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish wepub-core to crates.io
+        if: needs.version.outputs.release-wepub-core != ''
+        run: cargo publish -p wepub-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Publish wepub to crates.io
+        if: needs.version.outputs.release-wepub != ''
+        run: cargo publish -p wepub
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Generate token
+        id: generate-token
+        if: needs.version.outputs.release-tag != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.BOT_CLIENT_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Push release tag
+        if: needs.version.outputs.release-tag != ''
+        run: |
+          git tag "wepub-v$VERSION"
+          git -c credential.helper='!gh auth git-credential' \
+            push origin "wepub-v$VERSION"
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          VERSION: ${{ needs.version.outputs.release-tag }}
