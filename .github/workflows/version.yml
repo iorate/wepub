@@ -126,14 +126,28 @@ jobs:
 
       - name: Publish wepub-core to crates.io
         if: needs.version.outputs.release-wepub-core != ''
-        run: cargo publish -p wepub-core
+        run: |
+          if curl -fsS https://index.crates.io/we/pu/wepub-core \
+              | jq -e --arg v "$VERSION" 'select(.vers == $v)' > /dev/null; then
+            echo "wepub-core $VERSION already on crates.io; skipping publish" >&2
+          else
+            cargo publish -p wepub-core
+          fi
         env:
+          VERSION: ${{ needs.version.outputs.release-wepub-core }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Publish wepub to crates.io
         if: needs.version.outputs.release-wepub != ''
-        run: cargo publish -p wepub
+        run: |
+          if curl -fsS https://index.crates.io/we/pu/wepub \
+              | jq -e --arg v "$VERSION" 'select(.vers == $v)' > /dev/null; then
+            echo "wepub $VERSION already on crates.io; skipping publish" >&2
+          else
+            cargo publish -p wepub
+          fi
         env:
+          VERSION: ${{ needs.version.outputs.release-wepub }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Generate token
