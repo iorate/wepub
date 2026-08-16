@@ -44,6 +44,18 @@ jobs:
       - name: cargo test
         run: cargo test
 
+      - name: Check package.json versions
+        run: |
+          cargo metadata --format-version 1 --no-deps \
+            | jq -re '.packages[] | .name + " " + .version' \
+            | while read -r name version; do
+                stub="$(jq -re .version "crates/$name/package.json")"
+                if [[ "$stub" != "$version" ]]; then
+                  echo "::error::$name: Cargo.toml has $version but package.json has $stub"
+                  exit 1
+                fi
+              done
+
   msrv:
     runs-on: ubuntu-latest
 

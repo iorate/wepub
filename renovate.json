@@ -11,6 +11,7 @@
   },
   "minimumReleaseAge": "3 days",
   "platformCommit": "enabled",
+  "semanticCommits": "disabled",
   "customManagers": [
     {
       "customType": "regex",
