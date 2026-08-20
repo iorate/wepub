@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Install changesette
-        uses: iorate/changesette/setup@bdcc11407fab5c629a0efa7bb76e8186f7184a76 # v3.0.0
+        uses: iorate/changesette/setup@0d22976fb72d9c6d71053d12eda47bb70ef9ad38 # v4.0.0
 
       - name: Install cargo-edit
         uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
@@ -37,19 +37,19 @@ jobs:
       - name: Bump versions
         id: version
         run: |
-          changesette version --output "$RUNNER_TEMP/plan.json"
-          if jq -e 'any(.releases[]; .type != "none")' "$RUNNER_TEMP/plan.json" > /dev/null; then
-            jq -re '.releases[] | select(.type != "none") | .name + " " + .newVersion' "$RUNNER_TEMP/plan.json" \
+          plan="$(changesette version --allow-no-changesets --output -)"
+          if jq -e 'any(.releases[]; .type != "none")' <<< "$plan" > /dev/null; then
+            jq -re '.releases[] | select(.type != "none") | .name + " " + .newVersion' <<< "$plan" \
               | while read -r name version; do
                   cargo set-version -p "$name" "$version"
                 done
             cargo update -w
-            title="Release $(jq -re '[.releases[] | select(.type != "none") | .name + " v" + .newVersion] | join(" and ")' "$RUNNER_TEMP/plan.json")"
+            title="Release $(jq -re '[.releases[] | select(.type != "none") | .name + " v" + .newVersion] | join(" and ")' <<< "$plan")"
             echo "title=$title" >> "$GITHUB_OUTPUT"
             delim="$(openssl rand -hex 16)"
             {
               echo "body<<$delim"
-              jq -r '[.releases[] | select(.type != "none") | "## \(.name)@\(.newVersion)\n\n\(.changelogEntry)"] | join("\n\n")' "$RUNNER_TEMP/plan.json"
+              jq -r '[.releases[] | select(.type != "none") | "## \(.name)@\(.newVersion)\n\n\(.changelogEntry)"] | join("\n\n")' <<< "$plan"
               echo "$delim"
             } >> "$GITHUB_OUTPUT"
           else
