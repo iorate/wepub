@@ -27,10 +27,10 @@ jobs:
           persist-credentials: false
 
       - name: Install changesette
-        uses: iorate/changesette/setup@ab7bf31298fd9efd8ae6342b7bd6fc2116ce0336 # v6.2.1
+        uses: iorate/changesette/setup@0585b52e4cdb49ec30a461c3f1ed165319b3a59f # v6.3.0
 
       - name: Install cargo-edit
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-edit@0.13.13
 
