@@ -15,43 +15,7 @@ defaults:
 
 jobs:
   test-setup:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-24.04      # x86_64-unknown-linux-gnu
-          - ubuntu-24.04-arm  # aarch64-unknown-linux-gnu
-          - macos-26-intel    # x86_64-apple-darwin
-          - macos-26          # aarch64-apple-darwin
-          - windows-2025      # x86_64-pc-windows-msvc
-
-    runs-on: ${{ matrix.os }}
-
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install wepub
-        id: install
-        uses: ./setup
-
-      - name: Verify install and output
-        env:
-          ANNOUNCEMENT_TAG: ${{ fromJson(inputs.plan).announcement_tag }}
-          INSTALLED_VERSION: ${{ steps.install.outputs.version }}
-        run: |
-          wepub --version
-          if [[ "wepub-v$INSTALLED_VERSION" != "$ANNOUNCEMENT_TAG" ]]; then
-            echo "unexpected output: $INSTALLED_VERSION"
-            exit 1
-          fi
-
-      - name: Re-run to exercise cache hit
-        uses: ./setup
+    uses: $/.github/workflows/test-setup.yml
 
   tag-aliases:
     needs: test-setup
