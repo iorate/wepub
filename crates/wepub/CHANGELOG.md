@@ -1,5 +1,11 @@
 # wepub
 
+## 1.0.4
+
+### Patch Changes
+
+- The setup action now verifies that the installed binary reports the expected version.
+
 ## [1.0.3](https://github.com/iorate/wepub/compare/wepub-v1.0.2...wepub-v1.0.3)
 
 ### ⬆️ Dependencies
