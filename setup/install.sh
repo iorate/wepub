@@ -42,15 +42,27 @@ gh attestation verify "$RUNNER_TEMP/$archive" \
   --signer-workflow iorate/wepub/.github/workflows/wepub-release.yml
 echo "Verified the build provenance of $archive"
 
-# Extract binary into tool cache
-mkdir -p "$tool_dir"
+# Extract binary
+extract_dir="$RUNNER_TEMP/wepub-$version"
+mkdir -p "$extract_dir"
 if [[ "$archive_ext" == ".tar.xz" ]]; then
   # Tarballs nest the binary under a wepub-$target/ directory.
-  tar -xJf "$RUNNER_TEMP/$archive" -C "$tool_dir" --strip-components=1 "wepub-$target/wepub$binary_ext"
+  tar -xJf "$RUNNER_TEMP/$archive" -C "$extract_dir" --strip-components=1 "wepub-$target/wepub$binary_ext"
 else
   # The zip places the binary at the archive root.
-  unzip -q "$RUNNER_TEMP/$archive" "wepub$binary_ext" -d "$tool_dir"
+  unzip -q "$RUNNER_TEMP/$archive" "wepub$binary_ext" -d "$extract_dir"
 fi
+
+# Verify extracted binary version
+version_output="$("$extract_dir/wepub$binary_ext" --version)"
+if [[ "$version_output" != "wepub $version" ]]; then
+  echo "::error::Unexpected version output: \"$version_output\" (expected \"wepub $version\")"
+  exit 1
+fi
+
+# Move binary into tool cache
+mkdir -p "$tool_dir"
+mv "$extract_dir/wepub$binary_ext" "$tool_dir/"
 
 echo "$tool_dir" >> "$GITHUB_PATH"
 echo "version=$version" >> "$GITHUB_OUTPUT"
