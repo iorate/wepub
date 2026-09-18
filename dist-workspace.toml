@@ -21,8 +21,6 @@ install-path = "CARGO_HOME"
 publish-jobs = ["homebrew", "npm"]
 # Whether to install an updater program
 install-updater = false
-# Don't run the release workflow on pull requests
-pr-run-mode = "skip"
 # Only react to tags like "wepub-v1.0.2"; plain "v1.0.2" tags are created post-announce
 tag-namespace = "wepub"
 # Create the "v1.0.2" and "v1" tags after the release is published
