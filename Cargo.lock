@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "wepub"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "wepub-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "async-io",
  "bon",

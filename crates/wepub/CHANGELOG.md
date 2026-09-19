@@ -1,5 +1,16 @@
 # wepub
 
+## 1.0.5
+
+### Patch Changes
+
+- Fix `wepub edge` failing at the submit step with `[56] Failure when receiving data from the peer` when no notes are given. The request now sends `Content-Length: 0` instead of omitting the header, which the Edge Add-ons API rejected.
+
+- The setup action no longer runs the downloaded binary to compare its `--version` output with the expected version, since the version is already fixed by the release tag and the build provenance.
+
+- Updated dependencies
+  - wepub-core@1.0.2
+
 ## 1.0.4
 
 ### Patch Changes
