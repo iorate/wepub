@@ -223,7 +223,11 @@ impl Publish {
             Some(notes) => builder
                 .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
                 .body(AsyncBody::from(notes)),
-            None => builder.body(AsyncBody::empty()),
+            // isahc sends an empty body without Content-Length, and the Edge
+            // Add-ons API rejects such a POST with 411 Length Required.
+            None => builder
+                .header(header::CONTENT_LENGTH, "0")
+                .body(AsyncBody::empty()),
         }
         .map_err(WepubError::http)?;
 
@@ -559,6 +563,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path(format!("/v1/products/{PRODUCT_ID}/submissions")))
+            .and(header("content-length", "0"))
             .and(body_string(""))
             .respond_with(ResponseTemplate::new(202).insert_header("Location", "publish-op-2"))
             .expect(1)
