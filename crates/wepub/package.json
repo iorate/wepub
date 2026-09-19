@@ -1,5 +1,8 @@
 {
   "name": "wepub",
   "version": "1.0.4",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "wepub-core": "workspace:*"
+  }
 }
