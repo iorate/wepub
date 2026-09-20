@@ -88,11 +88,12 @@ Only existing items can be updated; the initial submission of a new extension st
 
 ### Chrome Web Store
 
-Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain an OAuth client ID, client secret, and refresh token.
+Two authentication modes are supported, and they are mutually exclusive:
 
-Alternatively, pass a pre-fetched OAuth access token via `--access-token` instead of a refresh token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts). The two authentication modes are mutually exclusive.
+- `--client-id`, `--client-secret`, and `--refresh-token` together. Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain them.
+- `--access-token` alone, a pre-fetched OAuth access token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts).
 
-IDs and credentials are required and can be supplied via flags or environment variables:
+IDs and the credentials of the chosen mode are required and can be supplied via flags or environment variables:
 
 | Flag               | Environment variable           |
 | ------------------ | ------------------------------ |
