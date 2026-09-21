@@ -94,7 +94,7 @@ Two authentication modes are supported, and they are mutually exclusive:
 - `--access-token` alone, a pre-fetched OAuth access token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts).
 
 > [!NOTE]
-> In the refresh token mode, if the OAuth consent screen is configured for the External user type, publish it (set its publishing status to "In production"). While it stays in "Testing", [refresh tokens expire in 7 days](https://developers.google.com/identity/protocols/oauth2#expiration), after which the token endpoint rejects them with `invalid_grant`.
+> A refresh token issued while the OAuth consent screen has the External user type and the "Testing" publishing status [expires in 7 days](https://developers.google.com/identity/protocols/oauth2#expiration); the token endpoint then rejects it with `invalid_grant`. Consider setting the status to "In production", where refresh tokens do not expire this way.
 
 IDs and the credentials of the chosen mode are required and can be supplied via flags or environment variables:
 
