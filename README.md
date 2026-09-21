@@ -91,6 +91,10 @@ Only existing items can be updated; the initial submission of a new extension st
 Two authentication modes are supported, and they are mutually exclusive:
 
 - `--client-id`, `--client-secret`, and `--refresh-token` together. Follow [Use the Chrome Web Store API](https://developer.chrome.com/docs/webstore/using-api) to obtain them.
+
+  > [!NOTE]
+  > If the OAuth consent screen is configured for the External user type, publish it (set its publishing status to "In production"). While it stays in "Testing", [refresh tokens expire in 7 days](https://developers.google.com/identity/protocols/oauth2#expiration), after which the token endpoint rejects them with `invalid_grant`.
+
 - `--access-token` alone, a pre-fetched OAuth access token. This is suitable for automated workflows that authenticate with a [service account](https://developer.chrome.com/docs/webstore/service-accounts).
 
 IDs and the credentials of the chosen mode are required and can be supplied via flags or environment variables:
