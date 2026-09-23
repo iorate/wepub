@@ -52,7 +52,9 @@
       "schedule": null
     },
     {
-      "description": "Treat minor updates of 0.x dependencies like majors: separate PRs, no automerge",
+      "description": "Treat minor updates of 0.x crates and tools like majors: separate PRs, no automerge",
+      "matchManagers": ["cargo", "custom.regex"],
+      "matchDatasources": ["crate", "github-releases"],
       "matchCurrentVersion": "<1",
       "matchUpdateTypes": ["minor"],
       "groupName": null,
