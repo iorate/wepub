@@ -1,14 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:best-practices", "group:allNonMajor", ":automergeMinor"],
-  "ignorePresets": [":pinDevDependencies"],
+  "ignorePresets": [":pinDevDependencies", ":maintainLockFilesWeekly"],
   "enabledManagers": ["cargo", "github-actions", "custom.regex"],
-  "schedule": ["* * * * 5"],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
-  "lockFileMaintenance": {
-    "schedule": ["* * * * 0#L"]
-  },
   "minimumReleaseAge": "3 days",
   "platformCommit": "enabled",
   "semanticCommits": "disabled",
@@ -44,17 +40,24 @@
   ],
   "packageRules": [
     {
-      "description": "Ungroup breaking 0.x updates from the non-major group",
-      "matchManagers": ["cargo"],
+      "description": "Batch minor and patch updates weekly; everything else is raised as soon as it is available",
+      "matchUpdateTypes": ["minor", "patch"],
+      "schedule": ["* * * * 5"]
+    },
+    {
+      "description": "First-party actions; update immediately in their own group",
+      "matchPackageNames": ["iorate/*"],
+      "groupName": "first-party packages",
+      "minimumReleaseAge": null,
+      "schedule": null
+    },
+    {
+      "description": "Treat minor updates of 0.x dependencies like majors: separate PRs, no automerge",
       "matchCurrentVersion": "<1",
       "matchUpdateTypes": ["minor"],
       "groupName": null,
+      "schedule": null,
       "automerge": false
-    },
-    {
-      "description": "First-party actions; skip the release-age waiting period and update immediately",
-      "matchPackageNames": ["iorate/*"],
-      "minimumReleaseAge": null
     }
   ],
   "ignorePaths": [".github/workflows/wepub-release.yml"]
