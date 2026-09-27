@@ -1,13 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
   "extends": ["config:best-practices", "group:allNonMajor", ":automergeMinor"],
-  "ignorePresets": [":pinDevDependencies", ":maintainLockFilesWeekly"],
-  "enabledManagers": ["cargo", "github-actions", "custom.regex"],
+  "ignorePresets": [":pinDevDependencies", "abandonments:recommended", ":maintainLockFilesWeekly"],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
-  "minimumReleaseAge": "3 days",
   "platformCommit": "enabled",
   "semanticCommits": "disabled",
+  "ignorePaths": [".github/workflows/wepub-release.yml"],
+
+  "enabledManagers": ["cargo", "github-actions", "custom.regex"],
   "customManagers": [
     {
       "customType": "regex",
@@ -38,6 +40,8 @@
       "versioningTemplate": "semver"
     }
   ],
+
+  "minimumReleaseAge": "3 days",
   "packageRules": [
     {
       "description": "Batch minor and patch updates weekly; everything else is raised as soon as it is available",
@@ -61,6 +65,5 @@
       "schedule": null,
       "automerge": false
     }
-  ],
-  "ignorePaths": [".github/workflows/wepub-release.yml"]
+  ]
 }
