@@ -9,7 +9,7 @@
   "semanticCommits": "disabled",
   "ignorePaths": [".github/workflows/wepub-release.yml"],
 
-  "enabledManagers": ["cargo", "github-actions", "custom.regex"],
+  "enabledManagers": ["cargo", "rust-toolchain", "github-actions", "custom.regex"],
   "customManagers": [
     {
       "customType": "regex",
