@@ -66,7 +66,7 @@ jobs:
 
       - name: Read MSRV
         id: read-msrv
-        uses: actions-rust-lang/msrv@b95a3a81b0efee6438b858b41a84aff627e01351 # v0.1.1
+        uses: actions-rust-lang/msrv@983d9d27da8fe8aaa47732160b7a14805004d4b2 # v0.1.3
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0

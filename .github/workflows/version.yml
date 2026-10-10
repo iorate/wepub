@@ -30,7 +30,7 @@ jobs:
         uses: iorate/changesette/setup@fed73d2efd3423bab6ab0c93d6d4d7e4b62bc1c1 # v7.2.0
 
       - name: Install cargo-edit
-        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-edit@0.13.13
 
