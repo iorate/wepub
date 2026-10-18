@@ -1,5 +1,14 @@
 # wepub
 
+## 1.0.6
+
+### Patch Changes
+
+- Update rustls to 0.23.46 to fix a TLS 1.3 handshake validation issue (GHSA-2mjx-qc3c-rqvc)
+
+- Updated dependencies
+  - wepub-core@1.1.0
+
 ## 1.0.5
 
 ### Patch Changes
