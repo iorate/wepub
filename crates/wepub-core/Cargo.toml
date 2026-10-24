@@ -13,20 +13,20 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-async-io = "2.6.0"
-bon = "3.9.3"
-isahc = "2.0.1"
-jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-thiserror = "2.0.18"
-tracing = "0.1.44"
-url = "2.5.8"
-uuid = { version = "1.23.1", features = ["v4"] }
+async-io.workspace = true
+bon.workspace = true
+isahc.workspace = true
+jsonwebtoken = { workspace = true, features = ["rust_crypto"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-tokio = { version = "1.52.3", features = ["macros", "rt"] }
-wiremock = "0.6.5"
+tokio = { workspace = true, features = ["macros", "rt"] }
+wiremock.workspace = true
 
 [lints]
 workspace = true
