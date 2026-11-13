@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
 
   "extends": ["config:best-practices", "group:allNonMajor", ":automergeMinor"],
-  "ignorePresets": [":pinDevDependencies", "abandonments:recommended", ":maintainLockFilesWeekly"],
+  "ignorePresets": [":pinDevDependencies", "abandonments:recommended"],
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   "platformCommit": "enabled",
@@ -42,11 +42,12 @@
   ],
 
   "minimumReleaseAge": "3 days",
+  "minimumReleaseAgePackageManagerSync": true,
   "packageRules": [
     {
       "description": "Batch minor and patch updates weekly; everything else is raised as soon as it is available",
       "matchUpdateTypes": ["minor", "patch"],
-      "schedule": ["* * * * 5"]
+      "schedule": ["* 12-17 * * 5"]
     },
     {
       "description": "First-party actions; update immediately in their own group",
@@ -65,5 +66,8 @@
       "schedule": null,
       "automerge": false
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "schedule": ["* 18-23 * * 5"]
+  }
 }

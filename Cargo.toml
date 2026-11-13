@@ -9,7 +9,6 @@ members = [
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
-homepage = "https://github.com/iorate/wepub"
 repository = "https://github.com/iorate/wepub"
 authors = ["iorate"]
 
