@@ -149,6 +149,7 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.release-wepub }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE: allow # a wepub-core released together is younger than min-publish-age
 
       - name: Generate token
         id: generate-token
