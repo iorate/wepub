@@ -4,9 +4,11 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::{Result, WepubError};
+
 const TOKEN_LIFETIME_SECS: u64 = 60;
 
-pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> String {
+pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is set after the UNIX epoch")
@@ -19,12 +21,8 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> String {
         exp: now + TOKEN_LIFETIME_SECS,
     };
 
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .expect("HS256 JWT encoding cannot fail for valid claims")
+    let key = EncodingKey::from_secret(secret.as_bytes()).map_err(WepubError::firefox_jwt)?;
+    encode(&Header::new(Algorithm::HS256), &claims, &key).map_err(WepubError::firefox_jwt)
 }
 
 #[derive(Serialize)]
@@ -51,7 +49,7 @@ mod tests {
 
     #[test]
     fn jwt_payload_matches_amo_spec() {
-        let token = generate_jwt("user:123:456", "secret-key");
+        let token = generate_jwt("user:123:456", "secret-key").unwrap();
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = false;
@@ -59,7 +57,7 @@ mod tests {
 
         let decoded = decode::<DecodedClaims>(
             &token,
-            &DecodingKey::from_secret(b"secret-key"),
+            &DecodingKey::from_secret(b"secret-key").unwrap(),
             &validation,
         )
         .unwrap();
@@ -71,7 +69,7 @@ mod tests {
 
     #[test]
     fn jwt_rejects_wrong_secret() {
-        let token = generate_jwt("issuer", "correct-secret");
+        let token = generate_jwt("issuer", "correct-secret").unwrap();
 
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = false;
@@ -79,7 +77,7 @@ mod tests {
 
         let err = decode::<DecodedClaims>(
             &token,
-            &DecodingKey::from_secret(b"wrong-secret"),
+            &DecodingKey::from_secret(b"wrong-secret").unwrap(),
             &validation,
         )
         .unwrap_err();
@@ -92,8 +90,14 @@ mod tests {
 
     #[test]
     fn each_call_generates_unique_jti() {
-        let t1 = generate_jwt("issuer", "secret");
-        let t2 = generate_jwt("issuer", "secret");
+        let t1 = generate_jwt("issuer", "secret").unwrap();
+        let t2 = generate_jwt("issuer", "secret").unwrap();
         assert_ne!(t1, t2, "jti should be unique per call");
+    }
+
+    #[test]
+    fn empty_secret_is_rejected() {
+        let err = generate_jwt("issuer", "").unwrap_err();
+        assert!(matches!(err, WepubError::FirefoxJwt { .. }));
     }
 }
