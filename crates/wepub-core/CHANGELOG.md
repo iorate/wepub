@@ -1,5 +1,11 @@
 # wepub-core
 
+## 1.2.0
+
+### Minor Changes
+
+- Update jsonwebtoken to v12. An empty Firefox Add-ons API secret is now reported as an error before any request is sent, and `WepubError` gains the `FirefoxJwt` variant for this case.
+
 ## 1.1.0
 
 ### Minor Changes
