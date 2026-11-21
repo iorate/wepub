@@ -60,6 +60,10 @@ fn record_error(level: Level, err: &WepubError) {
             let validation = serde_json::to_string(validation).unwrap_or_default();
             record!(validation = validation.as_str(), "{err}");
         }
+        WepubError::FirefoxJwt { source } => {
+            let source = source.to_string();
+            record!(source = source.as_str(), "{err}");
+        }
         WepubError::EdgeApi {
             message,
             error_code,

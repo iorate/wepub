@@ -79,6 +79,14 @@ pub enum WepubError {
         validation: serde_json::Value,
     },
 
+    /// The JWT generation for Firefox Add-ons failed.
+    #[error("the JWT generation for Firefox Add-ons failed")]
+    #[non_exhaustive]
+    FirefoxJwt {
+        /// The underlying JWT error.
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Edge Add-ons reported the operation as failed.
     #[error("Edge Add-ons reported the operation as failed")]
     #[non_exhaustive]

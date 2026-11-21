@@ -231,7 +231,7 @@ impl Publish {
             .text("channel", self.channel.as_str())
             .finish();
         let req = Request::post(self.endpoint("api/v5/addons/upload/").as_str())
-            .header(header::AUTHORIZATION, self.auth_header())
+            .header(header::AUTHORIZATION, self.auth_header()?)
             .header(header::CONTENT_TYPE, content_type)
             .body(body)
             .map_err(WepubError::http)?;
@@ -265,7 +265,7 @@ impl Publish {
                 self.endpoint(&format!("api/v5/addons/upload/{upload_uuid}/"))
                     .as_str(),
             )
-            .header(header::AUTHORIZATION, self.auth_header())
+            .header(header::AUTHORIZATION, self.auth_header()?)
             .body(())
             .map_err(WepubError::http)?;
 
@@ -296,7 +296,7 @@ impl Publish {
             self.endpoint(&format!("api/v5/addons/addon/{}/versions/", self.addon_id))
                 .as_str(),
         )
-        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::AUTHORIZATION, self.auth_header()?)
         .header(header::CONTENT_TYPE, "application/json")
         .body(body)
         .map_err(WepubError::http)?;
@@ -327,7 +327,7 @@ impl Publish {
             ))
             .as_str(),
         )
-        .header(header::AUTHORIZATION, self.auth_header())
+        .header(header::AUTHORIZATION, self.auth_header()?)
         .header(header::CONTENT_TYPE, content_type)
         .body(body)
         .map_err(WepubError::http)?;
@@ -344,9 +344,9 @@ impl Publish {
         join_endpoint(&self.root_url, path)
     }
 
-    fn auth_header(&self) -> String {
-        let token = generate_jwt(&self.api_key, &self.api_secret);
-        format!("JWT {token}")
+    fn auth_header(&self) -> Result<String> {
+        let token = generate_jwt(&self.api_key, &self.api_secret)?;
+        Ok(format!("JWT {token}"))
     }
 }
 
