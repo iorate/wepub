@@ -106,6 +106,12 @@ impl WepubError {
             source: source.into(),
         }
     }
+
+    pub(crate) fn firefox_jwt(source: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self::FirefoxJwt {
+            source: source.into(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +155,17 @@ mod tests {
             elapsed: Duration::from_secs(1),
         };
         assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn firefox_jwt_keeps_the_underlying_error_as_source_only() {
+        let err = WepubError::FirefoxJwt {
+            source: "invalid key".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "the JWT generation for Firefox Add-ons failed"
+        );
+        assert!(err.source().is_some());
     }
 }

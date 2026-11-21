@@ -21,8 +21,8 @@ pub(crate) fn generate_jwt(issuer: &str, secret: &str) -> Result<String> {
         exp: now + TOKEN_LIFETIME_SECS,
     };
 
-    let key = EncodingKey::from_secret(secret.as_bytes()).map_err(firefox_jwt)?;
-    encode(&Header::new(Algorithm::HS256), &claims, &key).map_err(firefox_jwt)
+    let key = EncodingKey::from_secret(secret.as_bytes()).map_err(WepubError::firefox_jwt)?;
+    encode(&Header::new(Algorithm::HS256), &claims, &key).map_err(WepubError::firefox_jwt)
 }
 
 #[derive(Serialize)]
@@ -31,12 +31,6 @@ struct Claims {
     jti: String,
     iat: u64,
     exp: u64,
-}
-
-fn firefox_jwt(source: jsonwebtoken::errors::Error) -> WepubError {
-    WepubError::FirefoxJwt {
-        source: source.into(),
-    }
 }
 
 #[cfg(test)]
