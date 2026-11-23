@@ -108,10 +108,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     permissions:
       id-token: write # crates.io Trusted Publishing (OIDC)
-
-    timeout-minutes: 30
 
     steps:
       - name: Checkout
