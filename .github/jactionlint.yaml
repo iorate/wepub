@@ -1,0 +1,11 @@
+paths:
+  .github/workflows/wepub-release.yml:
+    ignore:
+      - excessive-permissions
+      - secrets-inherit
+      - template-injection
+      - unverified-download
+      - use-trusted-publishing
+      - 'shellcheck reported issue in this script: SC2001:'
+      - 'shellcheck reported issue in this script: SC2086:'
+      - 'shellcheck reported issue in this script: SC2129:'

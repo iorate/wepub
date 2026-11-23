@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  semver-checks:
+  semver:
     if: github.head_ref == 'changesette/release'
 
     runs-on: ubuntu-latest
