@@ -16,10 +16,9 @@
       "description": "Update cargo-dist-version in dist-workspace.toml",
       "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
       "matchStrings": ["(?m)^\\s*cargo-dist-version\\s*=\\s*\"(?<currentValue>[^\"\\s]+)\""],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "axodotdev/cargo-dist",
+      "datasourceTemplate": "crate",
+      "depNameTemplate": "cargo-dist",
       "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.+)$",
       "autoReplaceStringTemplate": "cargo-dist-version = \"{{{newValue}}}\""
     },
     {
@@ -59,7 +58,7 @@
     {
       "description": "Treat minor updates of 0.x crates and tools like majors: separate PRs, no automerge",
       "matchManagers": ["cargo", "custom.regex"],
-      "matchDatasources": ["crate", "github-releases"],
+      "matchDatasources": ["crate"],
       "matchCurrentVersion": "<1",
       "matchUpdateTypes": ["minor"],
       "groupName": null,

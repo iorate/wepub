@@ -9,9 +9,3 @@ paths:
       - 'shellcheck reported issue in this script: SC2001:'
       - 'shellcheck reported issue in this script: SC2086:'
       - 'shellcheck reported issue in this script: SC2129:'
-  .github/workflows/dist-generate.yml:
-    ignore:
-      - unverified-download
-  .github/workflows/test-setup.yml:
-    ignore:
-      - concurrency-limits
